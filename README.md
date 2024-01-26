@@ -1,5 +1,5 @@
 # EasyCommandRunner
-![icon](.\pic\SleepyKanata.jpg)
+![icon](https://raw.githubusercontent.com/stota1320/EasyCommandRunner/main/pic/SleepyKanata.jpg)
 
 # 介绍
 
@@ -7,7 +7,7 @@ EasyCommandRunner是一个简单的保存命令行配置与运行命令行的GUI
 
 ## 用户界面
 
-![UserInterface](.\pic\Snipaste_2024-01-26_16-42-11.png)
+![UserInterface](https://raw.githubusercontent.com/stota1320/EasyCommandRunner/main/pic/Snipaste_2024-01-26_16-42-11.png)
 
 
 ## 使用说明
@@ -15,7 +15,7 @@ EasyCommandRunner是一个简单的保存命令行配置与运行命令行的GUI
 如果觉得多余，可以通过旁边的减号按钮删除对应行。
 
 ### 提示
-本工具并非傻瓜式的yt-dlp或者ffmpeg的GUI界面，而是以了解命令行工具自身命令为前提保存常用CLI工具命令的GUI工具，适用于高频率使用命令行工具的人群。在保存一个配置之前，记得先调试好配置是否能够正常运行，善用预生成命令功能。
+本工具并非傻瓜式的yt-dlp或者ffmpeg的GUI界面，而是以了解命令行工具自身命令为前提，保存常用CLI工具命令的GUI工具，适用于高频率使用命令行工具的人群。在保存一个配置之前，记得先调试好配置是否能够正常运行，善用预生成命令功能。
 
 ### 特性
 * 运行时会自动打开运行窗口，方便调试与获取信息。
@@ -30,9 +30,11 @@ EasyCommandRunner是一个简单的保存命令行配置与运行命令行的GUI
 * 第一次保存配置之后，每次运行应用和点击保存时都会比较配置文件变化，如果有变化则会自动备份一次`config.json`。如果改错了配置，可以查看应用目录下的`backup`文件夹，将想要恢复的配置文件重命名为`config.json`复制回应用目录即可。
 * 你可以通过自行修改应用目录下的`stylesheet.css`文件来修改窗口样式。
 # 演示
-![gif1](.\pic\2024.01.26-165839.gif)
-![gif2](.\pic\2024-01-26_17-10-23.gif)
-![gif3](.\pic\2024-01-26_17-12-23.gif)
+![gif1](https://raw.githubusercontent.com/stota1320/EasyCommandRunner/main/pic/2024.01.26-165839.gif)
+
+![gif2](https://raw.githubusercontent.com/stota1320/EasyCommandRunner/main/pic/2024-01-26_17-10-23.gif)
+
+![gif3](https://raw.githubusercontent.com/stota1320/EasyCommandRunner/main/pic/2024-01-26_17-12-23.gif)
 
 
 # 碎碎念
