@@ -9,6 +9,23 @@ EasyCommandRunner是一个简单的保存命令行配置与运行命令行的GUI
 
 ![UserInterface](https://raw.githubusercontent.com/stota1320/EasyCommandRunner/main/pic/Snipaste_2024-01-26_16-42-11.png)
 
+## 快速开始
+以非常常用的网络测试命令`ping www.baidu.com`为例
+
+* 点击`增加标签` 新增空标签页
+ 
+![newTab](https://github.com/AlanWanco/EasyCommandRunner/blob/main/pic/Snipaste_2024-01-26_19-48-18.png)
+
+* 在`程序本体`中填入`ping`，在`功能1`中填入`www.baidu.com` ~~这里如果还有其他留空的编辑框是不影响运行的，只取决于你的命令是否正确~~
+* 点击`预生成命令` 查看命令内容
+
+![ping](https://github.com/AlanWanco/EasyCommandRunner/blob/main/pic/Snipaste_2024-01-26_19-49-09.png)
+
+* 点击`运行` 在另一边的命令行窗口查看运行结果
+
+![result](https://github.com/AlanWanco/EasyCommandRunner/blob/main/pic/Snipaste_2024-01-26_19-49-52.png)
+
+* 点击`保存` 保存当前配置
 
 ## 使用说明
 点击保存后会保存所有新增的标签页、各个输入框输入的命令以及描述（备忘）在应用目录下的config.json文件内。运行命令时，描述框内的内容不会被算进命令内，点击加号可以添加新的参数行，新的参数行内容也会被保留（包括空的输入框）。
