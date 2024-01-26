@@ -1,13 +1,13 @@
 # EasyCommandRunner
-![Alt text](.\pic\SleepyKanata.jpg)
+![icon](.\pic\SleepyKanata.jpg)
 
 # 介绍
 
 EasyCommandRunner是一个简单的保存命令行配置与运行命令行的GUI应用。这个应用的灵感来自`N_m3u8DL-CLI`自带的`N_m3u8DL-CLI-SimpleG`和`QuickCut`。本应用由python编写，通过pyQT5生成GUI界面，理论上支持所有命令行工具。
 
-## 界面
+## 用户界面
 
-![Alt text](.\pic\Snipaste_2024-01-26_16-42-11.png)
+![UserInterface](.\pic\Snipaste_2024-01-26_16-42-11.png)
 
 
 ## 使用说明
@@ -30,9 +30,9 @@ EasyCommandRunner是一个简单的保存命令行配置与运行命令行的GUI
 * 第一次保存配置之后，每次运行应用和点击保存时都会比较配置文件变化，如果有变化则会自动备份一次`config.json`。如果改错了配置，可以查看应用目录下的`backup`文件夹，将想要恢复的配置文件重命名为`config.json`复制回应用目录即可。
 * 你可以通过自行修改应用目录下的`stylesheet.css`文件来修改窗口样式。
 # 演示
-![Alt text](.\pic\2024.01.26-165839.gif)
-![Alt text](.\pic\2024-01-26_17-10-23.gif)
-![Alt text](.\pic\2024-01-26_17-12-23.gif)
+![gif1](.\pic\2024.01.26-165839.gif)
+![gif2](.\pic\2024-01-26_17-10-23.gif)
+![gif3](.\pic\2024-01-26_17-12-23.gif)
 
 
 # 碎碎念
