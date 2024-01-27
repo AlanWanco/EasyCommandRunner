@@ -15,6 +15,7 @@ class MyApp(QWidget):
         super().__init__()
         self.current_tab_index = 0  # 记录当前显示的Tab索引
         self.config_file = 'config.json'
+
         self.initUI()
         if not os.path.exists('stylesheet.css'):
             with open('stylesheet.css', 'w') as f:
@@ -25,6 +26,7 @@ class MyApp(QWidget):
         
         self.auto_backup()
         self.load_config()
+
         self.settings = QSettings("SleepyKanata", "EasyCommandRunner")
         currentIndex = self.settings.value("currentTabIndex", 0)  
         self.tabs.setCurrentIndex(int(currentIndex))
@@ -34,7 +36,12 @@ class MyApp(QWidget):
         self.tray_icon.activated.connect(self.handle_tray_icon_activated)
         self.tray_icon.show()
 
-        # Create tray menu
+        self.create_menu()
+
+    def create_menu(self):
+        with open(".\\stylesheet.css", 'r') as f:
+            stylesheet = f.read()
+        self.setStyleSheet(stylesheet)
         self.tray_menu = QMenu()
         self.tray_menu.setStyleSheet(stylesheet)
 
@@ -292,7 +299,9 @@ class MyApp(QWidget):
     def closeEvent(self, event):
         self.settings = QSettings("SleepyKanata", "EasyCommandRunner")
         self.settings.setValue("currentTabIndex", self.tabs.currentIndex())
-        super(MyApp, self).closeEvent(event)
+        # super(MyApp, self).closeEvent(event)
+        event.ignore()
+        self.hide()
 
 class MyTab(QWidget):
 
