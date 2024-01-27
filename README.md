@@ -38,7 +38,7 @@ EasyCommandRunner是一个简单的保存命令行配置与运行命令行的GUI
 
 * 点击`运行` 在另一边的命令行窗口查看运行结果
 
-![result](https://raw.githubusercontent.com/stota1320/EasyCommandRunner/main/pic/Snipaste_2024-01-26_19-49-52.png)
+![result](https://raw.githubusercontent.com/stota1320/EasyCommandRunner/main/pic/Snipaste_2024-01-27_18-40-15.png)
 
 * 点击`保存` 保存当前配置
 
