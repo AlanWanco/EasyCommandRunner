@@ -29,6 +29,26 @@ class MyApp(QWidget):
         currentIndex = self.settings.value("currentTabIndex", 0)  
         self.tabs.setCurrentIndex(int(currentIndex))
 
+        self.tray_icon = QSystemTrayIcon(QIcon("icon2.ico"), self)
+        self.tray_icon.setToolTip("EasyCommandRunner")
+        self.tray_icon.activated.connect(self.handle_tray_icon_activated)
+        self.tray_icon.show()
+
+        # Create tray menu
+        self.tray_menu = QMenu()
+        self.tray_menu.setStyleSheet(stylesheet)
+
+        self.restore_action = QAction("还原", self)
+        self.restore_action.triggered.connect(self.restore_window)
+        self.tray_menu.addAction(self.restore_action)
+        self.minimize_action = QAction("最小化", self)
+        self.minimize_action.triggered.connect(self.minimize_to_tray)
+        self.tray_menu.addAction(self.minimize_action)
+        self.exit_action = QAction("退出", self)
+        self.exit_action.triggered.connect(self.handle_exit_action_triggered)
+        self.tray_menu.addAction(self.exit_action)
+        self.tray_icon.setContextMenu(self.tray_menu)
+
     def initUI(self):
 
         self.tabs = QTabWidget()
@@ -76,7 +96,7 @@ class MyApp(QWidget):
         self.setLayout(vbox)
 
         self.setWindowTitle('EasyCommandRunner')
-        self.setGeometry(300, 300, 600, 700)
+        self.setGeometry(300, 300, 850, 700)
         self.show()
 
     def new_line(self, tab, line_codes):
@@ -249,6 +269,25 @@ class MyApp(QWidget):
 
                 if not self.compare_files(latest_file, 'config.json'):
                     shutil.copy2('config.json', self.destination_file)
+
+    def minimize_to_tray(self):
+        if self.isMinimized():
+            self.showNormal()
+            self.activateWindow()
+        else:
+            self.hide()
+
+    def restore_window(self):
+        self.showNormal()
+        self.activateWindow()
+
+    def handle_tray_icon_activated(self, reason):
+        if reason == QSystemTrayIcon.DoubleClick:
+            self.restore_window()
+
+    def handle_exit_action_triggered(self):
+        self.tray_icon.hide()
+        QApplication.quit()
 
     def closeEvent(self, event):
         self.settings = QSettings("SleepyKanata", "EasyCommandRunner")
