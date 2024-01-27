@@ -4,6 +4,22 @@
     background-color:#181818;
     font-size: 15px;
 }
+QCheckBox::indicator:checked{
+    image: url(./css/checked_image.png);
+}
+QCheckBox::indicator:unchecked{
+    image: url(./css/unchecked_image.png);
+}
+QTabBar::close-button {
+    image: url(./css/close-button.png);
+    subcontrol-position: right;
+}
+QTabBar::close-button:hover {
+    image: url(./css/close-button_hover.png);
+}
+QTabBar::close-button:pressed {
+    image: url(./css/lose-button_pressed.png);
+}
 QTabBar::tab {
     background-color:#121414;
     font-size: 14px;
