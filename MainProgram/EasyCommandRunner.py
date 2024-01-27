@@ -317,10 +317,10 @@ class MyTab(QWidget):
         self.addLineButton = QPushButton(" + ")
         self.addLineButton.clicked.connect(self.add_new_line)
 
-        self.allSelectBtn = QPushButton("全选")
+        self.allSelectBtn = QPushButton("全选(Ctrl+A)")
         self.allSelectBtn.clicked.connect(lambda: self.selectAllCheckboxes(True))
 
-        self.celAllSelectBtn = QPushButton("取消全选")
+        self.celAllSelectBtn = QPushButton("取消全选(Ctrl+D)")
         self.celAllSelectBtn.clicked.connect(lambda: self.selectAllCheckboxes(False))
 
         self.hbox5 = QHBoxLayout()
