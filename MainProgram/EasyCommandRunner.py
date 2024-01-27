@@ -1,4 +1,3 @@
-#上一个大部分功能正常的版本
 import os
 import shutil
 import sys
@@ -17,6 +16,9 @@ class MyApp(QWidget):
         self.current_tab_index = 0  # 记录当前显示的Tab索引
         self.config_file = 'config.json'
         self.initUI()
+        if not os.path.exists('stylesheet.css'):
+            with open('stylesheet.css', 'w') as f:
+                pass
         with open(".\\stylesheet.css", 'r') as f:
             stylesheet = f.read()
         self.setStyleSheet(stylesheet)
@@ -38,7 +40,7 @@ class MyApp(QWidget):
         self.addTabButton = QPushButton("增加标签")
         self.addTabButton.clicked.connect(self.add_new_tab)
 
-        self.saveButton = QPushButton('保存', self)
+        self.saveButton = QPushButton('保存(Ctrl+S)', self)
         self.saveButton.clicked.connect(self.save_config)
 
         self.reloadConfig = QPushButton("重新加载所有配置")
@@ -47,6 +49,9 @@ class MyApp(QWidget):
         self.copyConfig = QPushButton("复制本页配置")
         self.copyConfig.clicked.connect(self.copy_config_to_new_tab)
 
+        if not os.path.exists('stylesheet.css'):
+            with open('stylesheet.css', 'w') as f:
+                pass
         with open(".\\stylesheet.css", 'r') as f:
             stylesheet = f.read()
         self.tabs.setStyleSheet(stylesheet)
@@ -80,13 +85,14 @@ class MyApp(QWidget):
         for line_code in line_codes:
             tab.add_new_line(line_code)
 
-    def add_new_tab(self, line_codes, text_dict=None):
+    def add_new_tab(self, line_codes, text_dict=None, checkbox_dict=None):
         tab_index = self.tabs.count() + 1
         tab = MyTab()
         self.tabs.addTab(tab, f'标签{tab_index}')
         self.tabs.setCurrentIndex(self.tabs.count() - 1)
         self.new_line(tab, line_codes)
         self.write_text(tab, text_dict, tab_index)
+        self.toggle_checkbox(tab, checkbox_dict)
 
     def load_config(self):
         try:
@@ -101,12 +107,13 @@ class MyApp(QWidget):
         #建立tab line_codes
         tabs = config.get('tabs', [])
         line_codes_list = config.get('line_codes', [])
+        tab_checkbox_statuses_list = config.get('checkbox_statuses', [])
 
         #循环tab页
         for i, tab in enumerate(tabs):
             line_codes = line_codes_list[i] if i < len(line_codes_list) else []
-
-            self.add_new_tab(line_codes, tab)
+            tab_checkbox_statuses = tab_checkbox_statuses_list[i] if i < len(tab_checkbox_statuses_list) else {}
+            self.add_new_tab(line_codes, tab, tab_checkbox_statuses)
         self.current_tab_index = config.get('current_tab_index', 0)
 
     def save_config(self):
@@ -115,6 +122,7 @@ class MyApp(QWidget):
             'tabs': [],
             'counters':[],
             'line_codes': [], 
+            'checkbox_statuses':[]
         }
         for index in range(self.tabs.count()):
             #初始化
@@ -142,6 +150,12 @@ class MyApp(QWidget):
             config['tabs'].append(tab_config)
             #单独行的index
             config['line_codes'].append(tab.line_codes)
+
+            checkbox_statuses = {}
+            checkboxes = tab.findChildren(QCheckBox)
+            for checkbox in checkboxes:
+                checkbox_statuses[checkbox.objectName()] = checkbox.isChecked()
+            config['checkbox_statuses'].append(checkbox_statuses)
             
         #计数tab页数
         config['tab_count'] = self.tabs.count()
@@ -151,6 +165,9 @@ class MyApp(QWidget):
             json.dump(config, f, indent=4)
 
         print("配置已保存!")
+
+    def toggle_checkbox(self, tab, checkbox_dicts):
+        tab.check_box_toggle(checkbox_dicts)
 
     def write_text(self, tab, text_dict, tab_index):
         if text_dict:
@@ -280,8 +297,11 @@ class MyTab(QWidget):
         self.hbox2.addWidget(self.edit2)
 
         self.edit3_1 = NewQLineEdit()
+        self.chk1 = QCheckBox(self)
+        self.chk1.setObjectName("chkbox1") 
+        self.chk1.setChecked(True) 
+        self.chk1.stateChanged.connect(lambda state: self.toggle_run(self.chk1, state))
         self.edit3_1.setPlaceholderText("功能1")
-        self.edit3_1.setStyleSheet("QLineEdit{width:60px;}")
         self.edit3_1.setObjectName("name_edit3_1")
         self.label3 = QLabel("：")
         self.edit3_2 = NewQLineEdit()
@@ -289,6 +309,7 @@ class MyTab(QWidget):
         self.edit3_2.setPlaceholderText("参数1")
         self.edit3_2.setObjectName("name_edit3_2")
 
+        self.hbox3.addWidget(self.chk1)
         self.hbox3.addWidget(self.edit3_1)
         self.hbox3.addWidget(self.label3)
         self.hbox3.addWidget(self.edit3_2)
@@ -296,9 +317,16 @@ class MyTab(QWidget):
         self.addLineButton = QPushButton(" + ")
         self.addLineButton.clicked.connect(self.add_new_line)
 
-        self.hbox5 = QHBoxLayout()
+        self.allSelectBtn = QPushButton("全选")
+        self.allSelectBtn.clicked.connect(lambda: self.selectAllCheckboxes(True))
 
-        self.hbox5.addWidget(self.addLineButton)  
+        self.celAllSelectBtn = QPushButton("取消全选")
+        self.celAllSelectBtn.clicked.connect(lambda: self.selectAllCheckboxes(False))
+
+        self.hbox5 = QHBoxLayout()
+        self.hbox5.addWidget(self.addLineButton)
+        self.hbox5.addWidget(self.allSelectBtn)
+        self.hbox5.addWidget(self.celAllSelectBtn)
 
         self.editOther = NewQLineEdit()
         self.editOther.setPlaceholderText("其他参数")
@@ -330,11 +358,8 @@ class MyTab(QWidget):
         self.reviewButton = QPushButton("预生成命令")
         self.reviewButton.clicked.connect(self.on_reviewButton_clicked)
 
-        self.runButton = QPushButton("运行")
+        self.runButton = QPushButton("运行(Ctrl+Enter)")
         self.runButton.clicked.connect(self.run_command)
-
-        # self.copyConfig = QPushButton("复制本页配置")
-        # self.copyConfig.clicked.connect(self.copy_config_to_new_tab)
       
         self.vbox.addLayout(self.hbox_title)
         self.vbox.addLayout(self.hbox1) 
@@ -349,16 +374,22 @@ class MyTab(QWidget):
         self.scrollArea.setWidget(self.scrollWidget)
         self.scrollArea.setWidgetResizable(True)
 
-        self.buttonContainer = QHBoxLayout()  # 创建新的容器用于存放按钮
+        self.buttonContainer = QHBoxLayout()  
         self.buttonContainer.addWidget(self.reviewButton)
         self.buttonContainer.addWidget(self.runButton)
-        # self.buttonContainer.addWidget(self.copyConfig)
 
         self.mainLayout = QVBoxLayout() 
         self.mainLayout.addWidget(self.scrollArea)
         self.mainLayout.addLayout(self.buttonContainer)  
 
         self.setLayout(self.mainLayout)  
+
+    def check_box_toggle(self, checkbox_dict):
+        if checkbox_dict:
+            for checkbox_name, is_checked in checkbox_dict.items():
+                checkbox = self.findChild(QCheckBox, checkbox_name)
+                if checkbox is not None:
+                    checkbox.setChecked(is_checked)
 
     def add_new_line(self, line_code=None):
         #判断配置文件是否存在
@@ -380,6 +411,10 @@ class MyTab(QWidget):
 
     def new_line_UI(self, counter=0, line_code=None):
 
+        chk = QCheckBox(self)
+        chk.setChecked(True) 
+        chk.setObjectName("chkbox" + str(counter)) 
+        chk.stateChanged.connect(lambda state: self.toggle_run(chk, state))
         line_edit1 = NewQLineEdit()
         line_edit1.setPlaceholderText("功能" + str(counter))
         line_edit1.setObjectName("function" + str(counter)) 
@@ -397,6 +432,7 @@ class MyTab(QWidget):
 
         hbox = QHBoxLayout()
         hbox.setObjectName("exhbox" + str(counter)) 
+        hbox.addWidget(chk)
         hbox.addWidget(line_edit1)
         hbox.addWidget(label)
         hbox.addWidget(line_edit2)
@@ -405,22 +441,34 @@ class MyTab(QWidget):
         self.line_codes[str(counter)] = line_code
         self.vbox.insertLayout(self.vbox.count()-4, hbox)
 
+    def toggle_run(self, checkbox, state):
+        if state == Qt.Checked:
+            pass
+            # print(f"   复选框 '{checkbox.objectName()}' 被选中")
+        else:
+            pass
+            # print(f"   复选框 '{checkbox.objectName()}' 被取消")
+
     def get_command(self):
         command = []
         other = self.editOther.text()
-
+        command.append(self.edit2.text())
+        # 遍历所有的vbox
         for i in range(self.vbox.count()):
             hbox = self.vbox.itemAt(i)
             if isinstance(hbox, QHBoxLayout):
+                line_edit1 = None
+                line_edit2 = None
+                # 遍历所有的hbox
                 for j in range(hbox.count()):
                     widget = hbox.itemAt(j).widget()
-                    if widget == self.edit1 or widget == self.editDescription or widget == self.edit_title:
-                        continue
+                    
+                    if isinstance(widget, QCheckBox) and widget.checkState() == Qt.Checked:
+                        line_edit1 = hbox.itemAt(j+1).widget()
+                        command.append(line_edit1.text())
+                        line_edit2 = hbox.itemAt(j+3).widget()
+                        command.append(line_edit2.text())
 
-                    if isinstance(widget, QLineEdit):
-                        command.append(widget.text())
-                    elif isinstance(widget, QTextEdit):
-                        command.append(widget.toPlainText())
         command.append(other)
         self.command_string = subprocess.list2cmdline(command).replace("\"\"","")
 
@@ -431,14 +479,11 @@ class MyTab(QWidget):
         self.get_command()  
         self.commandReview.setText(self.command_string)  
 
-        if path:
-            pass
-        else:
+        if not path:
             path = os.getcwd()
 
         def run_cmd():
             os.system(f'cd /d {path} && {self.command_string}')
-            # subprocess.Popen(f'cd /d {path} && {self.command_string}', shell=True)
 
         threading.Thread(target=run_cmd).start()
 
@@ -446,9 +491,26 @@ class MyTab(QWidget):
         print("命令：", self.command_string)
         print("描述：", description)
     
+    def keyPressEvent(self, event): 
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter) and event.modifiers() & Qt.ControlModifier:
+            self.run_command()
+
+        if event.key() == Qt.Key_A and QApplication.keyboardModifiers() == Qt.ControlModifier:
+            self.selectAllCheckboxes(True)
+
+        if event.key() == Qt.Key_D and QApplication.keyboardModifiers() == Qt.ControlModifier:
+            self.selectAllCheckboxes(False)
+
     def on_reviewButton_clicked(self): 
         self.get_command()  
         self.commandReview.setText(self.command_string)  
+
+    def selectAllCheckboxes(self, state):
+        checkboxes = []
+        for widget in self.findChildren(QCheckBox):
+            checkboxes.append(widget)
+        for checkbox in checkboxes:
+            checkbox.setChecked(state)
 
     def remove_line(self):
         sender = self.sender()  # 获取触发点击事件的按钮
