@@ -36,6 +36,8 @@ EasyCommandRunner是一个简单的保存命令行配置与运行命令行的GUI
 
 ## 快速开始
 
+### 注意：此演示下的图片为旧版本
+
 以非常常用的网络测试命令`ping www.baidu.com`为例
 
 * 点击`增加标签` 新增空标签页
@@ -67,6 +69,9 @@ EasyCommandRunner是一个简单的保存命令行配置与运行命令行的GUI
 
 ### 特性
 * 由于是多线程，可以多标签页同时运行
+* 命令解析功能
+* 单行命令备注
+* 默认关闭窗口时缩小到托盘
 * 除描述外，其余所有输入框都支持拖入文件清除原输入框内容并生成文件路径。如果向描述框内拖入文件，前面会增加`file:///`。
 * 由于使用了`subprocess.list2cmdline`方法，**如果文件路径内有空格不需要前后加上双引号**。
 * 当点击保存的时候标签页标题才会更改，如果清空标题，当重新加载配置文件时，标题才会变回默认标题。
@@ -80,6 +85,11 @@ EasyCommandRunner是一个简单的保存命令行配置与运行命令行的GUI
 * 你可以通过自行修改应用目录下的`stylesheet.css`文件来修改窗口样式。
 * 如果文件目录下没有`stylesheet.css`文件，则会自动创建空的css文件。
 # 演示
+
+### v0.6更新 命令行解析
+
+![](https://github.com/AlanWanco/EasyCommandRunner/blob/main/pic/2024-01-28_22-33-56.gif)
+
 ### 注意：此演示下的gif为旧版本
 
 ![gif1](https://raw.githubusercontent.com/stota1320/EasyCommandRunner/main/pic/2024.01.26-165839.gif)
