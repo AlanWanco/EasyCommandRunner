@@ -600,8 +600,6 @@ class MyTab(QWidget):
             if array[i].startswith(("-", "/")) and i < len(array) - 1 and array[i+1].startswith(("-", "/")):
                 new_array.append('')
         a = (len(new_array)-3)/2
-        print(array)
-        print(new_array)
 
         if not a.is_integer():
             count = int(a + 0.5 + 1)
