@@ -602,6 +602,7 @@ class MyTab(QWidget):
                 new_array.append('')
 
         # 当第一个元素之后的元素数量是奇数时，最后增加空元素 
+        index = 0
         for i in range(1, len(new_array)):
             if new_array[i].startswith(("-", "/")):
                 index = i + 1
@@ -648,18 +649,20 @@ class MyTab(QWidget):
             self.editOther.setText("")
             self.commandReview.setText("")
             line_edits = self.findChildren(NewQLineEdit)
+            line_edits[4].setText("")
             line_edits[2].setText(new_array[0])
             line_edits[3].setText(new_array[1])
-            line_edits[4].setText(new_array[2])
+            if len(new_array) > 2:
+                line_edits[4].setText(new_array[2])
             
-            array_index = 3
-            for i in range(7, len(line_edits), 3):
-                try:
-                    line_edits[i].setText(new_array[array_index])
-                    line_edits[i + 1].setText(new_array[array_index + 1])
-                    array_index += 2
-                except IndexError:
-                    break
+                array_index = 3
+                for i in range(7, len(line_edits), 3):
+                    try:
+                        line_edits[i].setText(new_array[array_index])
+                        line_edits[i + 1].setText(new_array[array_index + 1])
+                        array_index += 2
+                    except IndexError:
+                        break
 
     def remove_line(self):
         sender = self.sender()  # 获取触发点击事件的按钮
