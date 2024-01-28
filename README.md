@@ -90,6 +90,12 @@ EasyCommandRunner是一个简单的保存命令行配置与运行命令行的GUI
 
 ![](https://raw.githubusercontent.com/AlanWanco/EasyCommandRunner/main/pic/2024-01-28_22-33-56.gif)
 
+为了方便美观，如果有两个连续的动作（比如`-动作1 -动作2`或者CMD的`/a /b`，程序会在后面生成一个空格，这种情况下偶尔会生成这种顺序：
+
+![](https://github.com/AlanWanco/EasyCommandRunner/blob/main/pic/Snipaste_2024-01-28_23-11-35.png?raw=true)
+
+善用命令预生成功能，空的编辑框不影响命令运行，命令本身有问题才会影响命令运行。
+
 ### 注意：此演示下的gif为旧版本
 
 ![gif1](https://raw.githubusercontent.com/stota1320/EasyCommandRunner/main/pic/2024.01.26-165839.gif)
