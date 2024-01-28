@@ -594,19 +594,34 @@ class MyTab(QWidget):
         buttons = self.findChildren(QPushButton)
         remove_buttons = [button.objectName() for button in buttons if 'removeButton' in button.objectName()]
         
+        # 当两个-开头的元素在一起时，中间增加空元素
         new_array = []
         for i in range(len(array)):
             new_array.append(array[i].strip())
             if array[i].startswith(("-", "/")) and i < len(array) - 1 and array[i+1].startswith(("-", "/")):
                 new_array.append('')
 
+        # 当第一个元素之后的元素数量是奇数时，最后增加空元素 
         for i in range(1, len(new_array)):
             if new_array[i].startswith(("-", "/")):
                 index = i + 1
                 break
-
         if index and index % 2 == 1:
             new_array.insert(index - 1, '')
+
+        # 处理途中
+        j = 0
+        while j < len(new_array):
+            if new_array[j].startswith(("-", "/")):
+                counter = 0
+                j += 1
+                while j < len(new_array) and not new_array[j].startswith(("-", "/")):
+                    counter += 1
+                    j += 1
+                if counter % 2 == 0:
+                    new_array.insert(j, '')
+            else:
+                j += 1
 
         a = (len(new_array)-3)/2
 
