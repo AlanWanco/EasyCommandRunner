@@ -599,6 +599,8 @@ class MyTab(QWidget):
             new_array.append(array[i].strip())
             if array[i].startswith(("-", "/")) and i < len(array) - 1 and array[i+1].startswith(("-", "/")):
                 new_array.append('')
+        if len(new_array) > 1 and not new_array[1].startswith(("-", "/")):
+            new_array.insert(2, '')
         a = (len(new_array)-3)/2
 
         if not a.is_integer():
