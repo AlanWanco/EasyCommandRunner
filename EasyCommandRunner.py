@@ -13,7 +13,7 @@ class MyApp(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.current_tab_index = 0  # 记录当前显示的Tab索引
+        self.current_tab_index = 0  
         self.config_file = 'config.json'
 
         self.initUI()
@@ -397,7 +397,6 @@ class MyTab(QWidget):
         font = self.editDescription.font()
         metrics = QFontMetrics(font)
         lineHeight = metrics.lineSpacing()
-        self.editDescription.setFixedHeight(6*lineHeight + 20)
         self.editDescription.setStyleSheet(stylesheet)
 
         self.commandReview = QTextEdit()
@@ -405,7 +404,6 @@ class MyTab(QWidget):
         self.commandReview.viewport().setCursor(Qt.IBeamCursor)
         self.commandReview.setFocusPolicy(Qt.NoFocus)
 
-        self.commandReview.setFixedHeight(4*lineHeight + 10)
         self.commandReview.setStyleSheet(stylesheet)
         self.commandReview.setPlaceholderText("预生成命令 文件路径有空格不需要前后加上双引号")
 
@@ -577,9 +575,9 @@ class MyTab(QWidget):
             checkbox.setChecked(state)
 
     def remove_line(self):
-        sender = self.sender()  # 获取触发点击事件的按钮
+        sender = self.sender() 
         if sender is not None:
-            button_name = sender.objectName()  # 获取按钮的对象名称
+            button_name = sender.objectName()  
             index = int(button_name.replace("removeButton", ""))
             layout_name = "exhbox" + str(index)
 
