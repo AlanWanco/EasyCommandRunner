@@ -344,23 +344,31 @@ class MyTab(QWidget):
         self.hbox2.addWidget(self.label2)
         self.hbox2.addWidget(self.edit2)
 
-        self.edit3_1 = NewQLineEdit()
         self.chk1 = QCheckBox(self)
         self.chk1.setObjectName("chkbox1") 
         self.chk1.setChecked(True) 
         self.chk1.stateChanged.connect(lambda state: self.toggle_run(self.chk1, state))
+
+        self.edit3_1 = NewQLineEdit()
         self.edit3_1.setPlaceholderText("功能1")
         self.edit3_1.setObjectName("name_edit3_1")
+
         self.label3 = QLabel("：")
+
         self.edit3_2 = NewQLineEdit()
-        self.hbox3 = QHBoxLayout()
         self.edit3_2.setPlaceholderText("参数1")
         self.edit3_2.setObjectName("name_edit3_2")
 
+        self.edit3_3 = NewQLineEdit()
+        self.edit3_3.setPlaceholderText("备注1")
+        self.edit3_3.setObjectName("name_edit3_3")
+
+        self.hbox3 = QHBoxLayout()
         self.hbox3.addWidget(self.chk1)
         self.hbox3.addWidget(self.edit3_1)
         self.hbox3.addWidget(self.label3)
         self.hbox3.addWidget(self.edit3_2)
+        self.hbox3.addWidget(self.edit3_3)
 
         self.addLineButton = QPushButton(" + ")
         self.addLineButton.clicked.connect(self.add_new_line)
@@ -473,6 +481,10 @@ class MyTab(QWidget):
         line_edit2.setPlaceholderText("参数" + str(counter))
         line_edit2.setObjectName("parameter" + str(counter)) 
 
+        line_edit3 = NewQLineEdit()
+        line_edit3.setPlaceholderText("备注" + str(counter))
+        line_edit3.setObjectName("comment" + str(counter))
+
         self.rmLineButton = QPushButton(" - ")
         self.rmLineButton.clicked.connect(self.remove_line)
         self.rmLineButton.setObjectName("removeButton" + str(counter))
@@ -484,6 +496,7 @@ class MyTab(QWidget):
         hbox.addWidget(line_edit1)
         hbox.addWidget(label)
         hbox.addWidget(line_edit2)
+        hbox.addWidget(line_edit3)
         hbox.addWidget(self.rmLineButton)
 
         self.line_codes[str(counter)] = line_code
