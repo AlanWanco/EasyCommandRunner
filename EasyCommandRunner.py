@@ -114,7 +114,7 @@ class MyApp(QWidget):
 
     def add_new_tab(self, line_codes, text_dict=None, checkbox_dict=None):
         tab_index = self.tabs.count() + 1
-        tab = MyTab()
+        tab = MyTab(self)
         self.tabs.addTab(tab, f'标签{tab_index}')
         self.tabs.setCurrentIndex(self.tabs.count() - 1)
         self.new_line(tab, line_codes)
@@ -305,15 +305,15 @@ class MyApp(QWidget):
 
 class MyTab(QWidget):
 
-    def __init__(self):
+    def __init__(self, parent):
         super().__init__()
         self.counter = 1
         self.line_codes = {}
+        self.parent = parent
         self.initUI()
         with open(".\\stylesheet.css", 'r') as f:
             stylesheet = f.read()
         self.setStyleSheet(stylesheet)
-        self.my_app=MyApp
 
     def initUI(self):
         self.scrollArea = QScrollArea()
@@ -561,6 +561,9 @@ class MyTab(QWidget):
 
         if event.key() == Qt.Key_D and QApplication.keyboardModifiers() == Qt.ControlModifier:
             self.selectAllCheckboxes(False)
+
+        if event.key() == Qt.Key_S and QApplication.keyboardModifiers() == Qt.ControlModifier:
+            self.parent.keyPressEvent(event)
 
     def on_reviewButton_clicked(self): 
         self.get_command()  
