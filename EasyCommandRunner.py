@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import sys
 import json
@@ -13,7 +14,7 @@ class MyApp(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.current_tab_index = 0  
+        self.current_tab_index = 0  # 记录当前显示的Tab索引
         self.config_file = 'config.json'
 
         self.initUI()
@@ -242,7 +243,7 @@ class MyApp(QWidget):
             
         text_dict['editDescription'] = current_tab.editDescription.toPlainText()
 
-        new_tab = MyTab()
+        new_tab = MyTab(self)
         new_tab_index = current_tab_index + 1  # 插入到当前标签页的后面
         self.tabs.insertTab(new_tab_index, new_tab, f'标签{new_tab_index}')
         self.new_line(new_tab, line_codes)
@@ -340,9 +341,16 @@ class MyTab(QWidget):
         self.label2 = QLabel("程序本体：")
         self.edit2 = NewQLineEdit()
         self.edit2.setObjectName("name_edit2")
+        self.edit2.setPlaceholderText("粘贴命令可以解析")
+
+        self.analysisBtn = QPushButton("解析")
+        self.analysisBtn.setStyleSheet("QPushButton{width:30px;}")
+        self.analysisBtn.clicked.connect(self.analysis_command)
+
         self.hbox2 = QHBoxLayout()
         self.hbox2.addWidget(self.label2)
         self.hbox2.addWidget(self.edit2)
+        self.hbox2.addWidget(self.analysisBtn)
 
         self.chk1 = QCheckBox(self)
         self.chk1.setObjectName("chkbox1") 
@@ -394,16 +402,18 @@ class MyTab(QWidget):
             stylesheet = f.read()
         self.editDescription.setStyleSheet(stylesheet)
 
-        font = self.editDescription.font()
-        metrics = QFontMetrics(font)
-        lineHeight = metrics.lineSpacing()
+        # font = self.editDescription.font()
+        # metrics = QFontMetrics(font)
+        # lineHeight = metrics.lineSpacing()
+        # self.editDescription.setFixedHeight(6*lineHeight + 20)
         self.editDescription.setStyleSheet(stylesheet)
 
         self.commandReview = QTextEdit()
         self.commandReview.setReadOnly(True)
         self.commandReview.viewport().setCursor(Qt.IBeamCursor)
-        self.commandReview.setFocusPolicy(Qt.NoFocus)
+        # self.commandReview.setFocusPolicy(Qt.NoFocus)
 
+        # self.commandReview.setFixedHeight(4*lineHeight + 10)
         self.commandReview.setStyleSheet(stylesheet)
         self.commandReview.setPlaceholderText("预生成命令 文件路径有空格不需要前后加上双引号")
 
@@ -574,27 +584,82 @@ class MyTab(QWidget):
         for checkbox in checkboxes:
             checkbox.setChecked(state)
 
-    def remove_line(self):
-        sender = self.sender() 
-        if sender is not None:
-            button_name = sender.objectName()  
-            index = int(button_name.replace("removeButton", ""))
-            layout_name = "exhbox" + str(index)
+    def analysis_command(self):
+        s = ''
+        s = self.edit2.text()
+        parts = re.split(r'( ".+?"| )', s)
+        array = s.split()
+        array = [part.replace('"', '') for part in parts if part.strip()] 
 
-            if str(index) in self.line_codes:
-                del self.line_codes[str(index)]
+        buttons = self.findChildren(QPushButton)
+        remove_buttons = [button.objectName() for button in buttons if 'removeButton' in button.objectName()]
+        
+        new_array = []
+        for i in range(len(array)):
+            new_array.append(array[i])
+            if array[i].startswith(("-", "/")) and i < len(array) - 1 and array[i+1].startswith(("-", "/")):
+                new_array.append('')
+        a = (len(new_array)-3)/2
 
-            for i in range(self.vbox.count()):
-                item = self.vbox.itemAt(i)
-                if item and item.layout() and item.layout().objectName() == layout_name:
-                    while item.layout().count():
-                        sub_item = item.layout().takeAt(0)
-                        widget = sub_item.widget()
-                        if widget:
-                            widget.deleteLater()
-                    self.vbox.removeItem(item)
-                    self.counter -= 1
+        if not a.is_integer():
+            count = int(a + 0.5 + 1)
+        else:
+            count = int(a + 1)
+        if len(new_array)>1:
+            indexs = []
+            for remove_button in remove_buttons:
+                indexs.append(int(remove_button.replace("removeButton", "")))
+            if indexs:
+                for index in indexs:
+                    self.rm_line(index)
+
+        i = 2
+        while i<= count:
+            self.add_new_line(str(i))
+            i += 1
+
+        # 填入内容
+        if len(new_array) > 1:
+            self.chk1.setChecked(True) 
+            self.editOther.setText("")
+            self.commandReview.setText("")
+            line_edits = self.findChildren(NewQLineEdit)
+            line_edits[2].setText(new_array[0])
+            line_edits[3].setText(new_array[1])
+            line_edits[4].setText(new_array[2])
+            
+            array_index = 3
+            for i in range(7, len(line_edits), 3):
+                try:
+                    line_edits[i].setText(new_array[array_index])
+                    line_edits[i + 1].setText(new_array[array_index + 1])
+                    array_index += 2
+                except IndexError:
                     break
+
+    def remove_line(self):
+        sender = self.sender()  # 获取触发点击事件的按钮
+        if sender is not None:
+            button_name = sender.objectName()  # 获取按钮的对象名称
+            index = int(button_name.replace("removeButton", ""))
+            self.rm_line(index)
+
+    def rm_line(self, index):
+        layout_name = "exhbox" + str(index)
+
+        if str(index) in self.line_codes:
+                del self.line_codes[str(index)]
+        for i in range(self.vbox.count()):
+            item = self.vbox.itemAt(i)
+            if item and item.layout() and item.layout().objectName() == layout_name:
+                while item.layout().count():
+                    sub_item = item.layout().takeAt(0)
+                    widget = sub_item.widget()
+                    if widget:
+                        widget.deleteLater()
+                self.vbox.removeItem(item)
+                self.counter -= 1
+                break
 
 class NewQLineEdit(QLineEdit):
     def __init__(self, *args, **kwargs):
