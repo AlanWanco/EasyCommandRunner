@@ -88,7 +88,7 @@ EasyCommandRunner是一个简单的保存命令行配置与运行命令行的GUI
 
 ### v0.6更新 命令行解析
 
-![](https://github.com/AlanWanco/EasyCommandRunner/blob/main/pic/2024-01-28_22-33-56.gif)
+![](https://raw.githubusercontent.com/AlanWanco/EasyCommandRunner/main/pic/2024-01-28_22-33-56.gif)
 
 ### 注意：此演示下的gif为旧版本
 
