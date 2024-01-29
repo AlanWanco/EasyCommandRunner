@@ -540,7 +540,7 @@ class MyTab(QWidget):
     def get_command(self):
         command = []
         other = self.editOther.text()
-        command.append(self.edit2.text())
+        command.append(self.edit2.text().strip())
         # 遍历所有的vbox
         for i in range(self.vbox.count()):
             hbox = self.vbox.itemAt(i)
@@ -553,9 +553,9 @@ class MyTab(QWidget):
                     
                     if isinstance(widget, QCheckBox) and widget.checkState() == Qt.Checked:
                         line_edit1 = hbox.itemAt(j+1).widget()
-                        command.append(line_edit1.text())
+                        command.append(line_edit1.text().strip())
                         line_edit2 = hbox.itemAt(j+3).widget()
-                        command.append(line_edit2.text())
+                        command.append(line_edit2.text().strip())
 
         command.append(other)
         self.command_string = subprocess.list2cmdline(command).replace("\"\"","")
