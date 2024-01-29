@@ -402,28 +402,28 @@ class MyTab(QWidget):
             stylesheet = f.read()
         self.editDescription.setStyleSheet(stylesheet)
 
-        # font = self.editDescription.font()
-        # metrics = QFontMetrics(font)
-        # lineHeight = metrics.lineSpacing()
-        # self.editDescription.setFixedHeight(6*lineHeight + 20)
         self.editDescription.setStyleSheet(stylesheet)
 
         self.commandReview = QTextEdit()
         self.commandReview.setReadOnly(True)
         self.commandReview.viewport().setCursor(Qt.IBeamCursor)
-        # self.commandReview.setFocusPolicy(Qt.NoFocus)
 
-        # self.commandReview.setFixedHeight(4*lineHeight + 10)
         self.commandReview.setStyleSheet(stylesheet)
         self.commandReview.setPlaceholderText("预生成命令 文件路径有空格不需要前后加上双引号")
 
         self.hbox4 = QHBoxLayout()
+
+        self.prevTabBtn = QPushButton("←上一个标签页")
+        self.prevTabBtn.clicked.connect(self.prevTab)
 
         self.reviewButton = QPushButton("预生成命令")
         self.reviewButton.clicked.connect(self.on_reviewButton_clicked)
 
         self.runButton = QPushButton("运行(Ctrl+Enter)")
         self.runButton.clicked.connect(self.run_command)
+
+        self.nextTabBtn =  QPushButton("下一个标签页→")
+        self.nextTabBtn.clicked.connect(self.nextTab)
       
         self.vbox.addLayout(self.hbox_title)
         self.vbox.addLayout(self.hbox1) 
@@ -438,9 +438,11 @@ class MyTab(QWidget):
         self.scrollArea.setWidget(self.scrollWidget)
         self.scrollArea.setWidgetResizable(True)
 
-        self.buttonContainer = QHBoxLayout()  
+        self.buttonContainer = QHBoxLayout()
+        self.buttonContainer.addWidget(self.prevTabBtn)
         self.buttonContainer.addWidget(self.reviewButton)
         self.buttonContainer.addWidget(self.runButton)
+        self.buttonContainer.addWidget(self.nextTabBtn)
 
         self.mainLayout = QVBoxLayout() 
         self.mainLayout.addWidget(self.scrollArea)
@@ -670,6 +672,16 @@ class MyTab(QWidget):
             button_name = sender.objectName()  # 获取按钮的对象名称
             index = int(button_name.replace("removeButton", ""))
             self.rm_line(index)
+
+    def prevTab(self):
+        self.tab_index = self.parent.tabs.currentIndex()
+        self.tab_index = (self.tab_index - 1) % self.parent.tabs.count()
+        self.parent.tabs.setCurrentIndex(self.tab_index)
+
+    def nextTab(self):
+        self.tab_index = self.parent.tabs.currentIndex()
+        self.tab_index = (self.tab_index + 1) % self.parent.tabs.count()
+        self.parent.tabs.setCurrentIndex(self.tab_index)
 
     def rm_line(self, index):
         layout_name = "exhbox" + str(index)
