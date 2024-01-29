@@ -739,6 +739,8 @@ class NewQLineEdit(QLineEdit):
             urls = event.mimeData().urls()
             file_path = urls[0].toLocalFile()
             self.setText(file_path)
+        else:
+            super(NewQLineEdit, self).keyPressEvent(event) 
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Right and event.modifiers() == Qt.ControlModifier:
@@ -765,7 +767,9 @@ class NewQTextEdit(QTextEdit):
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
             file_path = urls[0].toLocalFile()
-            self.setText(file_path)
+            self.insertPlainText(file_path)
+        else:
+            super(NewQLineEdit, self).keyPressEvent(event) 
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Right and event.modifiers() == Qt.ControlModifier:
