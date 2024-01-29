@@ -37,6 +37,12 @@ class MyApp(QWidget):
         self.tray_icon.activated.connect(self.handle_tray_icon_activated)
         self.tray_icon.show()
 
+        shcNextTAB = QShortcut(QKeySequence(Qt.CTRL + Qt.Key_Right), self)
+        shcNextTAB.activated.connect(self.nextTab)
+
+        shcPrevTAB = QShortcut(QKeySequence(Qt.CTRL + Qt.Key_Left), self)
+        shcPrevTAB.activated.connect(self.prevTab)
+
         self.create_menu()
 
     def create_menu(self):
@@ -297,6 +303,16 @@ class MyApp(QWidget):
         self.tray_icon.hide()
         QApplication.quit()
 
+    def prevTab(self):
+        tab_index = self.tabs.currentIndex()
+        tab_index = (tab_index - 1) % self.tabs.count()
+        self.tabs.setCurrentIndex(tab_index)
+
+    def nextTab(self):
+        tab_index = self.tabs.currentIndex()
+        tab_index = (tab_index + 1) % self.tabs.count()
+        self.tabs.setCurrentIndex(tab_index)
+
     def closeEvent(self, event):
         self.settings = QSettings("SleepyKanata", "EasyCommandRunner")
         self.settings.setValue("currentTabIndex", self.tabs.currentIndex())
@@ -322,7 +338,7 @@ class MyTab(QWidget):
         self.vbox = QVBoxLayout(self.scrollWidget)
 
         self.label_title = QLabel("标题：")
-        self.edit_title = NewQLineEdit()
+        self.edit_title = NewQLineEdit(self.parent)
         self.edit_title.setObjectName("name_edit_title")
 
         self.hbox_title = QHBoxLayout()
@@ -330,7 +346,7 @@ class MyTab(QWidget):
         self.hbox_title.addWidget(self.edit_title)
 
         self.label1 = QLabel("运行路径：")
-        self.edit1 = NewQLineEdit()
+        self.edit1 = NewQLineEdit(self.parent)
         self.edit1.setPlaceholderText("为空则使用程序当前目录")
         self.edit1.setObjectName("name_edit1")
 
@@ -339,7 +355,7 @@ class MyTab(QWidget):
         self.hbox1.addWidget(self.edit1)
 
         self.label2 = QLabel("程序本体：")
-        self.edit2 = NewQLineEdit()
+        self.edit2 = NewQLineEdit(self.parent)
         self.edit2.setObjectName("name_edit2")
         self.edit2.setPlaceholderText("粘贴命令可以解析")
 
@@ -357,17 +373,17 @@ class MyTab(QWidget):
         self.chk1.setChecked(True) 
         self.chk1.stateChanged.connect(lambda state: self.toggle_run(self.chk1, state))
 
-        self.edit3_1 = NewQLineEdit()
+        self.edit3_1 = NewQLineEdit(self.parent)
         self.edit3_1.setPlaceholderText("功能1")
         self.edit3_1.setObjectName("name_edit3_1")
 
         self.label3 = QLabel("：")
 
-        self.edit3_2 = NewQLineEdit()
+        self.edit3_2 = NewQLineEdit(self.parent)
         self.edit3_2.setPlaceholderText("参数1")
         self.edit3_2.setObjectName("name_edit3_2")
 
-        self.edit3_3 = NewQLineEdit()
+        self.edit3_3 = NewQLineEdit(self.parent)
         self.edit3_3.setPlaceholderText("备注1")
         self.edit3_3.setObjectName("name_edit3_3")
 
@@ -392,11 +408,11 @@ class MyTab(QWidget):
         self.hbox5.addWidget(self.allSelectBtn)
         self.hbox5.addWidget(self.celAllSelectBtn)
 
-        self.editOther = NewQLineEdit()
+        self.editOther = NewQLineEdit(self.parent)
         self.editOther.setPlaceholderText("其他参数")
         self.editOther.setObjectName("name_editOther")
 
-        self.editDescription = QTextEdit()
+        self.editDescription = NewQTextEdit(self.parent)
         self.editDescription.setPlaceholderText("描述")
         with open(".\\stylesheet.css", 'r') as f:
             stylesheet = f.read()
@@ -481,17 +497,17 @@ class MyTab(QWidget):
         chk.setChecked(True) 
         chk.setObjectName("chkbox" + str(counter)) 
         chk.stateChanged.connect(lambda state: self.toggle_run(chk, state))
-        line_edit1 = NewQLineEdit()
+        line_edit1 = NewQLineEdit(self.parent)
         line_edit1.setPlaceholderText("功能" + str(counter))
         line_edit1.setObjectName("function" + str(counter)) 
         
         label = QLabel("：")
 
-        line_edit2 = NewQLineEdit()
+        line_edit2 = NewQLineEdit(self.parent)
         line_edit2.setPlaceholderText("参数" + str(counter))
         line_edit2.setObjectName("parameter" + str(counter)) 
 
-        line_edit3 = NewQLineEdit()
+        line_edit3 = NewQLineEdit(self.parent)
         line_edit3.setPlaceholderText("备注" + str(counter))
         line_edit3.setObjectName("comment" + str(counter))
 
@@ -574,6 +590,12 @@ class MyTab(QWidget):
 
         if event.key() == Qt.Key_S and QApplication.keyboardModifiers() == Qt.ControlModifier:
             self.parent.keyPressEvent(event)
+
+        # if event.key() == Qt.Key_Left and QApplication.keyboardModifiers() == Qt.ControlModifier:
+        #     self.prevTab()
+
+        # if event.key() == Qt.Key_Right and QApplication.keyboardModifiers() == Qt.ControlModifier:
+        #     self.nextTab()
 
     def on_reviewButton_clicked(self): 
         self.get_command()  
@@ -701,9 +723,10 @@ class MyTab(QWidget):
                 break
 
 class NewQLineEdit(QLineEdit):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, myApp, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.setAcceptDrops(True)
+        self.myApp = myApp
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -716,6 +739,42 @@ class NewQLineEdit(QLineEdit):
             urls = event.mimeData().urls()
             file_path = urls[0].toLocalFile()
             self.setText(file_path)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Right and event.modifiers() == Qt.ControlModifier:
+            self.myApp.nextTab()
+
+        if event.key() == Qt.Key_Left and event.modifiers() == Qt.ControlModifier:
+            self.myApp.prevTab()
+        else:
+            super(NewQLineEdit, self).keyPressEvent(event) 
+
+class NewQTextEdit(QTextEdit):
+    def __init__(self, myApp, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setAcceptDrops(True)
+        self.myApp = myApp
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.accept()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            file_path = urls[0].toLocalFile()
+            self.setText(file_path)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Right and event.modifiers() == Qt.ControlModifier:
+            self.myApp.nextTab()
+
+        if event.key() == Qt.Key_Left and event.modifiers() == Qt.ControlModifier:
+            self.myApp.prevTab()
+        else:
+            super(NewQTextEdit, self).keyPressEvent(event) 
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
