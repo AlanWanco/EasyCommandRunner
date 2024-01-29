@@ -437,6 +437,7 @@ class MyTab(QWidget):
 
         self.runButton = QPushButton("运行(Ctrl+Enter)")
         self.runButton.clicked.connect(self.run_command)
+        self.runButton.setObjectName("runBtn")
 
         self.nextTabBtn =  QPushButton("下一个标签页→")
         self.nextTabBtn.clicked.connect(self.nextTab)

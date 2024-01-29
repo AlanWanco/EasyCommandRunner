@@ -82,6 +82,16 @@ QPushButton{
     font-size: 14px;
 }
 QPushButton:hover {background-color: #272727; border-color: #414141;}
+QPushButton:pressed {background-color: #333333; border-color: #1e2228;}
+
+QPushButton#runBtn {
+    background-color: #1a263b;
+}
+QPushButton#runBtn:hover {
+    background-color: #1f2e48; border-color: #414141;}
+
+QPushButton#runBtn:pressed  {
+    background-color: #233350;border-color: #1e2228;}
 
 QPlainTextEdit {
     color: #f5f5f5; 
