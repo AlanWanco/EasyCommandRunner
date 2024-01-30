@@ -167,6 +167,6 @@ QTabBar::tab:!selected{
     background-color:#1b1d1d;
 }
 QTabBar::tab:hover{
-    background-color:#1b1d1d;
+    background-color:#222424;
 }
 QTabWidget::pane { border: none; }
