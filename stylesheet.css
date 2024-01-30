@@ -148,18 +148,18 @@ QComboBox QAbstractItemView{
     /* padding: 5px; */
 }
 QListView::item{
-    padding: 7px 10px 7px 10px;
+    padding: 6px 10px 6px 10px;
     background:#171717;
 }
 QListView::item:selected{
     background-color: #424444;
     border-radius: 5px;
-    padding: 6px 10px 6px 10px;
+    padding: 5px 10px 5px 10px;
 }
 QListView::item:hover{ 
     background-color: #3d3d3d;
     border-radius: 5px;
-    padding: 6px 10px 6px 10px;
+    padding: 5px 10px 5px 10px;
 }
 QComboBox::drop-down{
     image: url(./css/drop-downBtn.png);
