@@ -1,5 +1,5 @@
 # EasyCommandRunner
-![icon](https://raw.githubusercontent.com/stota1320/EasyCommandRunner/main/pic/SleepyKanata.jpg)
+![icon](./pic/SleepyKanata.jpg)
 
 # 介绍
 
@@ -9,7 +9,7 @@ EasyCommandRunner是一个简单的保存命令行配置与运行命令行的GUI
 
 ### **v0.62更新**
 * 加入**不包括运行程序的**命令后参数解析功能
-* 在'备注1'栏中输入运行程序后的命令，点击`增加`按钮可以解析新命令至旧命令后面
+* 在`备注1`栏中输入运行程序后的命令，点击`增加`按钮可以解析新命令至旧命令后面
 
 ### **v0.61更新**
 * 加入上下标签页切换按钮
@@ -42,7 +42,7 @@ EasyCommandRunner是一个简单的保存命令行配置与运行命令行的GUI
 
 ## 用户界面
 
-![UserInterface](https://raw.githubusercontent.com/stota1320/EasyCommandRunner/main/pic/Snipaste_2024-01-27_16-17-05.png)
+![UserInterface](./pic/Snipaste_2024-01-27_16-17-05.png)
 
 ## 快速开始
 
@@ -52,20 +52,20 @@ EasyCommandRunner是一个简单的保存命令行配置与运行命令行的GUI
 
 * 点击`增加标签` 新增空标签页
  
-![newTab](https://raw.githubusercontent.com/stota1320/EasyCommandRunner/main/pic/Snipaste_2024-01-27_16-20-01.png)
+![newTab](./pic/Snipaste_2024-01-27_16-20-01.png)
 
 * 在`程序本体`中填入`ping`，在`功能1`中填入`www.baidu.com` ~~这里如果还有其他留空的编辑框是不影响运行的，只取决于你的命令是否正确~~
 
-![ping](https://raw.githubusercontent.com/stota1320/EasyCommandRunner/main/pic/Snipaste_2024-01-27_16-29-27.png)
+![ping](./pic/Snipaste_2024-01-27_16-29-27.png)
 
 * 点击`预生成命令` 查看命令内容
   
-![预生成命令](https://raw.githubusercontent.com/stota1320/EasyCommandRunner/main/pic/Snipaste_2024-01-27_16-36-05.png)
+![预生成命令](./pic/Snipaste_2024-01-27_16-36-05.png)
 
 
 * 点击`运行` 在另一边的命令行窗口查看运行结果
 
-![result](https://raw.githubusercontent.com/stota1320/EasyCommandRunner/main/pic/Snipaste_2024-01-27_18-40-15.png)
+![result](./pic/Snipaste_2024-01-27_18-40-15.png)
 
 * 点击`保存` 保存当前配置
 
@@ -112,11 +112,11 @@ EasyCommandRunner是一个简单的保存命令行配置与运行命令行的GUI
 
 ### 注意：此演示下的gif为旧版本
 
-![gif1](https://raw.githubusercontent.com/stota1320/EasyCommandRunner/main/pic/2024.01.26-165839.gif)
+![gif1](./pic/2024.01.26-165839.gif)
 
-![gif2](https://raw.githubusercontent.com/stota1320/EasyCommandRunner/main/pic/2024-01-26_17-10-23.gif)
+![gif2](./pic/2024-01-26_17-10-23.gif)
 
-![gif3](https://raw.githubusercontent.com/stota1320/EasyCommandRunner/main/pic/2024-01-26_17-12-23.gif)
+![gif3](./pic/2024-01-26_17-12-23.gif)
 
 
 # 碎碎念
