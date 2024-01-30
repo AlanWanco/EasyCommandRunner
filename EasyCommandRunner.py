@@ -387,12 +387,17 @@ class MyTab(QWidget):
         self.edit3_3.setPlaceholderText("备注1")
         self.edit3_3.setObjectName("name_edit3_3")
 
+        self.anaAddBtn = QPushButton("增加")
+        self.anaAddBtn.setStyleSheet("QPushButton{width:30px;}")
+        self.anaAddBtn.clicked.connect(self.add_command)
+
         self.hbox3 = QHBoxLayout()
         self.hbox3.addWidget(self.chk1)
         self.hbox3.addWidget(self.edit3_1)
         self.hbox3.addWidget(self.label3)
         self.hbox3.addWidget(self.edit3_2)
         self.hbox3.addWidget(self.edit3_3)
+        self.hbox3.addWidget(self.anaAddBtn)
 
         self.addLineButton = QPushButton(" + ")
         self.addLineButton.clicked.connect(self.add_new_line)
@@ -556,7 +561,7 @@ class MyTab(QWidget):
                         command.append(line_edit1.text().strip())
                         line_edit2 = hbox.itemAt(j+3).widget()
                         command.append(line_edit2.text().strip())
-
+        self.preCmd = command
         command.append(other)
         self.command_string = subprocess.list2cmdline(command).replace("\"\"","")
 
@@ -612,42 +617,10 @@ class MyTab(QWidget):
     def analysis_command(self):
         s = ''
         s = self.edit2.text()
-        parts = re.split(r'( ".+?"| )', s)
-        array = s.split()
-        array = [part.replace('"', '') for part in parts if part.strip()] 
+        new_array = self.analysis(s)
 
         buttons = self.findChildren(QPushButton)
         remove_buttons = [button.objectName() for button in buttons if 'removeButton' in button.objectName()]
-        
-        # 当两个-开头的元素在一起时，中间增加空元素
-        new_array = []
-        for i in range(len(array)):
-            new_array.append(array[i].strip())
-            if array[i].startswith(("-", "/")) and i < len(array) - 1 and array[i+1].startswith(("-", "/")):
-                new_array.append('')
-
-        # 当第一个元素之后的元素数量是奇数时，最后增加空元素 
-        index = 0
-        for i in range(1, len(new_array)):
-            if new_array[i].startswith(("-", "/")):
-                index = i + 1
-                break
-        if index and index % 2 == 1:
-            new_array.insert(index - 1, '')
-
-        # 处理途中
-        j = 0
-        while j < len(new_array):
-            if new_array[j].startswith(("-", "/")):
-                counter = 0
-                j += 1
-                while j < len(new_array) and not new_array[j].startswith(("-", "/")):
-                    counter += 1
-                    j += 1
-                if counter % 2 == 0:
-                    new_array.insert(j, '')
-            else:
-                j += 1
 
         a = (len(new_array)-3)/2
 
@@ -673,13 +646,13 @@ class MyTab(QWidget):
             self.chk1.setChecked(True) 
             self.editOther.setText("")
             self.commandReview.setText("")
+
             line_edits = self.findChildren(NewQLineEdit)
             line_edits[4].setText("")
             line_edits[2].setText(new_array[0])
             line_edits[3].setText(new_array[1])
             if len(new_array) > 2:
                 line_edits[4].setText(new_array[2])
-            
                 array_index = 3
                 for i in range(7, len(line_edits), 3):
                     try:
@@ -688,6 +661,149 @@ class MyTab(QWidget):
                         array_index += 2
                     except IndexError:
                         break
+
+    def add_command(self):
+        s = ''
+        s = self.edit3_3.text()
+        new_array = self.analysis(s, 1)
+        if len(new_array)>1:
+            self.edit3_3.setText("")
+
+            # 计算增加行数
+            a = (len(new_array))/2 
+            count = self.costom_round(a) # 五入 
+            old_array = self.get_writed_cmd() 
+            b = (len(old_array))/2
+            old_lines = self.costom_round(b) 
+            # print('旧有数据的所有行数', old_lines)
+
+            # 计算增加位置
+            lst_reversed = old_array[::-1]
+            last_non_empty_index = None
+            for i, item in enumerate(lst_reversed):
+                if item:
+                    last_non_empty_index = i #获取旧列表中倒数的空编辑框数量
+                    break
+            if last_non_empty_index is None:
+                last_non_empty_index = 0 #当旧编辑框只有两个且都为空行时 默认空编辑框数量为0
+
+            # print('旧数据末尾的空格数', last_non_empty_index)
+
+            # 旧有数据实际有数据的空格数 = 旧有数据的数量 - 旧有数据末尾的空格数
+            last_num = len(old_array) - last_non_empty_index 
+            a = (last_num)/2
+            count_pos = self.costom_round(a) # 五入
+
+            # 旧数据末尾的空行数 = 旧有数据的所有行数 - 旧有数据的实际行数
+            blank_lines = old_lines - count_pos
+
+            # print('旧数据末尾的空行数', blank_lines)
+
+            # 新增加行的初始数字
+            j = count_pos + 1
+            # print('新增加行的初始数字', j)
+            # 新增加行的循环次数 = 新输入数据的行数 - 旧有的空行行数
+            k = count - blank_lines + count_pos
+            # print('新增加行的循环次数', k)
+            if all(elem == '' for elem in old_array):
+                k -= old_lines
+            while j <= k:# 循环次数
+                self.add_new_line(str(j))
+                j += 1
+
+            # 单独处理最早的两个空行没有内容的情况
+            line_edits = self.findChildren(NewQLineEdit)
+            # if old_array == ['', '']:
+            if all(elem == '' for elem in old_array):
+                line_edits[3].setText(new_array[0])
+                line_edits[4].setText(new_array[1])
+                array_index = 2
+            else:
+                array_index = 0
+
+            # 新输入行的初始数字 = 旧有数据的行数 +1
+            i = old_lines + 1
+            # print('新输入行的初始数字', i)
+            if all(elem == '' for elem in old_array):
+                start_num = 7
+            else:
+                start_num = (count_pos + 1) * 3 + 1
+            for i in range(start_num, len(line_edits), 3):
+                try:
+                    line_edits[i].setText(new_array[array_index])
+                    line_edits[i + 1].setText(new_array[array_index + 1])
+                    array_index += 2
+                except IndexError:
+                    break
+
+    def costom_round(self, num):
+        count = 0
+        if not num.is_integer():
+            count = int(num + 0.5)
+        else:
+            count = int(num)
+        return count
+
+    def get_writed_cmd(self):
+        command = []
+        # 遍历所有的vbox
+        for i in range(self.vbox.count()):
+            hbox = self.vbox.itemAt(i)
+            if isinstance(hbox, QHBoxLayout):
+                line_edit1 = None
+                line_edit2 = None
+                # 遍历所有的hbox
+                for j in range(hbox.count()):
+                    widget = hbox.itemAt(j).widget()
+                    if widget == self.edit1 or widget == self.edit_title or widget == self.edit2:
+                        continue
+                    if isinstance(widget, QCheckBox):
+                        line_edit1 = hbox.itemAt(j+1).widget()
+                        command.append(line_edit1.text().strip())
+                        line_edit2 = hbox.itemAt(j+3).widget()
+                        command.append(line_edit2.text().strip())
+        return command
+
+    def analysis(self, s , code = 0):
+        parts = re.split(r'( ".+?"| )', s)
+        array = s.split()
+        array = [part.replace('"', '') for part in parts if part.strip()] 
+
+        # 当两个-开头的元素在一起时，中间增加空元素
+        new_array = []
+        for i in range(len(array)):
+            new_array.append(array[i].strip())
+            if array[i].startswith(("-", "/")) and i < len(array) - 1 and array[i+1].startswith(("-", "/")):
+                new_array.append('')
+
+        # 当第一个元素之后的元素数量是奇数时，最后增加空元素 
+        index = 0
+        for i in range(1, len(new_array)):
+            if new_array[i].startswith(("-", "/")):
+                index = i + 1
+                break
+        if code == 1:
+            if index and index % 2 == 0:
+                new_array.insert(index - 1, '')
+        else:
+            if index and index % 2 == 1:
+                new_array.insert(index - 1, '')
+
+        # 处理途中
+        j = 0
+        while j < len(new_array):
+            if new_array[j].startswith(("-", "/")):
+                counter = 0
+                j += 1
+                while j < len(new_array) and not new_array[j].startswith(("-", "/")):
+                    counter += 1
+                    j += 1
+                if counter % 2 == 0:
+                    new_array.insert(j, '')
+            else:
+                j += 1
+
+        return new_array
 
     def remove_line(self):
         sender = self.sender()  # 获取触发点击事件的按钮
