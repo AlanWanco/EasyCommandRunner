@@ -78,6 +78,9 @@ class MyApp(QWidget):
             stylesheet = f.read()
         self.comboBox.setView(QListView())
         self.comboBox.setStyleSheet(stylesheet)
+        self.comboBox.setMaxVisibleItems(30)
+        self.tabs.tabBar().tabMoved.connect(self.loadCombo)
+        self.tabs.tabBar().tabCloseRequested.connect(self.loadCombo)
 
         self.addTabButton = QPushButton("增加标签")
         self.addTabButton.clicked.connect(self.add_new_tab)
@@ -179,20 +182,15 @@ class MyApp(QWidget):
             for field, text_edit in edits_dict.items():
                 tab_config[field] = text_edit.text()
 
-            #单独设置描述
             tab_config['editDescription'] = tab.editDescription.toPlainText()
 
-            #设置标题
             tab_name = tab.edit_title.text() 
             if tab_name:
                 self.tabs.setTabText(index, tab_name)
 
-            #新行计数器
             config['counters'].append(tab.counter)
             
-            #写入单页配置的内容
             config['tabs'].append(tab_config)
-            #单独行的index
             config['line_codes'].append(tab.line_codes)
 
             checkbox_statuses = {}
@@ -237,9 +235,11 @@ class MyApp(QWidget):
 
     def on_reload_button(self):
         current_tab_index = self.tabs.currentIndex()
-        self.tabs.clear()  # 清空当前的Tab部件
-        self.load_config()  # 重新加载配置
+        self.tabs.clear()  
+        self.comboBox.clear()
+        self.load_config()  
         self.tabs.setCurrentIndex(current_tab_index)
+        self.tabs.tabBar().tabMoved.connect(self.loadCombo)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_S and QApplication.keyboardModifiers() == Qt.ControlModifier:
@@ -256,15 +256,16 @@ class MyApp(QWidget):
         line_edits = current_tab.findChildren(QLineEdit)
         for edit in line_edits:
             text_dict[edit.objectName()] = edit.text()
-            
         text_dict['editDescription'] = current_tab.editDescription.toPlainText()
-
         new_tab = MyTab(self)
         new_tab_index = current_tab_index + 1  # 插入到当前标签页的后面
         self.tabs.insertTab(new_tab_index, new_tab, f'标签{new_tab_index}')
         self.new_line(new_tab, line_codes)
         self.write_text(new_tab, text_dict, new_tab_index)
         self.tabs.setCurrentIndex(new_tab_index)
+        self.comboBox.clear()
+        for index in range(self.tabs.count()):
+            self.comboBox.addItem(self.tabs.tabText(index))
 
     def compare_files(self, file1, file2):
         with open(file1, 'r') as f1, open(file2, 'r') as f2:
@@ -278,14 +279,14 @@ class MyApp(QWidget):
         self.backup_dir = './backup'
         self.destination_file = self.backup_dir + '/config_' + self.formatted_datetime +'.json'
 
-        if os.path.exists('config.json'): # 先判断是否存在配置文件
+        if os.path.exists('config.json'): 
 
-            if not os.path.exists(self.backup_dir):# 判断是否存在路径 没有则创建路径
+            if not os.path.exists(self.backup_dir):
                 os.makedirs(self.backup_dir)
 
-            files = os.listdir(self.backup_dir)# 获取文件列表
+            files = os.listdir(self.backup_dir)
 
-            if not files:# 如果空文件夹 直接复制
+            if not files:
                 shutil.copy2('config.json', self.destination_file)
             else:
                 paths = [os.path.join(self.backup_dir, basename) for basename in files]
@@ -326,9 +327,13 @@ class MyApp(QWidget):
     def closeEvent(self, event):
         self.settings = QSettings("SleepyKanata", "EasyCommandRunner")
         self.settings.setValue("currentTabIndex", self.tabs.currentIndex())
-        # super(MyApp, self).closeEvent(event)
         event.ignore()
         self.hide()
+
+    def loadCombo(self):
+        self.comboBox.clear()
+        for index in range(self.tabs.count()):
+            self.comboBox.addItem(self.tabs.tabText(index))
 
 class MyTab(QWidget):
 
@@ -608,12 +613,6 @@ class MyTab(QWidget):
         if event.key() == Qt.Key_S and QApplication.keyboardModifiers() == Qt.ControlModifier:
             self.parent.keyPressEvent(event)
 
-        # if event.key() == Qt.Key_Left and QApplication.keyboardModifiers() == Qt.ControlModifier:
-        #     self.prevTab()
-
-        # if event.key() == Qt.Key_Right and QApplication.keyboardModifiers() == Qt.ControlModifier:
-        #     self.nextTab()
-
     def on_reviewButton_clicked(self): 
         self.get_command()  
         self.commandReview.setText(self.command_string)  
@@ -682,7 +681,7 @@ class MyTab(QWidget):
 
             # 计算增加行数
             a = (len(new_array))/2 
-            count = self.costom_round(a) # 五入 
+            count = self.costom_round(a) 
             old_array = self.get_writed_cmd() 
             b = (len(old_array))/2
             old_lines = self.costom_round(b) 
@@ -703,7 +702,7 @@ class MyTab(QWidget):
             # 旧有数据实际有数据的空格数 = 旧有数据的数量 - 旧有数据末尾的空格数
             last_num = len(old_array) - last_non_empty_index 
             a = (last_num)/2
-            count_pos = self.costom_round(a) # 五入
+            count_pos = self.costom_round(a)
 
             # 旧数据末尾的空行数 = 旧有数据的所有行数 - 旧有数据的实际行数
             blank_lines = old_lines - count_pos
@@ -817,9 +816,9 @@ class MyTab(QWidget):
         return new_array
 
     def remove_line(self):
-        sender = self.sender()  # 获取触发点击事件的按钮
+        sender = self.sender()  
         if sender is not None:
-            button_name = sender.objectName()  # 获取按钮的对象名称
+            button_name = sender.objectName()  
             index = int(button_name.replace("removeButton", ""))
             self.rm_line(index)
 
@@ -910,7 +909,9 @@ class NewQTextEdit(QTextEdit):
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-
+    if not os.path.exists('stylesheet.css'):
+        with open('stylesheet.css', 'w') as f:
+            pass
     with open(".\\stylesheet.css", 'r') as f:
         stylesheet = f.read()
     app.setStyleSheet(stylesheet)

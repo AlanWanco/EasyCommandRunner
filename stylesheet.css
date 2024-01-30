@@ -8,41 +8,6 @@
 *:focus {
     outline: none;
 }
-QCheckBox::indicator:checked{
-    image: url(./css/checked_image.png);
-}
-QCheckBox::indicator:unchecked{
-    image: url(./css/unchecked_image.png);
-}
-QTabBar::close-button {
-    image: url(./css/close-button.png);
-    subcontrol-position: right;
-}
-QTabBar::close-button:hover {
-    image: url(./css/close-button_hover.png);
-}
-QTabBar::close-button:pressed {
-    image: url(./css/lose-button_pressed.png);
-}
-QTabBar::tab {
-    background-color:#121414;
-    font-size: 14px;
-    color: #f5f5f5; 
-    padding: 5px;
-    border: 1px solid #1e2228;
-    font-family:'Microsoft YaHei';
-    border-radius: 5px;
-}
-QTabBar::tab:selected{
-    background-color:#424444;
-}
-QTabBar::tab:!selected{
-    background-color:#121414;
-}
-QTabBar::tab:hover{
-    background-color:#1b1d1d;
-}
-QTabWidget::pane { border: none; }
 QWidget{
     background-color:#121414;
     border-radius: 5px;
@@ -51,6 +16,12 @@ QTabWidget{
     background-color:#121414;
     padding: 5px;
     border-radius: 5px;
+}
+QCheckBox::indicator:checked{
+    image: url(./css/checked_image.png);
+}
+QCheckBox::indicator:unchecked{
+    image: url(./css/unchecked_image.png);
 }
 QTextEdit{
     background-color:#181818;
@@ -93,10 +64,10 @@ QPushButton#runBtn {
 }
 QPushButton#runBtn:hover {
     background-color: #1f2e48; border-color: #414141;}
-
+    
 QPushButton#runBtn:pressed  {
     background-color: #233350;border-color: #1e2228;}
-
+    
 QPlainTextEdit {
     color: #f5f5f5; 
     font-size: 14px;
@@ -137,15 +108,15 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
     background: none;
 }
 QComboBox {
-    background-color: #171717;
+    background-color: #1b1d1d;
     color: #f5f5f5;
     border: 1px solid #1e2228;
+    margin: 0px 0px 0px 8px;
 }
 QComboBox QAbstractItemView{
     background-color: #171717;
     color: #f5f5f5;
     border: 1px solid #1e2228;
-    /* padding: 5px; */
 }
 QListView::item{
     padding: 6px 10px 6px 10px;
@@ -167,3 +138,35 @@ QComboBox::drop-down{
 QTabBar::scroller { 
     width: 0px; 
 }
+QTabBar::close-button {
+    image: url(./css/close-button.png);
+    subcontrol-position: right;
+}
+QTabBar::close-button:hover {
+    image: url(./css/close-button_hover.png);
+}
+QTabBar::close-button:pressed {
+    image: url(./css/lose-button_pressed.png);
+}
+QTabBar::tab {
+    background-color:#121414;
+    font-size: 14px;
+    color: #f5f5f5; 
+    padding: 5px;
+    border: 1px solid #1e2228;
+    font-family:'Microsoft YaHei';
+    /* border-radius: 5px; */
+    border-top-left-radius: 5px;
+    border-top-right-radius: 5px;
+    margin: 0px 2px 0px 2px;
+}
+QTabBar::tab:selected{
+    background-color:#424444;
+}
+QTabBar::tab:!selected{
+    background-color:#1b1d1d;
+}
+QTabBar::tab:hover{
+    background-color:#1b1d1d;
+}
+QTabWidget::pane { border: none; }
