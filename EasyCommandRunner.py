@@ -71,6 +71,14 @@ class MyApp(QWidget):
         self.tabs.setMovable(True)
         self.tabs.tabCloseRequested.connect(self.close_tab)  
 
+        self.comboBox = QComboBox()
+        self.comboBox.activated.connect(self.tabs.setCurrentIndex)
+        self.tabs.setCornerWidget(self.comboBox, Qt.TopRightCorner)
+        with open(".\\stylesheet.css", 'r') as f:
+            stylesheet = f.read()
+        self.comboBox.setView(QListView())
+        self.comboBox.setStyleSheet(stylesheet)
+
         self.addTabButton = QPushButton("增加标签")
         self.addTabButton.clicked.connect(self.add_new_tab)
 
@@ -127,6 +135,8 @@ class MyApp(QWidget):
         self.new_line(tab, line_codes)
         self.write_text(tab, text_dict, tab_index)
         self.toggle_checkbox(tab, checkbox_dict)
+
+        self.comboBox.addItem(self.tabs.tabText(self.tabs.count() - 1))
 
     def load_config(self):
         try:
@@ -324,6 +334,7 @@ class MyTab(QWidget):
 
     def __init__(self, parent):
         super().__init__()
+
         self.counter = 1
         self.line_codes = {}
         self.parent = parent
@@ -384,7 +395,7 @@ class MyTab(QWidget):
         self.edit3_2.setObjectName("name_edit3_2")
 
         self.edit3_3 = NewQLineEdit(self.parent)
-        self.edit3_3.setPlaceholderText("备注1")
+        self.edit3_3.setPlaceholderText("备注1 粘贴部分命令可解析")
         self.edit3_3.setObjectName("name_edit3_3")
 
         self.anaAddBtn = QPushButton("增加")
@@ -899,6 +910,10 @@ class NewQTextEdit(QTextEdit):
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+
+    with open(".\\stylesheet.css", 'r') as f:
+        stylesheet = f.read()
+    app.setStyleSheet(stylesheet)
     app.setWindowIcon(QIcon("icon2.ico"))
     ex = MyApp()
     sys.exit(app.exec_())

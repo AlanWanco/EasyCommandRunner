@@ -2,7 +2,11 @@
     padding: 5px;
     font-family:'Microsoft YaHei';
     background-color:#181818;
-    font-size: 15px;
+    font-size: 14px;
+    color: #f5f5f5;
+} 
+*:focus {
+    outline: none;
 }
 QCheckBox::indicator:checked{
     image: url(./css/checked_image.png);
@@ -131,4 +135,35 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
 }
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
     background: none;
+}
+QComboBox {
+    background-color: #171717;
+    color: #f5f5f5;
+    border: 1px solid #1e2228;
+}
+QComboBox QAbstractItemView{
+    background-color: #171717;
+    color: #f5f5f5;
+    border: 1px solid #1e2228;
+    /* padding: 5px; */
+}
+QListView::item{
+    padding: 7px 10px 7px 10px;
+    background:#171717;
+}
+QListView::item:selected{
+    background-color: #424444;
+    border-radius: 5px;
+    padding: 6px 10px 6px 10px;
+}
+QListView::item:hover{ 
+    background-color: #3d3d3d;
+    border-radius: 5px;
+    padding: 6px 10px 6px 10px;
+}
+QComboBox::drop-down{
+    image: url(./css/drop-downBtn.png);
+}
+QTabBar::scroller { 
+    width: 0px; 
 }
