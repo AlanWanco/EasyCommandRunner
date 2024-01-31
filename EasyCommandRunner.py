@@ -18,10 +18,10 @@ class MyApp(QWidget):
         self.config_file = 'config.json'
 
         self.initUI()
-        if not os.path.exists('stylesheet.css'):
-            with open('stylesheet.css', 'w') as f:
+        if not os.path.exists('stylesheet.qss'):
+            with open('stylesheet.qss', 'w') as f:
                 pass
-        with open(".\\stylesheet.css", 'r') as f:
+        with open(".\\stylesheet.qss", 'r') as f:
             stylesheet = f.read()
         self.setStyleSheet(stylesheet)
         
@@ -46,7 +46,7 @@ class MyApp(QWidget):
         self.create_menu()
 
     def create_menu(self):
-        with open(".\\stylesheet.css", 'r') as f:
+        with open(".\\stylesheet.qss", 'r') as f:
             stylesheet = f.read()
         self.setStyleSheet(stylesheet)
         self.tray_menu = QMenu()
@@ -74,7 +74,7 @@ class MyApp(QWidget):
         self.comboBox = QComboBox()
         self.comboBox.activated.connect(self.tabs.setCurrentIndex)
         self.tabs.setCornerWidget(self.comboBox, Qt.TopRightCorner)
-        with open(".\\stylesheet.css", 'r') as f:
+        with open(".\\stylesheet.qss", 'r') as f:
             stylesheet = f.read()
         self.comboBox.setView(QListView())
         self.comboBox.setStyleSheet(stylesheet)
@@ -94,10 +94,10 @@ class MyApp(QWidget):
         self.copyConfig = QPushButton("复制本页配置")
         self.copyConfig.clicked.connect(self.copy_config_to_new_tab)
 
-        if not os.path.exists('stylesheet.css'):
-            with open('stylesheet.css', 'w') as f:
+        if not os.path.exists('stylesheet.qss'):
+            with open('stylesheet.qss', 'w') as f:
                 pass
-        with open(".\\stylesheet.css", 'r') as f:
+        with open(".\\stylesheet.qss", 'r') as f:
             stylesheet = f.read()
         self.tabs.setStyleSheet(stylesheet)
         self.addTabButton.setStyleSheet(stylesheet)
@@ -346,7 +346,7 @@ class MyTab(QWidget):
         self.line_codes = {}
         self.parent = parent
         self.initUI()
-        with open(".\\stylesheet.css", 'r') as f:
+        with open(".\\stylesheet.qss", 'r') as f:
             stylesheet = f.read()
         self.setStyleSheet(stylesheet)
 
@@ -437,7 +437,7 @@ class MyTab(QWidget):
 
         self.editDescription = NewQTextEdit(self.parent)
         self.editDescription.setPlaceholderText("描述")
-        with open(".\\stylesheet.css", 'r') as f:
+        with open(".\\stylesheet.qss", 'r') as f:
             stylesheet = f.read()
         self.editDescription.setStyleSheet(stylesheet)
 
@@ -911,10 +911,10 @@ class NewQTextEdit(QTextEdit):
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    if not os.path.exists('stylesheet.css'):
-        with open('stylesheet.css', 'w') as f:
+    if not os.path.exists('stylesheet.qss'):
+        with open('stylesheet.qss', 'w') as f:
             pass
-    with open(".\\stylesheet.css", 'r') as f:
+    with open(".\\stylesheet.qss", 'r') as f:
         stylesheet = f.read()
     app.setStyleSheet(stylesheet)
     app.setWindowIcon(QIcon("icon2.ico"))
