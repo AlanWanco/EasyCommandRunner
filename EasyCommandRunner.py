@@ -686,7 +686,7 @@ class MyTab(QWidget):
             count = self.costom_round(a) 
             old_array = self.get_writed_cmd() 
             b = (len(old_array))/2
-            old_lines = self.costom_round(b) 
+            # old_lines = self.costom_round(b) 
             # print('旧有数据的所有行数', old_lines)
 
             # 计算增加位置
@@ -707,20 +707,22 @@ class MyTab(QWidget):
             count_pos = self.costom_round(a)
 
             # 旧数据末尾的空行数 = 旧有数据的所有行数 - 旧有数据的实际行数
-            blank_lines = old_lines - count_pos
+            blank_lines = self.counter - count_pos
 
             # print('旧数据末尾的空行数', blank_lines)
 
             # 新增加行的初始数字
             j = count_pos + 1
+            n = max(int(key) for key in self.line_codes)
             # print('新增加行的初始数字', j)
             # 新增加行的循环次数 = 新输入数据的行数 - 旧有的空行行数
-            k = count - blank_lines + count_pos
+            k = count - blank_lines + n
             # print('新增加行的循环次数', k)
             if all(elem == '' for elem in old_array):
-                k -= old_lines
-            while j <= k:# 循环次数
-                self.add_new_line(str(j))
+                k -= self.counter
+            while j <= k and n <k :# 循环次数
+                self.add_new_line(str(n+1))
+                n += 1
                 j += 1
 
             # 单独处理最早的两个空行没有内容的情况
@@ -734,7 +736,7 @@ class MyTab(QWidget):
                 array_index = 0
 
             # 新输入行的初始数字 = 旧有数据的行数 +1
-            i = old_lines + 1
+            i = self.counter + 1
             # print('新输入行的初始数字', i)
             if all(elem == '' for elem in old_array):
                 start_num = 7
