@@ -205,7 +205,9 @@ class MyApp(QWidget):
         self.auto_backup()
         with open('config.json', 'w') as f:
             json.dump(config, f, indent=4)
-
+        self.comboBox.clear()
+        for index in range(self.tabs.count()):
+            self.comboBox.addItem(self.tabs.tabText(index))
         print("配置已保存!")
 
     def toggle_checkbox(self, tab, checkbox_dicts):
