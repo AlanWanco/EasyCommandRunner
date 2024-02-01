@@ -434,6 +434,13 @@ class MyTab(QWidget):
         self.editOther = NewQLineEdit(self.parent)
         self.editOther.setPlaceholderText("其他参数")
         self.editOther.setObjectName("name_editOther")
+        self.stopBtn = QPushButton("停止")
+        self.stopBtn.clicked.connect(self.stop_process)
+        self.stopBtn.setStyleSheet("QPushButton{width:30px;}")
+        self.hbox6 = QHBoxLayout()
+        self.hbox6.addWidget(self.editOther)
+        self.hbox6.addWidget(self.stopBtn)
+
 
         self.editDescription = NewQTextEdit(self.parent)
         self.editDescription.setPlaceholderText("描述")
@@ -470,7 +477,7 @@ class MyTab(QWidget):
         self.vbox.addLayout(self.hbox2)
         self.vbox.addLayout(self.hbox3)
         self.vbox.addLayout(self.hbox5)
-        self.vbox.addWidget(self.editOther)
+        self.vbox.addLayout(self.hbox6)
         self.vbox.addWidget(self.editDescription)
         self.vbox.addWidget(self.commandReview)
 
@@ -581,8 +588,8 @@ class MyTab(QWidget):
                         command.append(line_edit2.text().strip())
         command.append(other)
         command = list(filter(None, command)) 
-        self.command_string = subprocess.list2cmdline(command).replace('\\"','"')
-        self.com = self.command_string.replace("\"\"","\"")
+        command_string = subprocess.list2cmdline(command).replace('\\"','"')
+        self.com = command_string.replace("\"\"","\"")
 
     def run_command(self):
         path = self.edit1.text()
@@ -591,18 +598,29 @@ class MyTab(QWidget):
         self.get_command()  
         self.commandReview.setText(self.com)  
 
-        if not path:
-            path = os.getcwd()
+        def ayal(s):
+            parts = re.split(r'( ".+?"| )', s)
+            array = s.split()
+            array = [part for part in parts if part.strip()]
+            return array
+        fincmd = ayal(self.com)
 
         def run_cmd():
-            os.system(f'cd /d {path} && {self.com}')
+            self.proc = subprocess.Popen(self.com, shell=True, cwd=path)
 
-        threading.Thread(target=run_cmd).start()
+        if all(elem == '' for elem in fincmd):
+            pass
+        
+        else:
+            if not path:
+                path = os.getcwd()
 
-        print("运行路径：", path)
-        print("命令：", self.com)
-        print("描述：", description)
-    
+            threading.Thread(target=run_cmd).start()
+
+            print("运行路径：", path)
+            print("命令：", self.com)
+            print("描述：", description)
+
     def keyPressEvent(self, event): 
         if event.key() in (Qt.Key_Return, Qt.Key_Enter) and event.modifiers() & Qt.ControlModifier:
             self.run_command()
