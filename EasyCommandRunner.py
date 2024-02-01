@@ -890,6 +890,10 @@ class NewQLineEdit(QLineEdit):
                 file_path = clipboard.mimeData().urls()[0].toLocalFile().replace('/','\\')
                 if os.path.isfile(file_path):
                     self.setText(file_path)
+                else:
+                    self.setText(clipboard.text())
+            else:
+                super(NewQLineEdit, self).keyPressEvent(event) 
         else:
             super(NewQLineEdit, self).keyPressEvent(event) 
 
@@ -944,6 +948,10 @@ class NewQTextEdit(QTextEdit):
                 file_path = clipboard.mimeData().urls()[0].toLocalFile().replace('/','\\')
                 if os.path.isfile(file_path):
                     self.insertPlainText(file_path)
+                else:
+                    self.insertPlainText(clipboard.text())
+            else:
+                super(NewQTextEdit, self).keyPressEvent(event) 
         else:
             super(NewQTextEdit, self).keyPressEvent(event) 
 
@@ -963,6 +971,11 @@ class NewQTextEdit(QTextEdit):
                 context_menu.insertAction(paste_action, paste_file_path_action)
 
         context_menu.exec_(event.globalPos())
+
+    def insertFromMimeData(self, source):
+        if source.hasText():
+            text = source.text()
+            self.insertPlainText(text)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
