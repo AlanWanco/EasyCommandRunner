@@ -448,7 +448,7 @@ class MyTab(QWidget):
         self.commandReview.viewport().setCursor(Qt.IBeamCursor)
 
         self.commandReview.setStyleSheet(stylesheet)
-        self.commandReview.setPlaceholderText("预生成命令 文件路径有空格不需要前后加上双引号")
+        self.commandReview.setPlaceholderText("预生成命令")
 
         self.hbox4 = QHBoxLayout()
 
@@ -506,7 +506,6 @@ class MyTab(QWidget):
                 while i <= line_code:
                     if i == line_code:
                         self.new_line_UI(i,line_code)
-                        self.counter += 1
                     i += 1
             else:
                 if self.line_codes:
@@ -514,6 +513,7 @@ class MyTab(QWidget):
                 else:
                     maxCounter = 1
                 self.new_line_UI(int(maxCounter)+1)
+        self.counter += 1
 
     def new_line_UI(self, counter=0, line_code=None):
 
@@ -579,27 +579,28 @@ class MyTab(QWidget):
                         command.append(line_edit1.text().strip())
                         line_edit2 = hbox.itemAt(j+3).widget()
                         command.append(line_edit2.text().strip())
-        self.preCmd = command
         command.append(other)
-        self.command_string = subprocess.list2cmdline(command).replace("\"\"","")
+        command = list(filter(None, command)) 
+        self.command_string = subprocess.list2cmdline(command).replace('\\"','"')
+        self.com = self.command_string.replace("\"\"","\"")
 
     def run_command(self):
         path = self.edit1.text()
         description = self.editDescription.toPlainText()
 
         self.get_command()  
-        self.commandReview.setText(self.command_string)  
+        self.commandReview.setText(self.com)  
 
         if not path:
             path = os.getcwd()
 
         def run_cmd():
-            os.system(f'cd /d {path} && {self.command_string}')
+            os.system(f'cd /d {path} && {self.com}')
 
         threading.Thread(target=run_cmd).start()
 
         print("运行路径：", path)
-        print("命令：", self.command_string)
+        print("命令：", self.com)
         print("描述：", description)
     
     def keyPressEvent(self, event): 
@@ -616,8 +617,8 @@ class MyTab(QWidget):
             self.parent.keyPressEvent(event)
 
     def on_reviewButton_clicked(self): 
-        self.get_command()  
-        self.commandReview.setText(self.command_string)  
+        self.get_command()   
+        self.commandReview.setText(self.com)  
 
     def selectAllCheckboxes(self, state):
         checkboxes = []
@@ -685,8 +686,10 @@ class MyTab(QWidget):
             a = (len(new_array))/2 
             count = self.costom_round(a) 
             old_array = self.get_writed_cmd() 
+
+            # 计算旧行数量
             b = (len(old_array))/2
-            # old_lines = self.costom_round(b) 
+            old_lines = self.costom_round(b) 
             # print('旧有数据的所有行数', old_lines)
 
             # 计算增加位置
@@ -696,38 +699,37 @@ class MyTab(QWidget):
                 if item:
                     last_non_empty_index = i #获取旧列表中倒数的空编辑框数量
                     break
-            if last_non_empty_index is None:
-                last_non_empty_index = 0 #当旧编辑框只有两个且都为空行时 默认空编辑框数量为0
-
+            if all(elem == '' for elem in old_array):
+                last_non_empty_index = len(old_array) #当旧编辑框全都为空行时 默认空编辑框数量为旧数据格子数量
             # print('旧数据末尾的空格数', last_non_empty_index)
 
-            # 旧有数据实际有数据的空格数 = 旧有数据的数量 - 旧有数据末尾的空格数
+            # 旧有数据实际有数据的格数 = 旧有数据的数量 - 旧有数据末尾的空格数 
             last_num = len(old_array) - last_non_empty_index 
             a = (last_num)/2
-            count_pos = self.costom_round(a)
+            count_pos = self.costom_round(a)# 旧有数据实际有数据的行数 
+            # print('旧有数据实际有数据的行数 ', count_pos)
 
-            # 旧数据末尾的空行数 = 旧有数据的所有行数 - 旧有数据的实际行数
+            # 旧数据末尾的空行数 = 旧有数据的所有行数 - 旧有数据实际有数据的行数
             blank_lines = self.counter - count_pos
-
             # print('旧数据末尾的空行数', blank_lines)
 
             # 新增加行的初始数字
-            j = count_pos + 1
-            n = max(int(key) for key in self.line_codes)
-            # print('新增加行的初始数字', j)
+            if self.line_codes:
+                n = max(int(key) for key in self.line_codes)
+            else:
+                n = 1
+            # print('新增加行的初始数字', n + 1)
             # 新增加行的循环次数 = 新输入数据的行数 - 旧有的空行行数
-            k = count - blank_lines + n
+            k = count - blank_lines + 1
             # print('新增加行的循环次数', k)
-            if all(elem == '' for elem in old_array):
-                k -= self.counter
-            while j <= k and n <k :# 循环次数
+            j = 1
+            while j < k :# 循环次数
                 self.add_new_line(str(n+1))
                 n += 1
                 j += 1
 
             # 单独处理最早的两个空行没有内容的情况
             line_edits = self.findChildren(NewQLineEdit)
-            # if old_array == ['', '']:
             if all(elem == '' for elem in old_array):
                 line_edits[3].setText(new_array[0])
                 line_edits[4].setText(new_array[1])
@@ -781,7 +783,8 @@ class MyTab(QWidget):
     def analysis(self, s , code = 0):
         parts = re.split(r'( ".+?"| )', s)
         array = s.split()
-        array = [part.replace('"', '') for part in parts if part.strip()] 
+        # array = [part.replace('"', '') for part in parts if part.strip()] 
+        array = [part for part in parts if part.strip()] 
 
         # 当两个-开头的元素在一起时，中间增加空元素
         new_array = []
