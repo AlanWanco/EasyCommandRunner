@@ -872,6 +872,7 @@ class NewQLineEdit(QLineEdit):
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
             file_path = urls[0].toLocalFile()
+            file_path = file_path.replace('/', '\\')
             self.setText(file_path)
         else:
             super(NewQLineEdit, self).keyPressEvent(event) 
@@ -882,8 +883,32 @@ class NewQLineEdit(QLineEdit):
 
         if event.key() == Qt.Key_Left and event.modifiers() == Qt.ControlModifier:
             self.myApp.prevTab()
+
+        if (event.key() == Qt.Key_V and event.modifiers() == Qt.ControlModifier):
+            clipboard = QApplication.clipboard()
+            if clipboard.mimeData().hasUrls():
+                file_path = clipboard.mimeData().urls()[0].toLocalFile().replace('/','\\')
+                if os.path.isfile(file_path):
+                    self.setText(file_path)
         else:
             super(NewQLineEdit, self).keyPressEvent(event) 
+
+    def contextMenuEvent(self, event):
+            clipboard = QApplication.clipboard()
+            
+            context_menu = self.createStandardContextMenu()
+
+            if clipboard.mimeData().hasUrls():
+                file_path = clipboard.mimeData().urls()[0].toLocalFile()
+                file_path = file_path.replace('/', '\\')
+                if os.path.isfile(file_path):
+                    paste_file_path_action = QAction('Paste Path', self)
+                    paste_file_path_action.triggered.connect(
+                        lambda: self.setText(file_path))
+                    paste_action = context_menu.actions()[6]
+                    context_menu.insertAction(paste_action, paste_file_path_action)
+
+            context_menu.exec_(event.globalPos())
 
 class NewQTextEdit(QTextEdit):
     def __init__(self, myApp, *args, **kwargs):
@@ -901,6 +926,7 @@ class NewQTextEdit(QTextEdit):
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
             file_path = urls[0].toLocalFile()
+            file_path = file_path.replace('/', '\\')
             self.insertPlainText(file_path)
         else:
             super(NewQLineEdit, self).keyPressEvent(event) 
@@ -911,8 +937,32 @@ class NewQTextEdit(QTextEdit):
 
         if event.key() == Qt.Key_Left and event.modifiers() == Qt.ControlModifier:
             self.myApp.prevTab()
+    
+        if (event.key() == Qt.Key_V and event.modifiers() == Qt.ControlModifier):
+            clipboard = QApplication.clipboard()
+            if clipboard.mimeData().hasUrls():
+                file_path = clipboard.mimeData().urls()[0].toLocalFile().replace('/','\\')
+                if os.path.isfile(file_path):
+                    self.insertPlainText(file_path)
         else:
             super(NewQTextEdit, self).keyPressEvent(event) 
+
+    def contextMenuEvent(self, event):
+        clipboard = QApplication.clipboard()
+        
+        context_menu = self.createStandardContextMenu()
+
+        if clipboard.mimeData().hasUrls():
+            file_path = clipboard.mimeData().urls()[0].toLocalFile()
+            file_path = file_path.replace('/', '\\')
+            if os.path.isfile(file_path):
+                paste_file_path_action = QAction('Paste Path', self)
+                paste_file_path_action.triggered.connect(
+                    lambda: self.insertPlainText(file_path))
+                paste_action = context_menu.actions()[6]
+                context_menu.insertAction(paste_action, paste_file_path_action)
+
+        context_menu.exec_(event.globalPos())
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
