@@ -434,13 +434,6 @@ class MyTab(QWidget):
         self.editOther = NewQLineEdit(self.parent)
         self.editOther.setPlaceholderText("其他参数")
         self.editOther.setObjectName("name_editOther")
-        self.stopBtn = QPushButton("停止")
-        self.stopBtn.clicked.connect(self.stop_process)
-        self.stopBtn.setStyleSheet("QPushButton{width:30px;}")
-        self.hbox6 = QHBoxLayout()
-        self.hbox6.addWidget(self.editOther)
-        self.hbox6.addWidget(self.stopBtn)
-
 
         self.editDescription = NewQTextEdit(self.parent)
         self.editDescription.setPlaceholderText("描述")
@@ -477,7 +470,7 @@ class MyTab(QWidget):
         self.vbox.addLayout(self.hbox2)
         self.vbox.addLayout(self.hbox3)
         self.vbox.addLayout(self.hbox5)
-        self.vbox.addLayout(self.hbox6)
+        self.vbox.addWidget(self.editOther)
         self.vbox.addWidget(self.editDescription)
         self.vbox.addWidget(self.commandReview)
 
@@ -606,20 +599,19 @@ class MyTab(QWidget):
         fincmd = ayal(self.com)
 
         def run_cmd():
-            self.proc = subprocess.Popen(self.com, shell=True, cwd=path)
+            self.proc = subprocess.Popen(f'start cmd /K {self.com}', shell=True, cwd=path)
 
         if all(elem == '' for elem in fincmd):
             pass
-        
         else:
             if not path:
                 path = os.getcwd()
 
-            threading.Thread(target=run_cmd).start()
+        threading.Thread(target=run_cmd).start()
 
-            print("运行路径：", path)
-            print("命令：", self.com)
-            print("描述：", description)
+        print("运行路径：", path)
+        print("命令：", self.com)
+        print("描述：", description)
 
     def keyPressEvent(self, event): 
         if event.key() in (Qt.Key_Return, Qt.Key_Enter) and event.modifiers() & Qt.ControlModifier:
