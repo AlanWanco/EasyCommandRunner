@@ -600,14 +600,15 @@ class MyTab(QWidget):
 
         def run_cmd():
             self.proc = subprocess.Popen(f'start cmd /K {self.com}', shell=True, cwd=path)
+            
+        if not path:
+            path = os.getcwd()
 
         if all(elem == '' for elem in fincmd):
             pass
         else:
-            if not path:
-                path = os.getcwd()
+            threading.Thread(target=run_cmd).start()
 
-        threading.Thread(target=run_cmd).start()
 
         print("运行路径：", path)
         print("命令：", self.com)
