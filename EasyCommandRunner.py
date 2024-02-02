@@ -441,7 +441,13 @@ class MyTab(QWidget):
             stylesheet = f.read()
         self.editDescription.setStyleSheet(stylesheet)
 
-        self.editDescription.setStyleSheet(stylesheet)
+        self.chk2 = QCheckBox('使用新窗口运行', self)
+        self.chk2.setToolTip('当需要跑长时间运行的任务时推荐打开\n缺点是会多开一个窗口需要手动关闭 优点是临时需要关闭不影响主程序')
+        self.chk2.setStyleSheet(stylesheet)
+
+        self.hbox6 = QHBoxLayout()
+        self.hbox6.addWidget(self.editOther)
+        self.hbox6.addWidget(self.chk2)
 
         self.commandReview = QTextEdit()
         self.commandReview.setReadOnly(True)
@@ -470,7 +476,7 @@ class MyTab(QWidget):
         self.vbox.addLayout(self.hbox2)
         self.vbox.addLayout(self.hbox3)
         self.vbox.addLayout(self.hbox5)
-        self.vbox.addWidget(self.editOther)
+        self.vbox.addLayout(self.hbox6)
         self.vbox.addWidget(self.editDescription)
         self.vbox.addWidget(self.commandReview)
 
@@ -571,7 +577,7 @@ class MyTab(QWidget):
                 line_edit1 = None
                 line_edit2 = None
                 # 遍历所有的hbox
-                for j in range(hbox.count()):
+                for j in range(hbox.count()-1):
                     widget = hbox.itemAt(j).widget()
                     
                     if isinstance(widget, QCheckBox) and widget.checkState() == Qt.Checked:
@@ -597,10 +603,13 @@ class MyTab(QWidget):
             array = [part for part in parts if part.strip()]
             return array
         fincmd = ayal(self.com)
-
+        
         def run_cmd():
-            self.proc = subprocess.Popen(f'start cmd /K {self.com}', shell=True, cwd=path)
-            
+            if self.chk2.isChecked():
+                self.proc = subprocess.Popen(f'start cmd /K {self.com}', shell=True, cwd=path)
+            else:
+                self.proc = subprocess.Popen(f'{self.com}', shell=True, cwd=path)
+
         if not path:
             path = os.getcwd()
 

@@ -170,3 +170,11 @@ QTabBar::tab:hover{
     background-color:#222424;
 }
 QTabWidget::pane { border: none; }
+
+QToolTip {
+       background-color: #555;
+       border: 1px solid #5b5c5c;
+       color: #f5f5f5;
+       opacity: 200;
+       border-radius: 5px;
+    }
