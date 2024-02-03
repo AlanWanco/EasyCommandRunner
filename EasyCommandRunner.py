@@ -789,7 +789,7 @@ class MyTab(QWidget):
                 line_edit1 = None
                 line_edit2 = None
                 # 遍历所有的hbox
-                for j in range(hbox.count()):
+                for j in range(hbox.count()-1):
                     widget = hbox.itemAt(j).widget()
                     if widget == self.edit1 or widget == self.edit_title or widget == self.edit2:
                         continue
