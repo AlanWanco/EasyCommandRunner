@@ -588,6 +588,7 @@ class MyTab(QWidget):
         command.append(other)
         command = list(filter(None, command)) 
         command_string = subprocess.list2cmdline(command).replace('\\"','"')
+        command_string = command_string.replace("\"-","-")
         self.com = command_string.replace("\"\"","\"")
 
     def run_command(self):
