@@ -10,6 +10,12 @@ from datetime import datetime
 import subprocess
 import threading
 
+
+def load_stylesheet():
+    with open('stylesheet.qss', 'r') as f:
+        return f.read()
+
+
 class MyApp(QWidget):
 
     def __init__(self):
@@ -18,12 +24,7 @@ class MyApp(QWidget):
         self.config_file = 'config.json'
 
         self.initUI()
-        if not os.path.exists('stylesheet.qss'):
-            with open('stylesheet.qss', 'w') as f:
-                pass
-        with open(".\\stylesheet.qss", 'r') as f:
-            stylesheet = f.read()
-        self.setStyleSheet(stylesheet)
+        self.setStyleSheet(load_stylesheet())
         
         self.auto_backup()
         self.load_config()
@@ -46,8 +47,7 @@ class MyApp(QWidget):
         self.create_menu()
 
     def create_menu(self):
-        with open(".\\stylesheet.qss", 'r') as f:
-            stylesheet = f.read()
+        stylesheet = load_stylesheet()
         self.setStyleSheet(stylesheet)
         self.tray_menu = QMenu()
         self.tray_menu.setStyleSheet(stylesheet)
@@ -74,10 +74,10 @@ class MyApp(QWidget):
         self.comboBox = QComboBox()
         self.comboBox.activated.connect(self.tabs.setCurrentIndex)
         self.tabs.setCornerWidget(self.comboBox, Qt.TopRightCorner)
-        with open(".\\stylesheet.qss", 'r') as f:
-            stylesheet = f.read()
+
         self.comboBox.setView(QListView())
-        self.comboBox.setStyleSheet(stylesheet)
+        self.comboBox.setStyleSheet(load_stylesheet())
+
         self.comboBox.setMaxVisibleItems(30)
         self.tabs.tabBar().tabMoved.connect(self.loadCombo)
         self.tabs.tabBar().tabCloseRequested.connect(self.loadCombo)
@@ -94,11 +94,7 @@ class MyApp(QWidget):
         self.copyConfig = QPushButton("复制本页配置")
         self.copyConfig.clicked.connect(self.copy_config_to_new_tab)
 
-        if not os.path.exists('stylesheet.qss'):
-            with open('stylesheet.qss', 'w') as f:
-                pass
-        with open(".\\stylesheet.qss", 'r') as f:
-            stylesheet = f.read()
+        stylesheet=load_stylesheet()
         self.tabs.setStyleSheet(stylesheet)
         self.addTabButton.setStyleSheet(stylesheet)
         self.saveButton.setStyleSheet(stylesheet)
@@ -346,9 +342,7 @@ class MyTab(QWidget):
         self.line_codes = {}
         self.parent = parent
         self.initUI()
-        with open(".\\stylesheet.qss", 'r') as f:
-            stylesheet = f.read()
-        self.setStyleSheet(stylesheet)
+        self.setStyleSheet(load_stylesheet())
 
     def initUI(self):
         self.scrollArea = QScrollArea()
@@ -437,8 +431,7 @@ class MyTab(QWidget):
 
         self.editDescription = NewQTextEdit(self.parent)
         self.editDescription.setPlaceholderText("描述")
-        with open(".\\stylesheet.qss", 'r') as f:
-            stylesheet = f.read()
+        stylesheet = load_stylesheet()
         self.editDescription.setStyleSheet(stylesheet)
 
         self.chk2 = QCheckBox('使用新窗口运行', self)
@@ -1000,12 +993,7 @@ class NewQTextEdit(QTextEdit):
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    if not os.path.exists('stylesheet.qss'):
-        with open('stylesheet.qss', 'w') as f:
-            pass
-    with open(".\\stylesheet.qss", 'r') as f:
-        stylesheet = f.read()
-    app.setStyleSheet(stylesheet)
+    app.setStyleSheet(load_stylesheet())
     app.setWindowIcon(QIcon("icon2.ico"))
     ex = MyApp()
     sys.exit(app.exec_())
