@@ -25,12 +25,12 @@ class MyApp(QWidget):
 
         self.initUI()
         self.setStyleSheet(load_stylesheet())
-        
+
         self.auto_backup()
         self.load_config()
 
         self.settings = QSettings("SleepyKanata", "EasyCommandRunner")
-        currentIndex = self.settings.value("currentTabIndex", 0)  
+        currentIndex = self.settings.value("currentTabIndex", 0)
         self.tabs.setCurrentIndex(int(currentIndex))
 
         self.tray_icon = QSystemTrayIcon(QIcon("icon2.ico"), self)
@@ -69,7 +69,7 @@ class MyApp(QWidget):
         self.tabs.setTabsClosable(True)
         self.tabs.setAcceptDrops(True)
         self.tabs.setMovable(True)
-        self.tabs.tabCloseRequested.connect(self.close_tab)  
+        self.tabs.tabCloseRequested.connect(self.close_tab)
 
         self.comboBox = QComboBox()
         self.comboBox.activated.connect(self.tabs.setCurrentIndex)
@@ -164,7 +164,7 @@ class MyApp(QWidget):
             'current_tab_index': self.tabs.currentIndex(),
             'tabs': [],
             'counters':[],
-            'line_codes': [], 
+            'line_codes': [],
             'checkbox_statuses':[]
         }
         for index in range(self.tabs.count()):
@@ -180,12 +180,12 @@ class MyApp(QWidget):
 
             tab_config['editDescription'] = tab.editDescription.toPlainText()
 
-            tab_name = tab.edit_title.text() 
+            tab_name = tab.edit_title.text()
             if tab_name:
                 self.tabs.setTabText(index, tab_name)
 
             config['counters'].append(tab.counter)
-            
+
             config['tabs'].append(tab_config)
             config['line_codes'].append(tab.line_codes)
 
@@ -194,7 +194,7 @@ class MyApp(QWidget):
             for checkbox in checkboxes:
                 checkbox_statuses[checkbox.objectName()] = checkbox.isChecked()
             config['checkbox_statuses'].append(checkbox_statuses)
-            
+
         #计数tab页数
         config['tab_count'] = self.tabs.count()
 
@@ -233,24 +233,24 @@ class MyApp(QWidget):
 
     def on_reload_button(self):
         current_tab_index = self.tabs.currentIndex()
-        self.tabs.clear()  
+        self.tabs.clear()
         self.comboBox.clear()
-        self.load_config()  
+        self.load_config()
         self.tabs.setCurrentIndex(current_tab_index)
         self.tabs.tabBar().tabMoved.connect(self.loadCombo)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_S and QApplication.keyboardModifiers() == Qt.ControlModifier:
-            self.save_config()  
+            self.save_config()
 
     def copy_config_to_new_tab(self):
         # 创建一个新的标签页，并复制当前标签页的配置
         current_tab_index = self.tabs.currentIndex()
         current_tab = self.tabs.widget(current_tab_index)
-        
+
         line_codes = current_tab.line_codes
         text_dict = {}
-        
+
         line_edits = current_tab.findChildren(QLineEdit)
         for edit in line_edits:
             text_dict[edit.objectName()] = edit.text()
@@ -277,7 +277,7 @@ class MyApp(QWidget):
         self.backup_dir = './backup'
         self.destination_file = self.backup_dir + '/config_' + self.formatted_datetime +'.json'
 
-        if os.path.exists('config.json'): 
+        if os.path.exists('config.json'):
 
             if not os.path.exists(self.backup_dir):
                 os.makedirs(self.backup_dir)
@@ -381,8 +381,8 @@ class MyTab(QWidget):
         self.hbox2.addWidget(self.analysisBtn)
 
         self.chk1 = QCheckBox(self)
-        self.chk1.setObjectName("chkbox1") 
-        self.chk1.setChecked(True) 
+        self.chk1.setObjectName("chkbox1")
+        self.chk1.setChecked(True)
         self.chk1.stateChanged.connect(lambda state: self.toggle_run(self.chk1, state))
 
         self.edit3_1 = NewQLineEdit(self.parent)
@@ -463,9 +463,9 @@ class MyTab(QWidget):
 
         self.nextTabBtn =  QPushButton("下一个标签页→")
         self.nextTabBtn.clicked.connect(self.nextTab)
-      
+
         self.vbox.addLayout(self.hbox_title)
-        self.vbox.addLayout(self.hbox1) 
+        self.vbox.addLayout(self.hbox1)
         self.vbox.addLayout(self.hbox2)
         self.vbox.addLayout(self.hbox3)
         self.vbox.addLayout(self.hbox5)
@@ -483,11 +483,11 @@ class MyTab(QWidget):
         self.buttonContainer.addWidget(self.runButton)
         self.buttonContainer.addWidget(self.nextTabBtn)
 
-        self.mainLayout = QVBoxLayout() 
+        self.mainLayout = QVBoxLayout()
         self.mainLayout.addWidget(self.scrollArea)
-        self.mainLayout.addLayout(self.buttonContainer)  
+        self.mainLayout.addLayout(self.buttonContainer)
 
-        self.setLayout(self.mainLayout)  
+        self.setLayout(self.mainLayout)
 
     def check_box_toggle(self, checkbox_dict):
         if checkbox_dict:
@@ -517,18 +517,18 @@ class MyTab(QWidget):
     def new_line_UI(self, counter=0, line_code=None):
 
         chk = QCheckBox(self)
-        chk.setChecked(True) 
-        chk.setObjectName("chkbox" + str(counter)) 
+        chk.setChecked(True)
+        chk.setObjectName("chkbox" + str(counter))
         chk.stateChanged.connect(lambda state: self.toggle_run(chk, state))
         line_edit1 = NewQLineEdit(self.parent)
         line_edit1.setPlaceholderText("功能" + str(counter))
-        line_edit1.setObjectName("function" + str(counter)) 
-        
+        line_edit1.setObjectName("function" + str(counter))
+
         label = QLabel("：")
 
         line_edit2 = NewQLineEdit(self.parent)
         line_edit2.setPlaceholderText("参数" + str(counter))
-        line_edit2.setObjectName("parameter" + str(counter)) 
+        line_edit2.setObjectName("parameter" + str(counter))
 
         line_edit3 = NewQLineEdit(self.parent)
         line_edit3.setPlaceholderText("备注" + str(counter))
@@ -540,7 +540,7 @@ class MyTab(QWidget):
         self.rmLineButton.setStyleSheet("QPushButton{width:30px;}")
 
         hbox = QHBoxLayout()
-        hbox.setObjectName("exhbox" + str(counter)) 
+        hbox.setObjectName("exhbox" + str(counter))
         hbox.addWidget(chk)
         hbox.addWidget(line_edit1)
         hbox.addWidget(label)
@@ -572,14 +572,14 @@ class MyTab(QWidget):
                 # 遍历所有的hbox
                 for j in range(hbox.count()-1):
                     widget = hbox.itemAt(j).widget()
-                    
+
                     if isinstance(widget, QCheckBox) and widget.checkState() == Qt.Checked:
                         line_edit1 = hbox.itemAt(j+1).widget()
                         command.append(line_edit1.text().strip())
                         line_edit2 = hbox.itemAt(j+3).widget()
                         command.append(line_edit2.text().strip())
         command.append(other)
-        command = list(filter(None, command)) 
+        command = list(filter(None, command))
         command_string = subprocess.list2cmdline(command).replace('\\"','"')
         command_string = command_string.replace("\"-","-")
         self.com = command_string.replace("\"\"","\"")
@@ -588,8 +588,8 @@ class MyTab(QWidget):
         path = self.edit1.text()
         description = self.editDescription.toPlainText()
 
-        self.get_command()  
-        self.commandReview.setText(self.com)  
+        self.get_command()
+        self.commandReview.setText(self.com)
 
         def ayal(s):
             parts = re.split(r'( ".+?"| )', s)
@@ -597,7 +597,7 @@ class MyTab(QWidget):
             array = [part for part in parts if part.strip()]
             return array
         fincmd = ayal(self.com)
-        
+
         def run_cmd():
             if self.chk2.isChecked():
                 self.proc = subprocess.Popen(f'start cmd /K {self.com}', shell=True, cwd=path)
@@ -617,7 +617,7 @@ class MyTab(QWidget):
         print("命令：", self.com)
         print("描述：", description)
 
-    def keyPressEvent(self, event): 
+    def keyPressEvent(self, event):
         if event.key() in (Qt.Key_Return, Qt.Key_Enter) and event.modifiers() & Qt.ControlModifier:
             self.run_command()
 
@@ -630,9 +630,9 @@ class MyTab(QWidget):
         if event.key() == Qt.Key_S and QApplication.keyboardModifiers() == Qt.ControlModifier:
             self.parent.keyPressEvent(event)
 
-    def on_reviewButton_clicked(self): 
-        self.get_command()   
-        self.commandReview.setText(self.com)  
+    def on_reviewButton_clicked(self):
+        self.get_command()
+        self.commandReview.setText(self.com)
 
     def selectAllCheckboxes(self, state):
         checkboxes = []
@@ -670,7 +670,7 @@ class MyTab(QWidget):
 
         # 填入内容
         if len(new_array) > 1:
-            self.chk1.setChecked(True) 
+            self.chk1.setChecked(True)
             self.editOther.setText("")
             self.commandReview.setText("")
 
@@ -697,13 +697,13 @@ class MyTab(QWidget):
             self.edit3_3.setText("")
 
             # 计算增加行数
-            a = (len(new_array))/2 
-            count = self.costom_round(a) 
-            old_array = self.get_writed_cmd() 
+            a = (len(new_array))/2
+            count = self.costom_round(a)
+            old_array = self.get_writed_cmd()
 
             # 计算旧行数量
             b = (len(old_array))/2
-            old_lines = self.costom_round(b) 
+            old_lines = self.costom_round(b)
             # print('旧有数据的所有行数', old_lines)
 
             # 计算增加位置
@@ -717,10 +717,10 @@ class MyTab(QWidget):
                 last_non_empty_index = len(old_array) #当旧编辑框全都为空行时 默认空编辑框数量为旧数据格子数量
             # print('旧数据末尾的空格数', last_non_empty_index)
 
-            # 旧有数据实际有数据的格数 = 旧有数据的数量 - 旧有数据末尾的空格数 
-            last_num = len(old_array) - last_non_empty_index 
+            # 旧有数据实际有数据的格数 = 旧有数据的数量 - 旧有数据末尾的空格数
+            last_num = len(old_array) - last_non_empty_index
             a = (last_num)/2
-            count_pos = self.costom_round(a)# 旧有数据实际有数据的行数 
+            count_pos = self.costom_round(a)# 旧有数据实际有数据的行数
             # print('旧有数据实际有数据的行数 ', count_pos)
 
             # 旧数据末尾的空行数 = 旧有数据的所有行数 - 旧有数据实际有数据的行数
@@ -797,8 +797,8 @@ class MyTab(QWidget):
     def analysis(self, s , code = 0):
         parts = re.split(r'( ".+?"| )', s)
         array = s.split()
-        # array = [part.replace('"', '') for part in parts if part.strip()] 
-        array = [part for part in parts if part.strip()] 
+        # array = [part.replace('"', '') for part in parts if part.strip()]
+        array = [part for part in parts if part.strip()]
 
         # 当两个-开头的元素在一起时，中间增加空元素
         new_array = []
@@ -807,7 +807,7 @@ class MyTab(QWidget):
             if array[i].startswith(("-", "/")) and i < len(array) - 1 and array[i+1].startswith(("-", "/")):
                 new_array.append('')
 
-        # 当第一个元素之后的元素数量是奇数时，最后增加空元素 
+        # 当第一个元素之后的元素数量是奇数时，最后增加空元素
         index = 0
         for i in range(1, len(new_array)):
             if new_array[i].startswith(("-", "/")):
@@ -837,9 +837,9 @@ class MyTab(QWidget):
         return new_array
 
     def remove_line(self):
-        sender = self.sender()  
+        sender = self.sender()
         if sender is not None:
-            button_name = sender.objectName()  
+            button_name = sender.objectName()
             index = int(button_name.replace("removeButton", ""))
             self.rm_line(index)
 
@@ -889,7 +889,7 @@ class NewQLineEdit(QLineEdit):
             file_path = file_path.replace('/', '\\')
             self.setText(file_path)
         else:
-            super(NewQLineEdit, self).keyPressEvent(event) 
+            super(NewQLineEdit, self).keyPressEvent(event)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Right and event.modifiers() == Qt.ControlModifier:
@@ -907,13 +907,13 @@ class NewQLineEdit(QLineEdit):
                 else:
                     self.setText(clipboard.text())
             else:
-                super(NewQLineEdit, self).keyPressEvent(event) 
+                super(NewQLineEdit, self).keyPressEvent(event)
         else:
-            super(NewQLineEdit, self).keyPressEvent(event) 
+            super(NewQLineEdit, self).keyPressEvent(event)
 
     def contextMenuEvent(self, event):
             clipboard = QApplication.clipboard()
-            
+
             context_menu = self.createStandardContextMenu()
 
             if clipboard.mimeData().hasUrls():
@@ -947,7 +947,7 @@ class NewQTextEdit(QTextEdit):
             file_path = file_path.replace('/', '\\')
             self.insertPlainText(file_path)
         else:
-            super(NewQLineEdit, self).keyPressEvent(event) 
+            super(NewQLineEdit, self).keyPressEvent(event)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Right and event.modifiers() == Qt.ControlModifier:
@@ -955,7 +955,7 @@ class NewQTextEdit(QTextEdit):
 
         if event.key() == Qt.Key_Left and event.modifiers() == Qt.ControlModifier:
             self.myApp.prevTab()
-    
+
         if (event.key() == Qt.Key_V and event.modifiers() == Qt.ControlModifier):
             clipboard = QApplication.clipboard()
             if clipboard.mimeData().hasUrls():
@@ -965,13 +965,13 @@ class NewQTextEdit(QTextEdit):
                 else:
                     self.insertPlainText(clipboard.text())
             else:
-                super(NewQTextEdit, self).keyPressEvent(event) 
+                super(NewQTextEdit, self).keyPressEvent(event)
         else:
-            super(NewQTextEdit, self).keyPressEvent(event) 
+            super(NewQTextEdit, self).keyPressEvent(event)
 
     def contextMenuEvent(self, event):
         clipboard = QApplication.clipboard()
-        
+
         context_menu = self.createStandardContextMenu()
 
         if clipboard.mimeData().hasUrls():
