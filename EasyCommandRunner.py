@@ -9,6 +9,8 @@ from PyQt5.QtGui import*
 from datetime import datetime
 import subprocess
 import threading
+import warnings
+warnings.filterwarnings("ignore")
 
 
 def load_stylesheet():
