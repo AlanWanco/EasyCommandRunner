@@ -15,6 +15,47 @@ def load_stylesheet():
     with open('stylesheet.qss', 'r') as f:
         return f.read()
 
+def analysis(s , code = 0):
+    parts = re.split(r'( ".+?"| )', s)
+    array = s.split()
+    # array = [part.replace('"', '') for part in parts if part.strip()]
+    array = [part for part in parts if part.strip()]
+
+    # 当两个-开头的元素在一起时，中间增加空元素
+    new_array = []
+    for i in range(len(array)):
+        new_array.append(array[i].strip())
+        if array[i].startswith(("-", "/")) and i < len(array) - 1 and array[i+1].startswith(("-", "/")):
+            new_array.append('')
+
+    # 当第一个元素之后的元素数量是奇数时，最后增加空元素
+    index = 0
+    for i in range(1, len(new_array)):
+        if new_array[i].startswith(("-", "/")):
+            index = i + 1
+            break
+    if code == 1:
+        if index and index % 2 == 0:
+            new_array.insert(index - 1, '')
+    else:
+        if index and index % 2 == 1:
+            new_array.insert(index - 1, '')
+
+    # 处理途中
+    j = 0
+    while j < len(new_array):
+        if new_array[j].startswith(("-", "/")):
+            counter = 0
+            j += 1
+            while j < len(new_array) and not new_array[j].startswith(("-", "/")):
+                counter += 1
+                j += 1
+            if counter % 2 == 0:
+                new_array.insert(j, '')
+        else:
+            j += 1
+
+    return new_array
 
 class MyApp(QWidget):
 
@@ -644,7 +685,7 @@ class MyTab(QWidget):
     def analysis_command(self):
         s = ''
         s = self.edit2.text()
-        new_array = self.analysis(s)
+        new_array = analysis(s)
 
         buttons = self.findChildren(QPushButton)
         remove_buttons = [button.objectName() for button in buttons if 'removeButton' in button.objectName()]
@@ -692,7 +733,7 @@ class MyTab(QWidget):
     def add_command(self):
         s = ''
         s = self.edit3_3.text()
-        new_array = self.analysis(s, 1)
+        new_array = analysis(s, 1)
         if len(new_array)>1:
             self.edit3_3.setText("")
 
@@ -794,47 +835,6 @@ class MyTab(QWidget):
                         command.append(line_edit2.text().strip())
         return command
 
-    def analysis(self, s , code = 0):
-        parts = re.split(r'( ".+?"| )', s)
-        array = s.split()
-        # array = [part.replace('"', '') for part in parts if part.strip()]
-        array = [part for part in parts if part.strip()]
-
-        # 当两个-开头的元素在一起时，中间增加空元素
-        new_array = []
-        for i in range(len(array)):
-            new_array.append(array[i].strip())
-            if array[i].startswith(("-", "/")) and i < len(array) - 1 and array[i+1].startswith(("-", "/")):
-                new_array.append('')
-
-        # 当第一个元素之后的元素数量是奇数时，最后增加空元素
-        index = 0
-        for i in range(1, len(new_array)):
-            if new_array[i].startswith(("-", "/")):
-                index = i + 1
-                break
-        if code == 1:
-            if index and index % 2 == 0:
-                new_array.insert(index - 1, '')
-        else:
-            if index and index % 2 == 1:
-                new_array.insert(index - 1, '')
-
-        # 处理途中
-        j = 0
-        while j < len(new_array):
-            if new_array[j].startswith(("-", "/")):
-                counter = 0
-                j += 1
-                while j < len(new_array) and not new_array[j].startswith(("-", "/")):
-                    counter += 1
-                    j += 1
-                if counter % 2 == 0:
-                    new_array.insert(j, '')
-            else:
-                j += 1
-
-        return new_array
 
     def remove_line(self):
         sender = self.sender()
