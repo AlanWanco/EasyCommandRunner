@@ -17,26 +17,28 @@ def load_stylesheet():
     with open('stylesheet.qss', 'r') as f:
         return f.read()
 
-def analysis(s , code = 0):
+def is_flag(s):
+    return s.startswith(('-', '/'))
+
+def analysis(s, is_append = False):
     parts = re.split(r'( ".+?"| )', s)
-    array = s.split()
-    # array = [part.replace('"', '') for part in parts if part.strip()]
-    array = [part for part in parts if part.strip()]
+    array = [p for part in parts if (p := part.strip())]
 
     # 当两个-开头的元素在一起时，中间增加空元素
     new_array = []
     for i in range(len(array)):
-        new_array.append(array[i].strip())
-        if array[i].startswith(("-", "/")) and i < len(array) - 1 and array[i+1].startswith(("-", "/")):
+        new_array.append(array[i])
+        if is_flag(array[i]) and i+1 < len(array) and is_flag(array[i+1]):
             new_array.append('')
 
     # 当第一个元素之后的元素数量是奇数时，最后增加空元素
     index = 0
     for i in range(1, len(new_array)):
-        if new_array[i].startswith(("-", "/")):
+        if is_flag(new_array[i]):
             index = i + 1
             break
-    if code == 1:
+
+    if is_append:
         if index and index % 2 == 0:
             new_array.insert(index - 1, '')
     else:
@@ -46,10 +48,10 @@ def analysis(s , code = 0):
     # 处理途中
     j = 0
     while j < len(new_array):
-        if new_array[j].startswith(("-", "/")):
+        if is_flag(new_array[j]):
             counter = 0
             j += 1
-            while j < len(new_array) and not new_array[j].startswith(("-", "/")):
+            while j < len(new_array) and not is_flag(new_array[j]):
                 counter += 1
                 j += 1
             if counter % 2 == 0:
@@ -735,7 +737,7 @@ class MyTab(QWidget):
     def add_command(self):
         s = ''
         s = self.edit3_3.text()
-        new_array = analysis(s, 1)
+        new_array = analysis(s, True)
         if len(new_array)>1:
             self.edit3_3.setText("")
 
