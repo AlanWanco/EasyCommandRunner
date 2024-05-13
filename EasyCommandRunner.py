@@ -863,6 +863,18 @@ class MyTab(QWidget):
                 self.counter -= 1
                 break
 
+
+def smart_read_clipboard():
+    clipboard = QApplication.clipboard()
+    if clipboard.mimeData().hasUrls():
+        file_path = clipboard.mimeData().urls()[0].toLocalFile().replace('/','\\')
+        if os.path.isfile(file_path):
+            return file_path
+        else:
+            return clipboard.text()
+    return None
+
+
 class NewQLineEdit(QLineEdit):
     def __init__(self, myApp, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -885,24 +897,22 @@ class NewQLineEdit(QLineEdit):
             super(NewQLineEdit, self).keyPressEvent(event)
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Right and event.modifiers() == Qt.ControlModifier:
-            self.myApp.nextTab()
+        if event.modifiers() == Qt.ControlModifier:
+            # When only control is pressed
+            if event.key() == Qt.Key_Right:
+                self.myApp.nextTab()
+                return
+            if event.key() == Qt.Key_Left:
+                self.myApp.prevTab()
+                return
+            if event.key() == Qt.Key_V:
+                content = smart_read_clipboard()
+                if content is not None:
+                    self.setText(content)
+                    return
 
-        if event.key() == Qt.Key_Left and event.modifiers() == Qt.ControlModifier:
-            self.myApp.prevTab()
-
-        if (event.key() == Qt.Key_V and event.modifiers() == Qt.ControlModifier):
-            clipboard = QApplication.clipboard()
-            if clipboard.mimeData().hasUrls():
-                file_path = clipboard.mimeData().urls()[0].toLocalFile().replace('/','\\')
-                if os.path.isfile(file_path):
-                    self.setText(file_path)
-                else:
-                    self.setText(clipboard.text())
-            else:
-                super(NewQLineEdit, self).keyPressEvent(event)
-        else:
-            super(NewQLineEdit, self).keyPressEvent(event)
+        # Otherwise call default behavior
+        super().keyPressEvent(event)
 
     def contextMenuEvent(self, event):
             clipboard = QApplication.clipboard()
@@ -943,24 +953,22 @@ class NewQTextEdit(QTextEdit):
             super(NewQLineEdit, self).keyPressEvent(event)
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Right and event.modifiers() == Qt.ControlModifier:
-            self.myApp.nextTab()
+        if event.modifiers() == Qt.ControlModifier:
+            # When only control is pressed
+            if event.key() == Qt.Key_Right:
+                self.myApp.nextTab()
+                return
+            if event.key() == Qt.Key_Left:
+                self.myApp.prevTab()
+                return
+            if event.key() == Qt.Key_V:
+                content = smart_read_clipboard()
+                if content is not None:
+                    self.insertPlainText(content)
+                    return
 
-        if event.key() == Qt.Key_Left and event.modifiers() == Qt.ControlModifier:
-            self.myApp.prevTab()
-
-        if (event.key() == Qt.Key_V and event.modifiers() == Qt.ControlModifier):
-            clipboard = QApplication.clipboard()
-            if clipboard.mimeData().hasUrls():
-                file_path = clipboard.mimeData().urls()[0].toLocalFile().replace('/','\\')
-                if os.path.isfile(file_path):
-                    self.insertPlainText(file_path)
-                else:
-                    self.insertPlainText(clipboard.text())
-            else:
-                super(NewQTextEdit, self).keyPressEvent(event)
-        else:
-            super(NewQTextEdit, self).keyPressEvent(event)
+        # Otherwise call default behavior
+        super().keyPressEvent(event)
 
     def contextMenuEvent(self, event):
         clipboard = QApplication.clipboard()
