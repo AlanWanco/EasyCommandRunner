@@ -338,16 +338,15 @@ class MyApp(QWidget):
                 if not self.compare_files(latest_file, 'config.json'):
                     shutil.copy2('config.json', self.destination_file)
 
-    def minimize_to_tray(self):
-        if self.isMinimized():
-            self.showNormal()
-            self.activateWindow()
-        else:
-            self.hide()
-
     def restore_window(self):
         self.showNormal()
         self.activateWindow()
+
+    def minimize_to_tray(self):
+        if self.isMinimized():
+            self.restore_window()
+        else:
+            self.hide()
 
     def handle_tray_icon_activated(self, reason):
         if reason == QSystemTrayIcon.DoubleClick:
@@ -357,15 +356,15 @@ class MyApp(QWidget):
         self.tray_icon.hide()
         QApplication.quit()
 
-    def prevTab(self):
+    def moveTabRelative(self, d):
         tab_index = self.tabs.currentIndex()
-        tab_index = (tab_index - 1) % self.tabs.count()
-        self.tabs.setCurrentIndex(tab_index)
+        self.tabs.setCurrentIndex((tab_index + d) % self.tabs.count())
+
+    def prevTab(self):
+        self.moveTabRelative(-1)
 
     def nextTab(self):
-        tab_index = self.tabs.currentIndex()
-        tab_index = (tab_index + 1) % self.tabs.count()
-        self.tabs.setCurrentIndex(tab_index)
+        self.moveTabRelative(+1)
 
     def closeEvent(self, event):
         self.settings = QSettings("SleepyKanata", "EasyCommandRunner")
@@ -497,7 +496,7 @@ class MyTab(QWidget):
         self.hbox4 = QHBoxLayout()
 
         self.prevTabBtn = QPushButton("←上一个标签页")
-        self.prevTabBtn.clicked.connect(self.prevTab)
+        self.prevTabBtn.clicked.connect(self.parent.prevTab)
 
         self.reviewButton = QPushButton("预生成命令")
         self.reviewButton.clicked.connect(self.on_reviewButton_clicked)
@@ -507,7 +506,7 @@ class MyTab(QWidget):
         self.runButton.setObjectName("runBtn")
 
         self.nextTabBtn =  QPushButton("下一个标签页→")
-        self.nextTabBtn.clicked.connect(self.nextTab)
+        self.nextTabBtn.clicked.connect(self.parent.nextTab)
 
         self.vbox.addLayout(self.hbox_title)
         self.vbox.addLayout(self.hbox1)
@@ -846,16 +845,6 @@ class MyTab(QWidget):
             button_name = sender.objectName()
             index = int(button_name.replace("removeButton", ""))
             self.rm_line(index)
-
-    def prevTab(self):
-        self.tab_index = self.parent.tabs.currentIndex()
-        self.tab_index = (self.tab_index - 1) % self.parent.tabs.count()
-        self.parent.tabs.setCurrentIndex(self.tab_index)
-
-    def nextTab(self):
-        self.tab_index = self.parent.tabs.currentIndex()
-        self.tab_index = (self.tab_index + 1) % self.parent.tabs.count()
-        self.parent.tabs.setCurrentIndex(self.tab_index)
 
     def rm_line(self, index):
         layout_name = "exhbox" + str(index)
