@@ -61,6 +61,32 @@ def analysis(s, is_append = False):
 
     return new_array
 
+def compare_files(file1, file2):
+    with open(file1, 'r') as f1, open(file2, 'r') as f2:
+        return f1.read() == f2.read()
+
+def auto_backup():
+    src_file = 'config.json'
+    formatted_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    backup_dir = os.path.join('.', 'backup')
+    dst_file = os.path.join(backup_dir, f'config_{formatted_datetime}.json')
+
+    # auto backup only if config already exist.
+    if os.path.exists(src_file):
+        if not os.path.exists(backup_dir):
+            os.makedirs(backup_dir)
+
+        files = os.listdir(backup_dir)
+        if not files:
+            shutil.copy2(src_file, dst_file)
+        else:
+            # compare against latest.
+            paths = [os.path.join(backup_dir, basename) for basename in files]
+            latest_file = max(paths, key=os.path.getctime)
+
+            if not compare_files(latest_file, 'config.json'):
+                shutil.copy2(src_file, dst_file)
+
 class MyApp(QWidget):
 
     def __init__(self):
@@ -71,7 +97,7 @@ class MyApp(QWidget):
         self.initUI()
         self.setStyleSheet(load_stylesheet())
 
-        self.auto_backup()
+        auto_backup()
         self.load_config()
 
         self.settings = QSettings("SleepyKanata", "EasyCommandRunner")
@@ -243,7 +269,7 @@ class MyApp(QWidget):
         #计数tab页数
         config['tab_count'] = self.tabs.count()
 
-        self.auto_backup()
+        auto_backup()
         with open('config.json', 'w') as f:
             json.dump(config, f, indent=4)
         self.comboBox.clear()
@@ -309,34 +335,6 @@ class MyApp(QWidget):
         self.comboBox.clear()
         for index in range(self.tabs.count()):
             self.comboBox.addItem(self.tabs.tabText(index))
-
-    def compare_files(self, file1, file2):
-        with open(file1, 'r') as f1, open(file2, 'r') as f2:
-            file1_content = f1.read()
-            file2_content = f2.read()
-        return file1_content == file2_content
-
-    def auto_backup(self):
-
-        self.formatted_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        self.backup_dir = './backup'
-        self.destination_file = self.backup_dir + '/config_' + self.formatted_datetime +'.json'
-
-        if os.path.exists('config.json'):
-
-            if not os.path.exists(self.backup_dir):
-                os.makedirs(self.backup_dir)
-
-            files = os.listdir(self.backup_dir)
-
-            if not files:
-                shutil.copy2('config.json', self.destination_file)
-            else:
-                paths = [os.path.join(self.backup_dir, basename) for basename in files]
-                latest_file = max(paths, key=os.path.getctime)
-
-                if not self.compare_files(latest_file, 'config.json'):
-                    shutil.copy2('config.json', self.destination_file)
 
     def restore_window(self):
         self.showNormal()
