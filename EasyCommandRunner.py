@@ -91,8 +91,6 @@ class MyApp(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.current_tab_index = 0  # 记录当前显示的Tab索引
-        self.config_file = 'config.json'
 
         self.initUI()
         self.setStyleSheet(load_stylesheet())
@@ -228,7 +226,6 @@ class MyApp(QWidget):
             line_codes = line_codes_list[i] if i < len(line_codes_list) else []
             tab_checkbox_statuses = tab_checkbox_statuses_list[i] if i < len(tab_checkbox_statuses_list) else {}
             self.add_new_tab(line_codes, tab, tab_checkbox_statuses)
-        self.current_tab_index = config.get('current_tab_index', 0)
 
     def save_config(self):
         config = {
