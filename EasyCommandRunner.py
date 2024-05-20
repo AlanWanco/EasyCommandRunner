@@ -61,17 +61,41 @@ def analysis(s, is_append = False):
 
     return new_array
 
+def compare_files(file1, file2):
+    with open(file1, 'r') as f1, open(file2, 'r') as f2:
+        return f1.read() == f2.read()
+
+def auto_backup():
+    src_file = 'config.json'
+    formatted_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    backup_dir = os.path.join('.', 'backup')
+    dst_file = os.path.join(backup_dir, f'config_{formatted_datetime}.json')
+
+    # auto backup only if config already exist.
+    if os.path.exists(src_file):
+        if not os.path.exists(backup_dir):
+            os.makedirs(backup_dir)
+
+        files = os.listdir(backup_dir)
+        if not files:
+            shutil.copy2(src_file, dst_file)
+        else:
+            # compare against latest.
+            paths = [os.path.join(backup_dir, basename) for basename in files]
+            latest_file = max(paths, key=os.path.getctime)
+
+            if not compare_files(latest_file, 'config.json'):
+                shutil.copy2(src_file, dst_file)
+
 class MyApp(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.current_tab_index = 0  # 记录当前显示的Tab索引
-        self.config_file = 'config.json'
 
         self.initUI()
         self.setStyleSheet(load_stylesheet())
 
-        self.auto_backup()
+        auto_backup()
         self.load_config()
 
         self.settings = QSettings("SleepyKanata", "EasyCommandRunner")
@@ -202,7 +226,6 @@ class MyApp(QWidget):
             line_codes = line_codes_list[i] if i < len(line_codes_list) else []
             tab_checkbox_statuses = tab_checkbox_statuses_list[i] if i < len(tab_checkbox_statuses_list) else {}
             self.add_new_tab(line_codes, tab, tab_checkbox_statuses)
-        self.current_tab_index = config.get('current_tab_index', 0)
 
     def save_config(self):
         config = {
@@ -243,7 +266,7 @@ class MyApp(QWidget):
         #计数tab页数
         config['tab_count'] = self.tabs.count()
 
-        self.auto_backup()
+        auto_backup()
         with open('config.json', 'w') as f:
             json.dump(config, f, indent=4)
         self.comboBox.clear()
@@ -310,44 +333,15 @@ class MyApp(QWidget):
         for index in range(self.tabs.count()):
             self.comboBox.addItem(self.tabs.tabText(index))
 
-    def compare_files(self, file1, file2):
-        with open(file1, 'r') as f1, open(file2, 'r') as f2:
-            file1_content = f1.read()
-            file2_content = f2.read()
-        return file1_content == file2_content
-
-    def auto_backup(self):
-
-        self.formatted_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        self.backup_dir = './backup'
-        self.destination_file = self.backup_dir + '/config_' + self.formatted_datetime +'.json'
-
-        if os.path.exists('config.json'):
-
-            if not os.path.exists(self.backup_dir):
-                os.makedirs(self.backup_dir)
-
-            files = os.listdir(self.backup_dir)
-
-            if not files:
-                shutil.copy2('config.json', self.destination_file)
-            else:
-                paths = [os.path.join(self.backup_dir, basename) for basename in files]
-                latest_file = max(paths, key=os.path.getctime)
-
-                if not self.compare_files(latest_file, 'config.json'):
-                    shutil.copy2('config.json', self.destination_file)
-
-    def minimize_to_tray(self):
-        if self.isMinimized():
-            self.showNormal()
-            self.activateWindow()
-        else:
-            self.hide()
-
     def restore_window(self):
         self.showNormal()
         self.activateWindow()
+
+    def minimize_to_tray(self):
+        if self.isMinimized():
+            self.restore_window()
+        else:
+            self.hide()
 
     def handle_tray_icon_activated(self, reason):
         if reason == QSystemTrayIcon.DoubleClick:
@@ -357,15 +351,15 @@ class MyApp(QWidget):
         self.tray_icon.hide()
         QApplication.quit()
 
-    def prevTab(self):
+    def moveTabRelative(self, d):
         tab_index = self.tabs.currentIndex()
-        tab_index = (tab_index - 1) % self.tabs.count()
-        self.tabs.setCurrentIndex(tab_index)
+        self.tabs.setCurrentIndex((tab_index + d) % self.tabs.count())
+
+    def prevTab(self):
+        self.moveTabRelative(-1)
 
     def nextTab(self):
-        tab_index = self.tabs.currentIndex()
-        tab_index = (tab_index + 1) % self.tabs.count()
-        self.tabs.setCurrentIndex(tab_index)
+        self.moveTabRelative(+1)
 
     def closeEvent(self, event):
         self.settings = QSettings("SleepyKanata", "EasyCommandRunner")
@@ -497,7 +491,7 @@ class MyTab(QWidget):
         self.hbox4 = QHBoxLayout()
 
         self.prevTabBtn = QPushButton("←上一个标签页")
-        self.prevTabBtn.clicked.connect(self.prevTab)
+        self.prevTabBtn.clicked.connect(self.parent.prevTab)
 
         self.reviewButton = QPushButton("预生成命令")
         self.reviewButton.clicked.connect(self.on_reviewButton_clicked)
@@ -507,7 +501,7 @@ class MyTab(QWidget):
         self.runButton.setObjectName("runBtn")
 
         self.nextTabBtn =  QPushButton("下一个标签页→")
-        self.nextTabBtn.clicked.connect(self.nextTab)
+        self.nextTabBtn.clicked.connect(self.parent.nextTab)
 
         self.vbox.addLayout(self.hbox_title)
         self.vbox.addLayout(self.hbox1)
@@ -847,16 +841,6 @@ class MyTab(QWidget):
             index = int(button_name.replace("removeButton", ""))
             self.rm_line(index)
 
-    def prevTab(self):
-        self.tab_index = self.parent.tabs.currentIndex()
-        self.tab_index = (self.tab_index - 1) % self.parent.tabs.count()
-        self.parent.tabs.setCurrentIndex(self.tab_index)
-
-    def nextTab(self):
-        self.tab_index = self.parent.tabs.currentIndex()
-        self.tab_index = (self.tab_index + 1) % self.parent.tabs.count()
-        self.parent.tabs.setCurrentIndex(self.tab_index)
-
     def rm_line(self, index):
         layout_name = "exhbox" + str(index)
 
@@ -873,6 +857,18 @@ class MyTab(QWidget):
                 self.vbox.removeItem(item)
                 self.counter -= 1
                 break
+
+
+def smart_read_clipboard():
+    clipboard = QApplication.clipboard()
+    if clipboard.mimeData().hasUrls():
+        file_path = clipboard.mimeData().urls()[0].toLocalFile().replace('/','\\')
+        if os.path.isfile(file_path):
+            return file_path
+        else:
+            return clipboard.text()
+    return None
+
 
 class NewQLineEdit(QLineEdit):
     def __init__(self, myApp, *args, **kwargs):
@@ -896,24 +892,22 @@ class NewQLineEdit(QLineEdit):
             super(NewQLineEdit, self).keyPressEvent(event)
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Right and event.modifiers() == Qt.ControlModifier:
-            self.myApp.nextTab()
+        if event.modifiers() == Qt.ControlModifier:
+            # When only control is pressed
+            if event.key() == Qt.Key_Right:
+                self.myApp.nextTab()
+                return
+            if event.key() == Qt.Key_Left:
+                self.myApp.prevTab()
+                return
+            if event.key() == Qt.Key_V:
+                content = smart_read_clipboard()
+                if content is not None:
+                    self.setText(content)
+                    return
 
-        if event.key() == Qt.Key_Left and event.modifiers() == Qt.ControlModifier:
-            self.myApp.prevTab()
-
-        if (event.key() == Qt.Key_V and event.modifiers() == Qt.ControlModifier):
-            clipboard = QApplication.clipboard()
-            if clipboard.mimeData().hasUrls():
-                file_path = clipboard.mimeData().urls()[0].toLocalFile().replace('/','\\')
-                if os.path.isfile(file_path):
-                    self.setText(file_path)
-                else:
-                    self.setText(clipboard.text())
-            else:
-                super(NewQLineEdit, self).keyPressEvent(event)
-        else:
-            super(NewQLineEdit, self).keyPressEvent(event)
+        # Otherwise call default behavior
+        super().keyPressEvent(event)
 
     def contextMenuEvent(self, event):
             clipboard = QApplication.clipboard()
@@ -954,24 +948,22 @@ class NewQTextEdit(QTextEdit):
             super(NewQLineEdit, self).keyPressEvent(event)
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Right and event.modifiers() == Qt.ControlModifier:
-            self.myApp.nextTab()
+        if event.modifiers() == Qt.ControlModifier:
+            # When only control is pressed
+            if event.key() == Qt.Key_Right:
+                self.myApp.nextTab()
+                return
+            if event.key() == Qt.Key_Left:
+                self.myApp.prevTab()
+                return
+            if event.key() == Qt.Key_V:
+                content = smart_read_clipboard()
+                if content is not None:
+                    self.insertPlainText(content)
+                    return
 
-        if event.key() == Qt.Key_Left and event.modifiers() == Qt.ControlModifier:
-            self.myApp.prevTab()
-
-        if (event.key() == Qt.Key_V and event.modifiers() == Qt.ControlModifier):
-            clipboard = QApplication.clipboard()
-            if clipboard.mimeData().hasUrls():
-                file_path = clipboard.mimeData().urls()[0].toLocalFile().replace('/','\\')
-                if os.path.isfile(file_path):
-                    self.insertPlainText(file_path)
-                else:
-                    self.insertPlainText(clipboard.text())
-            else:
-                super(NewQTextEdit, self).keyPressEvent(event)
-        else:
-            super(NewQTextEdit, self).keyPressEvent(event)
+        # Otherwise call default behavior
+        super().keyPressEvent(event)
 
     def contextMenuEvent(self, event):
         clipboard = QApplication.clipboard()
