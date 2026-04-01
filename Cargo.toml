@@ -1,0 +1,50 @@
+[package]
+name = "easy-command-runner"
+version = "1.0.0"
+edition = "2021"
+authors = ["SleepyKanata"]
+description = "A modern cross-platform command runner with GUI"
+
+[dependencies]
+# Qt6 and CXX bindings
+cxx-qt = { version = "0.7", features = ["qt6"] }
+cxx = "1.0"
+
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Time
+chrono = "0.4"
+
+# Platform-specific
+#[cfg(windows)]
+winapi = { version = "0.3", optional = true }
+
+#[cfg(target_os = "macos")]
+objc = { version = "0.2", optional = true }
+
+# Other utilities
+anyhow = "1.0"
+thiserror = "1.0"
+
+[build-dependencies]
+cxx-qt-build = { version = "0.7", features = ["qt6"] }
+cxx-build = "1.0"
+
+[features]
+default = []
+# Platform features will be auto-detected
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

@@ -1,0 +1,332 @@
+/* Dark Theme Stylesheet */
+
+* {
+    padding: 5px;
+    font-family: 'Microsoft YaHei', 'SF Pro Display', sans-serif;
+    background-color: #181818;
+    font-size: 14px;
+    color: #f5f5f5;
+}
+
+*:focus {
+    outline: none;
+}
+
+QMainWindow {
+    background-color: #121414;
+}
+
+QWidget {
+    background-color: #121414;
+    border-radius: 5px;
+}
+
+QTabWidget {
+    background-color: #121414;
+    padding: 5px;
+    border-radius: 5px;
+}
+
+QTabBar::tab {
+    background-color: #1b1d1d;
+    font-size: 14px;
+    color: #f5f5f5;
+    padding: 8px 15px;
+    border: 1px solid #1e2228;
+    font-family: 'Microsoft YaHei';
+    border-top-left-radius: 5px;
+    border-top-right-radius: 5px;
+    margin: 0px 2px 0px 2px;
+}
+
+QTabBar::tab:selected {
+    background-color: #424444;
+}
+
+QTabBar::tab:!selected {
+    background-color: #1b1d1d;
+}
+
+QTabBar::tab:hover {
+    background-color: #222424;
+}
+
+QTabBar::close-button {
+    image: url(:/res/close-button.png);
+    subcontrol-position: right;
+}
+
+QTabWidget::pane {
+    border: none;
+}
+
+/* Labels */
+QLabel {
+    color: #f5f5f5;
+    background-color: #181a1a;
+    padding: 5px;
+    border: 1px solid #1e2228;
+    font-family: 'Microsoft YaHei';
+    font-size: 14px;
+    border-radius: 3px;
+}
+
+/* Line Edits */
+QLineEdit {
+    color: #f5f5f5;
+    background-color: #181818;
+    padding: 8px;
+    border: 1px solid #1e2228;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 13px;
+    border-radius: 3px;
+    selection-background-color: #1a5490;
+}
+
+QLineEdit:focus {
+    border: 1px solid #2a7fd4;
+}
+
+/* Text Edits */
+QTextEdit {
+    background-color: #181818;
+    padding: 8px;
+    border-radius: 3px;
+    font-size: 13px;
+    border: 1px solid #1e2228;
+    font-family: 'Consolas', 'Monaco', monospace;
+    color: #f5f5f5;
+    selection-background-color: #1a5490;
+}
+
+QTextEdit:focus {
+    border: 1px solid #2a7fd4;
+}
+
+/* Buttons */
+QPushButton {
+    color: #f5f5f5;
+    background-color: #1f1f1f;
+    padding: 8px 15px;
+    border: 1px solid #1e2228;
+    font-family: 'Microsoft YaHei';
+    font-size: 13px;
+    border-radius: 3px;
+    font-weight: 500;
+}
+
+QPushButton:hover {
+    background-color: #272727;
+    border-color: #414141;
+}
+
+QPushButton:pressed {
+    background-color: #333333;
+    border-color: #1e2228;
+}
+
+QPushButton:disabled {
+    color: #707070;
+    background-color: #0f0f0f;
+}
+
+/* Run Button Special Style */
+QPushButton#runBtn {
+    background-color: #1a263b;
+    border: 1px solid #1a3a52;
+}
+
+QPushButton#runBtn:hover {
+    background-color: #1f2e48;
+    border-color: #2a5090;
+}
+
+QPushButton#runBtn:pressed {
+    background-color: #233350;
+    border-color: #1e2228;
+}
+
+/* Save Button Special Style */
+QPushButton#saveBtn {
+    background-color: #1a3b1a;
+    border: 1px solid #1a5220;
+}
+
+QPushButton#saveBtn:hover {
+    background-color: #1f481f;
+    border-color: #2a7f2a;
+}
+
+/* Checkboxes */
+QCheckBox {
+    color: #f5f5f5;
+    spacing: 5px;
+}
+
+QCheckBox::indicator {
+    width: 18px;
+    height: 18px;
+    border-radius: 3px;
+    border: 1px solid #1e2228;
+    background-color: #181818;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #1a263b;
+    border: 1px solid #2a7fd4;
+    image: url(:/res/checked.png);
+}
+
+QCheckBox::indicator:unchecked:hover {
+    border: 1px solid #2a7fd4;
+}
+
+/* Combo Box */
+QComboBox {
+    background-color: #1b1d1d;
+    color: #f5f5f5;
+    border: 1px solid #1e2228;
+    padding: 5px;
+    border-radius: 3px;
+}
+
+QComboBox:focus {
+    border: 1px solid #2a7fd4;
+}
+
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 20px;
+    border-left: 1px solid #1e2228;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #171717;
+    color: #f5f5f5;
+    border: 1px solid #1e2228;
+    selection-background-color: #1a5490;
+}
+
+QListView::item {
+    padding: 5px;
+    background: #171717;
+}
+
+QListView::item:selected {
+    background-color: #1a5490;
+    border-radius: 3px;
+    padding: 5px;
+}
+
+QListView::item:hover {
+    background-color: #222424;
+    border-radius: 3px;
+    padding: 5px;
+}
+
+/* Scrollbars */
+QScrollBar:vertical {
+    background-color: #1e2228;
+    width: 12px;
+    margin: 0px;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #707070;
+    min-height: 20px;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #888888;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    border: none;
+    background: none;
+}
+
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: none;
+}
+
+QScrollBar:horizontal {
+    background-color: #1e2228;
+    height: 12px;
+    margin: 0px;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:horizontal {
+    background-color: #707070;
+    min-width: 20px;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background-color: #888888;
+}
+
+/* Menu */
+QMenu {
+    color: #f5f5f5;
+    font-size: 13px;
+    font-family: 'Microsoft YaHei';
+    background-color: #1a1a1a;
+    padding: 2px;
+    border: 1px solid #1e2228;
+    border-radius: 3px;
+}
+
+QMenu::item:selected {
+    background-color: #1a5490;
+    border-radius: 2px;
+}
+
+QMenu::separator {
+    background-color: #1e2228;
+    height: 1px;
+    margin: 3px 0px;
+}
+
+/* Tooltips */
+QToolTip {
+    background-color: #2a2a2a;
+    border: 1px solid #1e2228;
+    color: #f5f5f5;
+    padding: 3px 6px;
+    border-radius: 3px;
+}
+
+/* Dialog */
+QDialog {
+    background-color: #121414;
+}
+
+/* Splitter */
+QSplitter::handle {
+    background-color: #1e2228;
+}
+
+QSplitter::handle:hover {
+    background-color: #2a7fd4;
+}
+
+/* Groupbox */
+QGroupBox {
+    color: #f5f5f5;
+    border: 1px solid #1e2228;
+    border-radius: 5px;
+    margin-top: 10px;
+    padding-top: 10px;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding: 0 3px;
+}
