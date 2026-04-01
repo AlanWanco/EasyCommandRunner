@@ -22,6 +22,10 @@
 #include <QMenuBar>
 #include <QCloseEvent>
 #include <QEvent>
+#include <QPixmap>
+#include <QPainter>
+#include <QRegularExpression>
+#include <QSize>
 
 // ============================================================================
 // AppWindow Implementation
@@ -91,51 +95,67 @@ void AppWindow::setupUI() {
 
     mainLayout->addWidget(tabWidget);
 
-    // 按钮布局
+    // 按钮布局 - 现代化设计
     QHBoxLayout *buttonLayout = new QHBoxLayout();
+    buttonLayout->setContentsMargins(8, 8, 8, 8);
+    buttonLayout->setSpacing(6);
 
     addTabButton = new QPushButton(this);
     addTabButton->setIcon(QIcon(":/res/icon_add.svg"));
     addTabButton->setText("新建");
     addTabButton->setObjectName("addTabBtn");
-    addTabButton->setMaximumWidth(100);
+    addTabButton->setMinimumWidth(80);
+    addTabButton->setMinimumHeight(36);
+    addTabButton->setIconSize(QSize(20, 20));
 
     reloadButton = new QPushButton(this);
     reloadButton->setIcon(QIcon(":/res/icon_refresh.svg"));
     reloadButton->setText("重载");
     reloadButton->setObjectName("reloadBtn");
-    reloadButton->setMaximumWidth(100);
+    reloadButton->setMinimumWidth(80);
+    reloadButton->setMinimumHeight(36);
+    reloadButton->setIconSize(QSize(20, 20));
 
     copyTabButton = new QPushButton(this);
     copyTabButton->setIcon(QIcon(":/res/icon_copy.svg"));
     copyTabButton->setText("复制");
     copyTabButton->setObjectName("copyTabBtn");
-    copyTabButton->setMaximumWidth(100);
+    copyTabButton->setMinimumWidth(80);
+    copyTabButton->setMinimumHeight(36);
+    copyTabButton->setIconSize(QSize(20, 20));
 
     previewButton = new QPushButton(this);
     previewButton->setIcon(QIcon(":/res/icon_preview.svg"));
     previewButton->setText("预览");
     previewButton->setObjectName("previewBtn");
-    previewButton->setMaximumWidth(100);
+    previewButton->setMinimumWidth(80);
+    previewButton->setMinimumHeight(36);
+    previewButton->setIconSize(QSize(20, 20));
 
     saveButton = new QPushButton(this);
     saveButton->setIcon(QIcon(":/res/icon_save.svg"));
     saveButton->setText("保存");
     saveButton->setObjectName("saveBtn");
-    saveButton->setMaximumWidth(100);
+    saveButton->setMinimumWidth(80);
+    saveButton->setMinimumHeight(36);
+    saveButton->setIconSize(QSize(20, 20));
 
     runButton = new QPushButton(this);
     runButton->setIcon(QIcon(":/res/icon_run.svg"));
     runButton->setText("运行");
     runButton->setObjectName("runBtn");
-    runButton->setMaximumWidth(100);
+    runButton->setMinimumWidth(80);
+    runButton->setMinimumHeight(36);
+    runButton->setIconSize(QSize(20, 20));
     runButton->setStyleSheet("QPushButton#runBtn { background-color: #4CAF50; color: white; font-weight: bold; }");
 
     settingsButton = new QPushButton(this);
     settingsButton->setIcon(QIcon(":/res/icon_settings.svg"));
     settingsButton->setText("设置");
     settingsButton->setObjectName("settingsBtn");
-    settingsButton->setMaximumWidth(100);
+    settingsButton->setMinimumWidth(80);
+    settingsButton->setMinimumHeight(36);
+    settingsButton->setIconSize(QSize(20, 20));
 
     buttonLayout->addWidget(addTabButton);
     buttonLayout->addWidget(reloadButton);
@@ -420,8 +440,61 @@ void AppWindow::loadStylesheet(const QString &theme) {
 void AppWindow::applyTheme(const QString &theme) {
     currentTheme = theme;
     loadStylesheet(theme);
+    updateButtonIcons();
     settings->setValue("ui/theme", theme);
 }
+
+QIcon AppWindow::createThemedIcon(const QString &svgPath, const QString &theme) {
+    // 根据主题加载SVG并改变颜色
+    QFile file(svgPath);
+    if (!file.open(QFile::ReadOnly)) {
+        return QIcon();
+    }
+    
+    QString svgData = QString::fromUtf8(file.readAll());
+    file.close();
+    
+    // 根据主题选择颜色
+    QString iconColor = (theme == "light") ? "#000000" : "#f5f5f5";
+    
+    // 替换SVG中的fill颜色
+    // 首先处理 fill="currentColor" 的情况
+    svgData.replace("fill=\"currentColor\"", QString("fill=\"%1\"").arg(iconColor));
+    // 处理 fill="#..." 的情况
+    QRegularExpression fillRegex("fill=\"#[0-9a-fA-F]{6}\"");
+    svgData.replace(fillRegex, QString("fill=\"%1\"").arg(iconColor));
+    
+    // 转换为Pixmap
+    QPixmap pixmap(24, 24);
+    pixmap.fill(Qt::transparent);
+    
+    QByteArray svgBytes = svgData.toUtf8();
+    pixmap = QPixmap();
+    pixmap.loadFromData(svgBytes, "SVG");
+    
+    if (pixmap.isNull()) {
+        // 如果直接加载失败，尝试用QPainter绘制
+        pixmap = QPixmap(24, 24);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        // 这里可以添加SVG渲染逻辑
+        painter.end();
+    }
+    
+    return QIcon(pixmap);
+}
+
+void AppWindow::updateButtonIcons() {
+    // 根据当前主题更新所有按钮的图标
+    addTabButton->setIcon(createThemedIcon(":/res/icon_add.svg", currentTheme));
+    reloadButton->setIcon(createThemedIcon(":/res/icon_refresh.svg", currentTheme));
+    copyTabButton->setIcon(createThemedIcon(":/res/icon_copy.svg", currentTheme));
+    previewButton->setIcon(createThemedIcon(":/res/icon_preview.svg", currentTheme));
+    saveButton->setIcon(createThemedIcon(":/res/icon_save.svg", currentTheme));
+    runButton->setIcon(createThemedIcon(":/res/icon_run.svg", currentTheme));
+    settingsButton->setIcon(createThemedIcon(":/res/icon_settings.svg", currentTheme));
+}
+
 
 void AppWindow::loadConfiguration() {
     // 从 Rust 加载配置

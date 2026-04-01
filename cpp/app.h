@@ -82,6 +82,10 @@ private:
     void setupConnections();
     void loadStylesheet(const QString &theme);
     void applyTheme(const QString &theme);
+    
+    // 图标管理
+    QIcon createThemedIcon(const QString &svgPath, const QString &theme);
+    void updateButtonIcons();
 
     // 配置管理
     void loadConfiguration();
