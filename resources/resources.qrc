@@ -4,5 +4,14 @@
         <file>../icon2.ico</file>
         <file>stylesheet_dark.qss</file>
         <file>stylesheet_light.qss</file>
+        <file>icon_run.svg</file>
+        <file>icon_save.svg</file>
+        <file>icon_add.svg</file>
+        <file>icon_delete.svg</file>
+        <file>icon_settings.svg</file>
+        <file>icon_refresh.svg</file>
+        <file>icon_preview.svg</file>
+        <file>icon_copy.svg</file>
+        <file>icon_check.svg</file>
     </qresource>
 </RCC>

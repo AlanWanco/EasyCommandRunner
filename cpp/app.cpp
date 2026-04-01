@@ -94,34 +94,56 @@ void AppWindow::setupUI() {
     // 按钮布局
     QHBoxLayout *buttonLayout = new QHBoxLayout();
 
-    addTabButton = new QPushButton("增加标签", this);
+    addTabButton = new QPushButton(this);
+    addTabButton->setIcon(QIcon(":/res/icon_add.svg"));
+    addTabButton->setText("新建");
     addTabButton->setObjectName("addTabBtn");
+    addTabButton->setMaximumWidth(100);
 
-    reloadButton = new QPushButton("重新加载", this);
+    reloadButton = new QPushButton(this);
+    reloadButton->setIcon(QIcon(":/res/icon_refresh.svg"));
+    reloadButton->setText("重载");
     reloadButton->setObjectName("reloadBtn");
+    reloadButton->setMaximumWidth(100);
 
-    copyTabButton = new QPushButton("复制标签", this);
+    copyTabButton = new QPushButton(this);
+    copyTabButton->setIcon(QIcon(":/res/icon_copy.svg"));
+    copyTabButton->setText("复制");
     copyTabButton->setObjectName("copyTabBtn");
+    copyTabButton->setMaximumWidth(100);
 
-    previewButton = new QPushButton("预生成命令", this);
+    previewButton = new QPushButton(this);
+    previewButton->setIcon(QIcon(":/res/icon_preview.svg"));
+    previewButton->setText("预览");
     previewButton->setObjectName("previewBtn");
+    previewButton->setMaximumWidth(100);
 
-    runButton = new QPushButton("运行(Ctrl+Enter)", this);
-    runButton->setObjectName("runBtn");
-
-    saveButton = new QPushButton("保存(Ctrl+S)", this);
+    saveButton = new QPushButton(this);
+    saveButton->setIcon(QIcon(":/res/icon_save.svg"));
+    saveButton->setText("保存");
     saveButton->setObjectName("saveBtn");
+    saveButton->setMaximumWidth(100);
 
-    settingsButton = new QPushButton("设置", this);
+    runButton = new QPushButton(this);
+    runButton->setIcon(QIcon(":/res/icon_run.svg"));
+    runButton->setText("运行");
+    runButton->setObjectName("runBtn");
+    runButton->setMaximumWidth(100);
+    runButton->setStyleSheet("QPushButton#runBtn { background-color: #4CAF50; color: white; font-weight: bold; }");
+
+    settingsButton = new QPushButton(this);
+    settingsButton->setIcon(QIcon(":/res/icon_settings.svg"));
+    settingsButton->setText("设置");
     settingsButton->setObjectName("settingsBtn");
+    settingsButton->setMaximumWidth(100);
 
     buttonLayout->addWidget(addTabButton);
     buttonLayout->addWidget(reloadButton);
     buttonLayout->addWidget(copyTabButton);
-    buttonLayout->addStretch();
     buttonLayout->addWidget(previewButton);
-    buttonLayout->addWidget(runButton);
+    buttonLayout->addStretch();
     buttonLayout->addWidget(saveButton);
+    buttonLayout->addWidget(runButton);
     buttonLayout->addWidget(settingsButton);
 
     mainLayout->addLayout(buttonLayout);
@@ -470,7 +492,6 @@ CommandTab::CommandTab(QWidget *parent)
     , programEdit(nullptr)
     , parseButton(nullptr)
     , otherArgsEdit(nullptr)
-    , useNewWindowCheckbox(nullptr)
     , descriptionEdit(nullptr)
     , commandPreviewEdit(nullptr)
     , addFunctionButton(nullptr)
@@ -515,17 +536,12 @@ QString CommandTab::getDescription() const {
     return descriptionEdit->toPlainText();
 }
 
-bool CommandTab::getUseNewWindow() const {
-    return useNewWindowCheckbox->isChecked();
-}
-
 void CommandTab::loadConfiguration(const QJsonObject &config) {
     titleEdit->setText(config.value("name").toString());
     workingDirEdit->setText(config.value("working_dir").toString());
     programEdit->setText(config.value("program").toString());
     otherArgsEdit->setText(config.value("other_args").toString());
     descriptionEdit->setText(config.value("description").toString());
-    useNewWindowCheckbox->setChecked(config.value("use_new_window").toBool());
 
     // 加载函数列表
     QJsonArray functions = config.value("functions").toArray();
@@ -545,7 +561,6 @@ QJsonObject CommandTab::saveConfiguration() const {
     config.insert("program", programEdit->text());
     config.insert("other_args", otherArgsEdit->text());
     config.insert("description", descriptionEdit->toPlainText());
-    config.insert("use_new_window", useNewWindowCheckbox->isChecked());
 
     QJsonArray functions;
     for (int i = 0; i < functionEdits.size(); ++i) {
@@ -565,7 +580,6 @@ void CommandTab::clear() {
     programEdit->clear();
     otherArgsEdit->clear();
     descriptionEdit->clear();
-    useNewWindowCheckbox->setChecked(false);
     functionEdits.clear();
     parameterEdits.clear();
     commentEdits.clear();
@@ -627,13 +641,11 @@ void CommandTab::setupUI() {
     scrollArea->setWidgetResizable(true);
     layout->addWidget(scrollArea);
 
-    // 其他参数和新窗口checkbox
+    // 其他参数
     QHBoxLayout *otherLayout = new QHBoxLayout();
     otherArgsEdit = new QLineEdit();
     otherArgsEdit->setPlaceholderText("其他参数");
     otherLayout->addWidget(otherArgsEdit);
-    useNewWindowCheckbox = new QCheckBox("使用新窗口运行");
-    otherLayout->addWidget(useNewWindowCheckbox);
     layout->addLayout(otherLayout);
 
     // 描述

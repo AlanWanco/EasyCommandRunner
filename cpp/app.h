@@ -142,7 +142,6 @@ public:
     QVector<QPair<QString, QString>> getFunctions() const;
     QString getOtherArgs() const;
     QString getDescription() const;
-    bool getUseNewWindow() const;
 
     void loadConfiguration(const QJsonObject &config);
     QJsonObject saveConfiguration() const;
@@ -179,7 +178,6 @@ private:
     
     // 其他参数
     QLineEdit *otherArgsEdit;
-    QCheckBox *useNewWindowCheckbox;
     
     // 描述
     QTextEdit *descriptionEdit;
