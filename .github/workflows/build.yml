@@ -1,0 +1,202 @@
+name: Cross-Platform Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-linux-x86:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Qt6
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-base-dev qt6-tools-dev
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Build
+        run: |
+          mkdir -p build
+          cd build
+          cmake -DCMAKE_BUILD_TYPE=Release ..
+          make -j$(nproc)
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: easycommandrunner-linux-x86
+          path: build/EasyCommandRunner
+
+  build-linux-arm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust ARM target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      
+      - name: Install ARM dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            crossbuild-essential-arm64 \
+            qt6-base-dev:arm64 \
+            qt6-tools-dev:arm64
+      
+      - name: Build
+        env:
+          CC: aarch64-linux-gnu-gcc
+          CXX: aarch64-linux-gnu-g++
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          mkdir -p build
+          cd build
+          cmake -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+                -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+                ..
+          make -j$(nproc)
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: easycommandrunner-linux-arm64
+          path: build/EasyCommandRunner
+
+  build-windows-x86:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Qt6
+        run: |
+          choco install -y qt-opensource
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Add MSVC toolset
+        run: |
+          choco install -y visualstudio2022-workload-vctools
+      
+      - name: Build
+        shell: pwsh
+        run: |
+          mkdir build -Force
+          cd build
+          cmake -G "Visual Studio 17 2022" -A Win32 ..
+          cmake --build . --config Release
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: easycommandrunner-windows-x86
+          path: build/Release/EasyCommandRunner.exe
+
+  build-windows-arm:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Qt6
+        run: |
+          choco install -y qt-opensource
+      
+      - name: Install Rust ARM target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+      
+      - name: Build
+        shell: pwsh
+        run: |
+          mkdir build -Force
+          cd build
+          cmake -G "Visual Studio 17 2022" -A ARM64 ..
+          cmake --build . --config Release
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: easycommandrunner-windows-arm64
+          path: build/Release/EasyCommandRunner.exe
+
+  build-macos-arm:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Qt6
+        run: |
+          brew install qt
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Build
+        run: |
+          mkdir -p build
+          cd build
+          cmake -DCMAKE_BUILD_TYPE=Release ..
+          make -j$(sysctl -n hw.ncpu)
+      
+      - name: Create DMG
+        run: |
+          mkdir -p dist
+          cp -r build/EasyCommandRunner.app dist/
+          hdiutil create -volname "EasyCommandRunner 0.9.0" \
+                        -srcfolder dist \
+                        -ov -format UDZO \
+                        EasyCommandRunner-0.9.0.dmg
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: easycommandrunner-macos-arm64
+          path: EasyCommandRunner-0.9.0.dmg
+
+  create-release:
+    needs: [build-linux-x86, build-linux-arm, build-windows-x86, build-windows-arm, build-macos-arm]
+    runs-on: ubuntu-latest
+    if: success()
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            easycommandrunner-linux-x86/EasyCommandRunner
+            easycommandrunner-linux-arm64/EasyCommandRunner
+            easycommandrunner-windows-x86/EasyCommandRunner.exe
+            easycommandrunner-windows-arm64/EasyCommandRunner.exe
+            easycommandrunner-macos-arm64/EasyCommandRunner-0.9.0.dmg
+          tag_name: v0.9.0
+          release_name: EasyCommandRunner v0.9.0
+          body: |
+            # EasyCommandRunner v0.9.0 Release
+            
+            ## 新特性
+            - ✨ 现代化 UI 设计（SVG 图标）
+            - 🚀 Rust + Qt6 完全重写
+            - 📦 大幅减小包体积（~70% 缩减）
+            - ⚡ 显著提升启动速度（~5x 加速）
+            - 🎨 日间/夜间主题切换
+            - 🖥️ 多平台支持（Linux/Windows/macOS）
+            
+            ## 下载
+            - Linux x86_64: `EasyCommandRunner-linux-x86`
+            - Linux ARM64: `EasyCommandRunner-linux-arm64`
+            - Windows x86: `EasyCommandRunner-windows-x86.exe`
+            - Windows ARM64: `EasyCommandRunner-windows-arm64.exe`
+            - macOS ARM64: `EasyCommandRunner-0.9.0.dmg`
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

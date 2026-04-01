@@ -1,6 +1,3 @@
-use regex::Regex;
-use std::collections::HashMap;
-
 /// 命令解析器 - 从 Python 版本移植
 pub struct CommandParser;
 
@@ -13,19 +10,30 @@ impl CommandParser {
     /// 解析命令字符串为参数列表
     /// 这是从 Python 版本的 analysis() 函数直译过来的
     pub fn parse(input: &str, is_append: bool) -> Vec<String> {
-        // 使用正则表达式分割，保留引号内的内容
-        let re = Regex::new(r#"( ".+?"| )"#).unwrap();
-        let mut parts: Vec<String> = re
-            .split(input)
-            .filter_map(|p| {
-                let trimmed = p.trim();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(trimmed.to_string())
+        // 简单分割逻辑：根据空格分割，但保留引号内的内容
+        let mut parts: Vec<String> = Vec::new();
+        let mut current = String::new();
+        let mut in_quotes = false;
+
+        for ch in input.chars() {
+            match ch {
+                '"' => {
+                    in_quotes = !in_quotes;
+                    current.push(ch);
                 }
-            })
-            .collect();
+                ' ' if !in_quotes => {
+                    if !current.is_empty() {
+                        parts.push(current.clone());
+                        current.clear();
+                    }
+                }
+                _ => current.push(ch),
+            }
+        }
+
+        if !current.is_empty() {
+            parts.push(current);
+        }
 
         // 当两个-开头的元素在一起时，中间增加空元素
         let mut new_array = Vec::new();

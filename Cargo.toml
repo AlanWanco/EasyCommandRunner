@@ -1,15 +1,15 @@
 [package]
 name = "easy-command-runner"
-version = "1.0.0"
+version = "0.9.0"
 edition = "2021"
 authors = ["SleepyKanata"]
 description = "A modern cross-platform command runner with GUI"
 
-[dependencies]
-# Qt6 and CXX bindings
-cxx-qt = { version = "0.7", features = ["qt6"] }
-cxx = "1.0"
+[lib]
+name = "easy_command_runner"
+crate-type = ["staticlib"]
 
+[dependencies]
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
 
@@ -24,20 +24,9 @@ env_logger = "0.11"
 # Time
 chrono = "0.4"
 
-# Platform-specific
-#[cfg(windows)]
-winapi = { version = "0.3", optional = true }
-
-#[cfg(target_os = "macos")]
-objc = { version = "0.2", optional = true }
-
 # Other utilities
 anyhow = "1.0"
 thiserror = "1.0"
-
-[build-dependencies]
-cxx-qt-build = { version = "0.7", features = ["qt6"] }
-cxx-build = "1.0"
 
 [features]
 default = []

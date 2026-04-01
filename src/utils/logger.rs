@@ -1,13 +1,11 @@
-use log::{debug, error, info, warn};
-use std::fs::OpenOptions;
+use log::{error, info};
 use std::io::Write;
-use std::path::Path;
 
 pub struct Logger;
 
 impl Logger {
     pub fn init() {
-        let log_path = "easy_command_runner.log";
+        let _log_path = "easy_command_runner.log";
 
         // 初始化 env_logger
         env_logger::Builder::from_default_env()

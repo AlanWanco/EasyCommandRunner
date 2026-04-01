@@ -25,6 +25,24 @@ find_package(Qt6 COMPONENTS
 # The Rust backend will be integrated via FFI in a later phase
 # To build Rust: cargo build [--release]
 
+# Build Rust library first
+add_custom_target(rust_build ALL
+    COMMAND cargo build 
+            --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml
+            $<IF:$<CONFIG:Release>,--release,>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# Determine the Rust target library name and path
+if(APPLE)
+    set(RUST_LIB_PATH "${CMAKE_CURRENT_SOURCE_DIR}/target/$<IF:$<CONFIG:Release>,release,debug>/libeasy_command_runner.a")
+elseif(WIN32)
+    set(RUST_LIB_PATH "${CMAKE_CURRENT_SOURCE_DIR}/target/$<IF:$<CONFIG:Release>,release,debug>/easy_command_runner.lib")
+else()
+    set(RUST_LIB_PATH "${CMAKE_CURRENT_SOURCE_DIR}/target/$<IF:$<CONFIG:Release>,release,debug>/libeasy_command_runner.a")
+endif()
+
+
 # Source files
 set(SOURCES
     cpp/app.cpp
@@ -54,7 +72,11 @@ target_link_libraries(${PROJECT_NAME}
     Qt6::Network
     Qt6::Sql
     Qt6::Concurrent
+    ${RUST_LIB_PATH}
 )
+
+# Add dependency on Rust build
+add_dependencies(${PROJECT_NAME} rust_build)
 
 # Include directories
 target_include_directories(${PROJECT_NAME}
@@ -88,7 +110,7 @@ install(TARGETS ${PROJECT_NAME}
 
 # CPack configuration
 set(CPACK_PACKAGE_NAME "EasyCommandRunner")
-set(CPACK_PACKAGE_VERSION "1.0.0")
+set(CPACK_PACKAGE_VERSION "0.9.0")
 set(CPACK_PACKAGE_VENDOR "SleepyKanata")
 set(CPACK_PACKAGE_DESCRIPTION "A modern cross-platform command runner with GUI")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "EasyCommandRunner")

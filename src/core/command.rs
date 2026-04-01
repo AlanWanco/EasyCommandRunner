@@ -1,8 +1,7 @@
 use chrono::Local;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::path::PathBuf;
+use std::process::Command;
 
 /// 命令配置结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,7 +29,7 @@ pub struct CommandExecutor;
 impl CommandExecutor {
     /// 执行命令
     pub fn execute(
-        program: &str,
+        _program: &str,
         working_dir: &str,
         command_str: &str,
         capture_output: bool,

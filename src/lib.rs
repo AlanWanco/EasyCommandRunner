@@ -1,9 +1,10 @@
 pub mod core;
+pub mod ffi;
 pub mod ui;
 pub mod utils;
 
 // 重新导出常用的类型和函数
-pub use core::{CommandConfig, CommandExecutor, CommandParser, CommandResult, ConfigManager};
+pub use core::{CommandExecutor, CommandParser, ConfigManager};
 pub use utils::Logger;
 
 #[cfg(test)]
