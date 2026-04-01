@@ -162,3 +162,4 @@ cython_debug/
 # Ignore config files
 backup/
 config.json
+AGENT.md

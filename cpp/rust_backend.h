@@ -1,5 +1,6 @@
 #include "ffi_bindings.h"
 #include <QString>
+#include <QByteArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <memory>
@@ -15,35 +16,32 @@ public:
     static CommandResult executeCommand(
         const QString& program,
         const QString& workingDir,
-        const QVector<QString>& args,
-        bool useNewWindow = true)
+        const QString& commandStr)
     {
-        const char* prog_c = program.toUtf8().constData();
-        const char* dir_c = workingDir.isEmpty() ? nullptr : workingDir.toUtf8().constData();
+        const QByteArray programUtf8 = program.toUtf8();
+        const QByteArray workingDirUtf8 = workingDir.toUtf8();
+        const QByteArray commandUtf8 = commandStr.toUtf8();
 
-        // 构建 C 字符串数组
-        std::vector<const char*> args_c;
-        std::vector<std::string> args_storage;
-        for (const auto& arg : args) {
-            args_storage.push_back(arg.toStdString());
-            args_c.push_back(args_storage.back().c_str());
-        }
+        const char* prog_c = programUtf8.constData();
+        const char* dir_c = workingDir.isEmpty() ? nullptr : workingDirUtf8.constData();
+        const char* cmd_c = commandUtf8.constData();
 
         return rust_execute_command(
             prog_c,
             dir_c,
-            args_c.data(),
-            static_cast<int>(args_c.size()),
-            useNewWindow
+            cmd_c
         );
     }
 
     /**
      * 加载配置
      */
-    static QString loadConfig(const QString& configPath) {
-        const char* path_c = configPath.toUtf8().constData();
-        ConfigData config = rust_load_config(path_c);
+    static QString loadConfig(const QString& configPath, const QString& backupDir) {
+        const QByteArray pathUtf8 = configPath.toUtf8();
+        const QByteArray backupUtf8 = backupDir.toUtf8();
+        const char* path_c = pathUtf8.constData();
+        const char* backup_c = backupUtf8.constData();
+        ConfigData config = rust_load_config(path_c, backup_c);
 
         QString result;
         if (config.json_data) {
@@ -56,36 +54,50 @@ public:
     /**
      * 保存配置
      */
-    static bool saveConfig(const QString& configPath, const QString& jsonData) {
-        const char* path_c = configPath.toUtf8().constData();
-        const char* json_c = jsonData.toUtf8().constData();
-        return rust_save_config(path_c, json_c);
+    static bool saveConfig(const QString& configPath, const QString& backupDir, const QString& jsonData) {
+        const QByteArray pathUtf8 = configPath.toUtf8();
+        const QByteArray backupUtf8 = backupDir.toUtf8();
+        const QByteArray jsonUtf8 = jsonData.toUtf8();
+        const char* path_c = pathUtf8.constData();
+        const char* backup_c = backupUtf8.constData();
+        const char* json_c = jsonUtf8.constData();
+        return rust_save_config(path_c, backup_c, json_c);
     }
 
     /**
      * 创建备份
      */
-    static bool createBackup(const QString& configPath) {
-        const char* path_c = configPath.toUtf8().constData();
-        return rust_create_backup(path_c);
+    static bool createBackup(const QString& configPath, const QString& backupDir) {
+        const QByteArray pathUtf8 = configPath.toUtf8();
+        const QByteArray backupUtf8 = backupDir.toUtf8();
+        const char* path_c = pathUtf8.constData();
+        const char* backup_c = backupUtf8.constData();
+        return rust_create_backup(path_c, backup_c);
     }
 
     /**
      * 恢复备份
      */
-    static bool restoreBackup(const QString& configPath, const QString& backupPath) {
-        const char* config_c = configPath.toUtf8().constData();
-        const char* backup_c = backupPath.toUtf8().constData();
-        return rust_restore_backup(config_c, backup_c);
+    static bool restoreBackup(const QString& configPath, const QString& backupDir, const QString& backupPath) {
+        const QByteArray configUtf8 = configPath.toUtf8();
+        const QByteArray backupDirUtf8 = backupDir.toUtf8();
+        const QByteArray backupUtf8 = backupPath.toUtf8();
+        const char* config_c = configUtf8.constData();
+        const char* backup_dir_c = backupDirUtf8.constData();
+        const char* backup_c = backupUtf8.constData();
+        return rust_restore_backup(config_c, backup_dir_c, backup_c);
     }
 
     /**
      * 获取备份列表
      */
-    static QVector<QString> getBackups(const QString& configDir) {
+    static QVector<QString> getBackups(const QString& configPath, const QString& backupDir) {
         QVector<QString> result;
-        const char* dir_c = configDir.toUtf8().constData();
-        BackupList backups = rust_get_backups(dir_c);
+        const QByteArray configUtf8 = configPath.toUtf8();
+        const QByteArray backupUtf8 = backupDir.toUtf8();
+        const char* config_c = configUtf8.constData();
+        const char* backup_c = backupUtf8.constData();
+        BackupList backups = rust_get_backups(config_c, backup_c);
 
         if (backups.paths && backups.count > 0) {
             for (int i = 0; i < backups.count; ++i) {
@@ -102,8 +114,10 @@ public:
      */
     static QVector<QString> parseCommand(const QString& program, const QString& parameters) {
         QVector<QString> result;
-        const char* prog_c = program.toUtf8().constData();
-        const char* params_c = parameters.isEmpty() ? nullptr : parameters.toUtf8().constData();
+        const QByteArray programUtf8 = program.toUtf8();
+        const QByteArray parametersUtf8 = parameters.toUtf8();
+        const char* prog_c = programUtf8.constData();
+        const char* params_c = parameters.isEmpty() ? nullptr : parametersUtf8.constData();
 
         ParsedCommand parsed = rust_parse_command(prog_c, params_c);
 
@@ -128,8 +142,10 @@ public:
      * 记录日志
      */
     static void log(const QString& level, const QString& message) {
-        const char* level_c = level.toUtf8().constData();
-        const char* msg_c = message.toUtf8().constData();
+        const QByteArray levelUtf8 = level.toUtf8();
+        const QByteArray messageUtf8 = message.toUtf8();
+        const char* level_c = levelUtf8.constData();
+        const char* msg_c = messageUtf8.constData();
         rust_log(level_c, msg_c);
     }
 

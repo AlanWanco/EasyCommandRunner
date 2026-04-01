@@ -2,6 +2,7 @@
 <RCC version="1.0">
     <qresource prefix="/res">
         <file>../icon2.ico</file>
+        <file>../pic/SleepyKanata.jpg</file>
         <file>stylesheet_dark.qss</file>
         <file>stylesheet_light.qss</file>
         <file>icon_run.svg</file>
@@ -13,5 +14,10 @@
         <file>icon_preview.svg</file>
         <file>icon_copy.svg</file>
         <file>icon_check.svg</file>
+        <file>icon_select_all.svg</file>
+        <file>icon_deselect_all.svg</file>
+        <file>close_light.svg</file>
+        <file>close_dark.svg</file>
+        <file>icon_close.svg</file>
     </qresource>
 </RCC>

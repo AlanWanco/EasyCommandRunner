@@ -98,7 +98,6 @@ elseif(APPLE)
         MACOSX_BUNDLE_BUNDLE_NAME "EasyCommandRunner"
         MACOSX_BUNDLE_BUNDLE_VERSION "1.0.0"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0"
-        MACOSX_BUNDLE_ICON_FILE "icon2.icns"
     )
 endif()
 

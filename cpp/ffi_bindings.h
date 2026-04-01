@@ -21,9 +21,7 @@ extern "C" {
     CommandResult rust_execute_command(
         const char* program,
         const char* working_dir,
-        const char** args,
-        int args_count,
-        bool use_new_window
+        const char* command_str
     );
 
     // 释放命令结果内存
@@ -36,19 +34,19 @@ extern "C" {
     } ConfigData;
 
     // 加载配置
-    ConfigData rust_load_config(const char* config_path);
+    ConfigData rust_load_config(const char* config_path, const char* backup_dir);
 
     // 保存配置
-    bool rust_save_config(const char* config_path, const char* json_data);
+    bool rust_save_config(const char* config_path, const char* backup_dir, const char* json_data);
 
     // 释放配置数据内存
     void rust_free_config_data(ConfigData config);
 
     // 备份管理
-    bool rust_create_backup(const char* config_path);
+    bool rust_create_backup(const char* config_path, const char* backup_dir);
 
     // 恢复备份
-    bool rust_restore_backup(const char* config_path, const char* backup_path);
+    bool rust_restore_backup(const char* config_path, const char* backup_dir, const char* backup_name);
 
     // 获取备份列表
     typedef struct {
@@ -56,7 +54,7 @@ extern "C" {
         int count;
     } BackupList;
 
-    BackupList rust_get_backups(const char* config_dir);
+    BackupList rust_get_backups(const char* config_path, const char* backup_dir);
 
     void rust_free_backup_list(BackupList list);
 
@@ -77,5 +75,3 @@ extern "C" {
     void rust_init_logger(void);
     void rust_log(const char* level, const char* message);
 }
-
-#endif // FFI_BINDINGS_H

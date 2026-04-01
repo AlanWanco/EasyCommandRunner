@@ -4,7 +4,7 @@
 #include <QTabWidget>
 #include <QPushButton>
 #include <QLineEdit>
-#include <QCheckBox>
+// QCheckBox include removed - using QPushButton checkable instead
 #include <QTextEdit>
 #include <QComboBox>
 #include <QLabel>
@@ -37,6 +37,10 @@ public:
     explicit AppWindow(QWidget *parent = nullptr);
     ~AppWindow() override;
 
+    void onThemeChanged(const QString &theme);
+    void saveApplicationSettings();
+    QString getCurrentTheme() const { return currentTheme; }
+
 protected:
     void closeEvent(QCloseEvent *event) override;
     void changeEvent(QEvent *event) override;
@@ -57,7 +61,6 @@ private slots:
 
     // 设置相关
     void onSettingsClicked();
-    void onThemeChanged(const QString &theme);
     void onAboutClicked();
 
     // 系统托盘相关
@@ -85,13 +88,13 @@ private:
     
     // 图标管理
     QIcon createThemedIcon(const QString &svgPath, const QString &theme);
+    QPushButton* createTabCloseButton();
     void updateButtonIcons();
 
     // 配置管理
     void loadConfiguration();
-    void saveConfiguration();
+    bool saveConfiguration();
     void loadApplicationSettings();
-    void saveApplicationSettings();
 
     // 其他
     void createTab(const QString &name = "");
@@ -152,11 +155,16 @@ public:
 
     void clear();
 
+signals:
+    void titleChanged(const QString &newTitle);
+
 public slots:
     void onParseCommandClicked();
     void onAddFunctionClicked();
     void onRemoveFunctionClicked();
     void onPreviewCommandClicked();
+
+    void updateRemoveButtonIcons(const QString &theme);
 
 private:
     void setupUI();
@@ -175,6 +183,7 @@ private:
     
     // 函数/参数行（动态创建）
     QVBoxLayout *functionsLayout;
+    QVector<QPushButton*> rowCheckBoxes;
     QVector<QLineEdit*> functionEdits;
     QVector<QLineEdit*> parameterEdits;
     QVector<QLineEdit*> commentEdits;
@@ -196,6 +205,7 @@ private:
     QPushButton *deselectAllButton;
     
     int functionCounter;
+    QString m_theme;
 };
 
 /**
@@ -232,6 +242,7 @@ private:
     QPushButton *applyButton;
 
     QString currentTheme;
+    bool m_loadingSettings = false;
 };
 
 /**
