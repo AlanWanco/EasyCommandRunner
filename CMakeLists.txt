@@ -25,14 +25,6 @@ find_package(Qt6 COMPONENTS
 # The Rust backend will be integrated via FFI in a later phase
 # To build Rust: cargo build [--release]
 
-# Build Rust library first
-add_custom_target(rust_build ALL
-    COMMAND cargo build 
-            --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml
-            $<IF:$<CONFIG:Release>,--release,>
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-)
-
 # Determine the Rust target library name and path
 if(APPLE)
     set(RUST_LIB_PATH "${CMAKE_CURRENT_SOURCE_DIR}/target/$<IF:$<CONFIG:Release>,release,debug>/libeasy_command_runner.a")
@@ -42,6 +34,26 @@ else()
     set(RUST_LIB_PATH "${CMAKE_CURRENT_SOURCE_DIR}/target/$<IF:$<CONFIG:Release>,release,debug>/libeasy_command_runner.a")
 endif()
 
+# Make the Rust archive an explicit build output.  This is required by Ninja
+# on a clean checkout; an order-only dependency on a custom target is not
+# enough when the archive is also a link input.
+file(GLOB_RECURSE RUST_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.rs"
+)
+add_custom_command(
+    OUTPUT ${RUST_LIB_PATH}
+    COMMAND cargo build
+            --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml
+            $<IF:$<CONFIG:Release>,--release,>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml
+        ${CMAKE_CURRENT_SOURCE_DIR}/Cargo.lock
+        ${RUST_SOURCES}
+    COMMENT "Building Rust backend"
+    VERBATIM
+)
+add_custom_target(rust_build ALL DEPENDS ${RUST_LIB_PATH})
 
 # Source files
 set(SOURCES
