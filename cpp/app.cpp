@@ -8,6 +8,7 @@
 #include <QSignalBlocker>
 #include <algorithm>
 #include <QApplication>
+#include <QGuiApplication>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QScrollArea>
@@ -20,6 +21,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QFile>
+#include <QSaveFile>
 #include <QDesktopServices>
 #include <QUrl>
 #include <QScreen>
@@ -34,12 +36,61 @@
 #include <QPainter>
 #include <QSize>
 #include <QAbstractButton>
+#include <QAbstractItemView>
 #include <QTabBar>
 #include <QListView>
 #include <QStyleFactory>
 #include <QDir>
+#include <QFrame>
+#include <QFont>
+#include <QFontDatabase>
+#include <QSpinBox>
 
 namespace {
+
+QString preferredUiFontFamily()
+{
+#if defined(Q_OS_WIN)
+    const QStringList candidates = {
+        QStringLiteral("Microsoft YaHei UI"),
+        QStringLiteral("Microsoft YaHei"),
+        QStringLiteral("Segoe UI"),
+        QStringLiteral("Arial")
+    };
+#elif defined(Q_OS_MACOS)
+    const QStringList candidates = {
+        QStringLiteral(".AppleSystemUIFont"),
+        QStringLiteral("Helvetica Neue"),
+        QStringLiteral("Helvetica"),
+        QStringLiteral("Arial")
+    };
+#else
+    const QStringList candidates = {
+        QStringLiteral("Noto Sans"),
+        QStringLiteral("Roboto"),
+        QStringLiteral("DejaVu Sans"),
+        QStringLiteral("Arial")
+    };
+#endif
+
+    const QStringList installed = QFontDatabase::families();
+    for (const QString &candidate : candidates) {
+        if (installed.contains(candidate, Qt::CaseInsensitive)) return candidate;
+    }
+    return candidates.constLast();
+}
+
+QFont preferredUiFont(int pixelSize = -1)
+{
+#if defined(Q_OS_MACOS)
+    QFont font = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
+#else
+    QFont font(preferredUiFontFamily());
+    font.setStyleHint(QFont::SansSerif);
+#endif
+    if (pixelSize > 0) font.setPixelSize(pixelSize);
+    return font;
+}
 
 QString dataDirPath()
 {
@@ -61,13 +112,69 @@ QString platformFontFamily()
 #if defined(Q_OS_MACOS)
     return QStringLiteral("\".AppleSystemUIFont\", Helvetica, Arial");
 #elif defined(Q_OS_WIN)
-    return QStringLiteral("\"Segoe UI\", Roboto, Helvetica, Arial");
+    return QStringLiteral("\"Microsoft YaHei UI\", \"Microsoft YaHei\", \"Segoe UI\", Arial, sans-serif");
 #else
-    return QStringLiteral("Roboto, Noto Sans, Helvetica, Arial");
+    return QStringLiteral("Noto Sans, Roboto, DejaVu Sans, Helvetica, Arial, sans-serif");
 #endif
 }
 
+QJsonObject normalizeConfiguration(QJsonObject config)
+{
+    // PyQt5 旧版把控件名称当字段名、行号/勾选状态分开保存；导入和正常加载共用这段迁移逻辑。
+    QJsonArray normalizedTabs;
+    const QJsonArray legacyRows = config.value("line_codes").toArray();
+    const QJsonArray legacyChecks = config.value("checkbox_statuses").toArray();
+    int tabIndex = 0;
+    for (const QJsonValue &value : config.value("tabs").toArray()) {
+        QJsonObject tab = value.toObject();
+        if (tab.contains("name_edit2")) {
+            const QJsonObject checks = tabIndex < legacyChecks.size() ? legacyChecks.at(tabIndex).toObject() : QJsonObject();
+            QJsonArray rows;
+            rows.append(QJsonObject{{"function", tab.value("name_edit3_1")},
+                {"parameter", tab.value("name_edit3_2")}, {"comment", tab.value("name_edit3_3")},
+                {"enabled", checks.value("chkbox1").toBool(true)}});
+            QStringList codes = tabIndex < legacyRows.size() ? legacyRows.at(tabIndex).toObject().keys() : QStringList();
+            std::sort(codes.begin(), codes.end(), [](const QString &a, const QString &b) { return a.toInt() < b.toInt(); });
+            for (const QString &code : codes) {
+                rows.append(QJsonObject{{"function", tab.value("function" + code)},
+                    {"parameter", tab.value("parameter" + code)}, {"comment", tab.value("comment" + code)},
+                    {"enabled", checks.value("chkbox" + code).toBool(true)}});
+            }
+            tab = QJsonObject{{"name", tab.value("name_edit_title")}, {"working_dir", tab.value("name_edit1")},
+                {"program", tab.value("name_edit2")}, {"other_args", tab.value("name_editOther")},
+                {"description", tab.value("editDescription")}, {"functions", rows}};
+        }
+        normalizedTabs.append(tab);
+        ++tabIndex;
+    }
+    config["tabs"] = normalizedTabs;
+    return config;
 }
+
+}
+
+class DownwardComboBox final : public QComboBox {
+public:
+    explicit DownwardComboBox(QWidget *parent = nullptr) : QComboBox(parent) {}
+
+protected:
+    void showPopup() override
+    {
+        QComboBox::showPopup();
+        QWidget *popup = view() ? view()->window() : nullptr;
+        if (!popup) return;
+
+        const QPoint below = mapToGlobal(QPoint(0, height()));
+        QScreen *screen = QGuiApplication::screenAt(below);
+        if (!screen) screen = QGuiApplication::primaryScreen();
+        if (!screen) return;
+
+        const QRect available = screen->availableGeometry();
+        const int availableHeight = qMax(80, available.bottom() - below.y() - 4);
+        if (popup->height() > availableHeight) popup->resize(popup->width(), availableHeight);
+        popup->move(below);
+    }
+};
 
 // ============================================================================
 // CheckButton: fully custom-painted checkbox button (bypasses macOS native)
@@ -162,6 +269,7 @@ AppWindow::AppWindow(QWidget *parent)
     , trayMenu(nullptr)
     , settings(nullptr)
     , currentTheme("dark")
+    , uiFontSize(13)
     , currentTabIndex(0)
 {
     setWindowTitle("EasyCommandRunner");
@@ -174,6 +282,10 @@ AppWindow::AppWindow(QWidget *parent)
     } else {
         settings = new QSettings("SleepyKanata", "EasyCommandRunner", this);
     }
+    loadApplicationSettings();
+
+    // 先设置应用级字体，再创建任何控件；Windows 优先使用微软雅黑，避免中文回退到宋体。
+    qApp->setFont(preferredUiFont(uiFontSize));
 
     // 初始化UI
     setupUI();
@@ -182,7 +294,6 @@ AppWindow::AppWindow(QWidget *parent)
     setupConnections();
 
     // 加载配置
-    loadApplicationSettings();
     loadConfiguration();
     applyTheme(currentTheme);
 
@@ -211,7 +322,7 @@ void AppWindow::setupUI() {
     tabWidget = new QTabWidget(this);
     tabWidget->setTabsClosable(true);
     tabWidget->setMovable(true);
-    tabCombo = new QComboBox(this);
+    tabCombo = new DownwardComboBox(this);
     tabCombo->setObjectName("tabCombo");
     tabCombo->setView(new QListView());
     tabCombo->setMaxVisibleItems(30);
@@ -298,6 +409,14 @@ void AppWindow::setupMenu() {
     QAction *reloadAction = fileMenu->addAction("重新加载(&R)");
     reloadAction->setShortcut(Qt::CTRL | Qt::Key_L);
     connect(reloadAction, &QAction::triggered, this, &AppWindow::onReloadConfigClicked);
+
+    fileMenu->addSeparator();
+    QAction *importAction = fileMenu->addAction("导入配置...(&I)");
+    importAction->setShortcut(Qt::CTRL | Qt::Key_O);
+    connect(importAction, &QAction::triggered, this, &AppWindow::onImportConfigurationClicked);
+    QAction *exportAction = fileMenu->addAction("导出配置...(&E)");
+    exportAction->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_S);
+    connect(exportAction, &QAction::triggered, this, &AppWindow::onExportConfigurationClicked);
 
     fileMenu->addSeparator();
 
@@ -464,6 +583,53 @@ void AppWindow::onReloadConfigClicked() {
     }
 }
 
+void AppWindow::onImportConfigurationClicked() {
+    if (!confirmDiscard()) return;
+
+    const QString path = QFileDialog::getOpenFileName(
+        this, "导入配置", QString(), "EasyCommandRunner 配置 (*.json);;JSON 文件 (*.json);;所有文件 (*)");
+    if (path.isEmpty()) return;
+
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        QMessageBox::warning(this, "导入失败", "无法读取配置文件：" + file.errorString());
+        return;
+    }
+    QJsonParseError error;
+    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
+    if (error.error != QJsonParseError::NoError || !document.isObject()) {
+        QMessageBox::warning(this, "导入失败", "配置文件不是有效的 JSON 对象：" + error.errorString());
+        return;
+    }
+
+    configWritable = true;
+    if (!applyConfiguration(document.object(), false) || !saveConfiguration()) {
+        QMessageBox::warning(this, "导入失败", "配置已载入界面，但保存到当前配置位置失败。");
+        return;
+    }
+    applyTheme(currentTheme);
+    statusBar()->showMessage("已导入配置（兼容旧版格式）", 4500);
+}
+
+void AppWindow::onExportConfigurationClicked() {
+    QString path = QFileDialog::getSaveFileName(
+        this, "导出配置", "easy-command-runner.json", "EasyCommandRunner 配置 (*.json);;JSON 文件 (*.json)");
+    if (path.isEmpty()) return;
+    if (!path.endsWith(".json", Qt::CaseInsensitive)) path += ".json";
+
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, "导出失败", "无法写入配置文件：" + file.errorString());
+        return;
+    }
+    const QByteArray data = QJsonDocument(configuration()).toJson(QJsonDocument::Indented);
+    if (file.write(data) != data.size() || !file.commit()) {
+        QMessageBox::warning(this, "导出失败", "保存配置文件失败：" + file.errorString());
+        return;
+    }
+    statusBar()->showMessage("配置已导出", 3500);
+}
+
 void AppWindow::onCopyTabConfigClicked() {
     CommandTab *currentTab = qobject_cast<CommandTab*>(tabWidget->currentWidget());
     if (!currentTab) return;
@@ -503,6 +669,14 @@ void AppWindow::onThemeChanged(const QString &theme) {
         currentTheme = theme;
         applyTheme(theme);
     }
+}
+
+void AppWindow::onFontSizeChanged(int size) {
+    const int clamped = qBound(10, size, 24);
+    if (uiFontSize == clamped) return;
+    uiFontSize = clamped;
+    qApp->setFont(preferredUiFont(uiFontSize));
+    loadStylesheet(currentTheme);
 }
 
 void AppWindow::onAboutClicked() {
@@ -574,6 +748,10 @@ void AppWindow::loadStylesheet(const QString &theme) {
         stylesheet.replace(
             QStringLiteral("\".AppleSystemUIFont\", \"Segoe UI\", Roboto, Helvetica, Arial, sans-serif"),
             platformFontFamily());
+        const int baseSize = qBound(10, uiFontSize, 24);
+        stylesheet.replace(QStringLiteral("__ECR_FONT_SIZE__"), QString::number(baseSize));
+        stylesheet.replace(QStringLiteral("__ECR_SMALL_FONT_SIZE__"), QString::number(qMax(8, baseSize - 1)));
+        stylesheet.replace(QStringLiteral("__ECR_LARGE_FONT_SIZE__"), QString::number(baseSize + 1));
         qApp->setStyleSheet(stylesheet);
         file.close();
     }
@@ -613,37 +791,12 @@ bool AppWindow::loadConfiguration() {
         }
     }
     const QString configJson = RustBackend::loadConfig(configFilePath(), backupDirPath());
-    QJsonObject config = QJsonDocument::fromJson(configJson.toUtf8()).object();
     configWritable = true;
+    return applyConfiguration(QJsonDocument::fromJson(configJson.toUtf8()).object(), true);
+}
 
-    // PyQt5 旧版把控件名称当字段名、行号/勾选状态分开保存；仅在内存迁移。
-    QJsonArray normalizedTabs;
-    const QJsonArray legacyRows = config.value("line_codes").toArray();
-    const QJsonArray legacyChecks = config.value("checkbox_statuses").toArray();
-    int tabIndex = 0;
-    for (const QJsonValue &value : config.value("tabs").toArray()) {
-        QJsonObject tab = value.toObject();
-        if (tab.contains("name_edit2")) {
-            const QJsonObject checks = tabIndex < legacyChecks.size() ? legacyChecks.at(tabIndex).toObject() : QJsonObject();
-            QJsonArray rows;
-            rows.append(QJsonObject{{"function", tab.value("name_edit3_1")},
-                {"parameter", tab.value("name_edit3_2")}, {"comment", tab.value("name_edit3_3")},
-                {"enabled", checks.value("chkbox1").toBool(true)}});
-            QStringList codes = tabIndex < legacyRows.size() ? legacyRows.at(tabIndex).toObject().keys() : QStringList();
-            std::sort(codes.begin(), codes.end(), [](const QString &a, const QString &b) { return a.toInt() < b.toInt(); });
-            for (const QString &code : codes) {
-                rows.append(QJsonObject{{"function", tab.value("function" + code)},
-                    {"parameter", tab.value("parameter" + code)}, {"comment", tab.value("comment" + code)},
-                    {"enabled", checks.value("chkbox" + code).toBool(true)}});
-            }
-            tab = QJsonObject{{"name", tab.value("name_edit_title")}, {"working_dir", tab.value("name_edit1")},
-                {"program", tab.value("name_edit2")}, {"other_args", tab.value("name_editOther")},
-                {"description", tab.value("editDescription")}, {"functions", rows}};
-        }
-        normalizedTabs.append(tab);
-        ++tabIndex;
-    }
-    config["tabs"] = normalizedTabs;
+bool AppWindow::applyConfiguration(QJsonObject config, bool markSaved) {
+    config = normalizeConfiguration(config);
     const int requestedIndex = config.value("current_tab_index").toInt(currentTabIndex);
 
     if (config.contains("theme") && config.value("theme").isString()) {
@@ -656,30 +809,23 @@ bool AppWindow::loadConfiguration() {
         delete widget;
     }
 
-    const QJsonArray tabsArray = config.value("tabs").toArray();
-    for (const QJsonValue &tabValue : tabsArray) {
+    for (const QJsonValue &tabValue : config.value("tabs").toArray()) {
         if (!tabValue.isObject()) continue;
         const QJsonObject tabConfig = tabValue.toObject();
         const QString tabName = tabConfig.value("name").toString().trimmed();
         createTab(tabName.isEmpty() ? QStringLiteral("未命名") : tabName);
         CommandTab *tab = qobject_cast<CommandTab*>(tabWidget->currentWidget());
-        if (tab) {
-            tab->loadConfiguration(tabConfig);
-        }
+        if (tab) tab->loadConfiguration(tabConfig);
     }
 
-    if (tabWidget->count() == 0) {
-        createTab(QStringLiteral("标签1"));
-    }
+    if (tabWidget->count() == 0) createTab(QStringLiteral("标签1"));
 
     int savedIndex = requestedIndex;
-    if (savedIndex < 0 || savedIndex >= tabWidget->count()) {
-        savedIndex = 0;
-    }
+    if (savedIndex < 0 || savedIndex >= tabWidget->count()) savedIndex = 0;
     tabWidget->setCurrentIndex(savedIndex);
     currentTabIndex = savedIndex;
     updateTabCombo();
-    savedConfig = configuration();
+    savedConfig = markSaved ? configuration() : QJsonObject();
     return true;
 }
 
@@ -741,6 +887,7 @@ void AppWindow::loadApplicationSettings() {
     if (settings->contains("ui/theme")) {
         currentTheme = settings->value("ui/theme", "dark").toString();
     }
+    uiFontSize = qBound(10, settings->value("ui/font_size", 13).toInt(), 24);
     if (settings->contains("window/geometry")) {
         windowGeometry = settings->value("window/geometry").toByteArray();
     }
@@ -753,6 +900,7 @@ void AppWindow::saveApplicationSettings() {
     settings->setValue("window/geometry", saveGeometry());
     settings->setValue("window/index", tabWidget->currentIndex());
     settings->setValue("ui/theme", currentTheme);
+    settings->setValue("ui/font_size", uiFontSize);
 }
 
 void AppWindow::createTab(const QString &name) {
@@ -1266,9 +1414,15 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     setModal(true);
     setupUI();
     loadSettings();
-    if (auto *window = qobject_cast<AppWindow*>(parent)) originalTheme = window->getCurrentTheme();
+    if (auto *window = qobject_cast<AppWindow*>(parent)) {
+        originalTheme = window->getCurrentTheme();
+        originalFontSize = window->getFontSize();
+    }
     connect(this, &QDialog::rejected, this, [this]() {
-        if (auto *window = qobject_cast<AppWindow*>(this->parent())) window->onThemeChanged(originalTheme);
+        if (auto *window = qobject_cast<AppWindow*>(this->parent())) {
+            window->onThemeChanged(originalTheme);
+            window->onFontSizeChanged(originalFontSize);
+        }
     });
 }
 
@@ -1283,6 +1437,13 @@ void SettingsDialog::setupUI() {
     themeCombo->addItem("深色", "dark");
     themeCombo->addItem("浅色", "light");
     themeLayout->addWidget(themeCombo);
+    themeLayout->addSpacing(16);
+    themeLayout->addWidget(new QLabel("界面字号:"));
+    fontSizeSpin = new QSpinBox();
+    fontSizeSpin->setRange(10, 24);
+    fontSizeSpin->setSuffix(" px");
+    fontSizeSpin->setToolTip("调整界面文字大小（10–24 px）");
+    themeLayout->addWidget(fontSizeSpin);
     layout->addWidget(themeGroup);
 
     // 语言设置
@@ -1329,6 +1490,7 @@ void SettingsDialog::setupUI() {
     connect(cancelButton, &QPushButton::clicked, this, &QDialog::reject);
     connect(applyButton, &QPushButton::clicked, this, &SettingsDialog::onApplyClicked);
     connect(themeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SettingsDialog::onThemeComboChanged);
+    connect(fontSizeSpin, &QSpinBox::valueChanged, this, &SettingsDialog::onFontSizeChanged);
     connect(restoreButton, &QPushButton::clicked, this, &SettingsDialog::onRestoreBackupClicked);
 
     resize(400, 300);
@@ -1340,9 +1502,8 @@ void SettingsDialog::loadSettings() {
     if (mainWindow) {
         QString currentTheme = mainWindow->getCurrentTheme();
         int index = themeCombo->findData(currentTheme);
-        if (index >= 0) {
-            themeCombo->setCurrentIndex(index);
-        }
+        if (index >= 0) themeCombo->setCurrentIndex(index);
+        fontSizeSpin->setValue(mainWindow->getFontSize());
     }
     backupCombo->clear();
     for (const QString &name : RustBackend::getBackups(configFilePath(), backupDirPath())) backupCombo->addItem(name);
@@ -1360,6 +1521,11 @@ void SettingsDialog::onThemeComboChanged(int index) {
     }
 }
 
+void SettingsDialog::onFontSizeChanged(int size) {
+    if (m_loadingSettings) return;
+    if (auto *mainWindow = qobject_cast<AppWindow*>(parent())) mainWindow->onFontSizeChanged(size);
+}
+
 void SettingsDialog::onRestoreBackupClicked() {
     auto *window = qobject_cast<AppWindow*>(parent());
     if (!window || backupCombo->currentText().isEmpty()) return;
@@ -1367,6 +1533,7 @@ void SettingsDialog::onRestoreBackupClicked() {
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
     if (window->restoreBackup(backupCombo->currentText())) {
         originalTheme = window->getCurrentTheme();
+        originalFontSize = window->getFontSize();
         loadSettings();
     } else QMessageBox::warning(this, "恢复失败", "恢复未完成；现有配置已保留。");
 }
@@ -1385,8 +1552,10 @@ void SettingsDialog::onApplyClicked() {
     AppWindow* mainWindow = qobject_cast<AppWindow*>(parent());
     if (mainWindow) {
         mainWindow->onThemeChanged(theme);
+        mainWindow->onFontSizeChanged(fontSizeSpin->value());
         mainWindow->saveApplicationSettings();
         originalTheme = theme;
+        originalFontSize = fontSizeSpin->value();
     }
 }
 

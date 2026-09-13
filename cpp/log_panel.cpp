@@ -60,20 +60,19 @@ struct LogPanel::Run {
     bool stopping = false;
 };
 
-LogPanel::LogPanel(QWidget *parent) : QDockWidget("运行日志", parent) {
+LogPanel::LogPanel(QWidget *parent) : QDockWidget("运行日志 - EasyCommandRunner", parent) {
+    customTitleBar = nullptr;
     setObjectName("runLogDock");
     setAllowedAreas(Qt::BottomDockWidgetArea);
     setFeatures(DockWidgetClosable | DockWidgetMovable | DockWidgetFloatable);
 
     // 明确的单击分离/停靠按钮，不依赖拖动或系统标题栏的小图标。
     QWidget *titleBar = new QWidget(this);
+    customTitleBar = titleBar;
     QHBoxLayout *titleLayout = new QHBoxLayout(titleBar);
     titleLayout->setContentsMargins(9, 3, 9, 3);
     titleLayout->addWidget(new QLabel("运行日志", titleBar));
     titleLayout->addStretch();
-    detachButton = new QPushButton("分离窗口", titleBar);
-    detachButton->setObjectName("detachLogBtn");
-    titleLayout->addWidget(detachButton);
     QPushButton *hideButton = new QPushButton("收起", titleBar);
     titleLayout->addWidget(hideButton);
     setTitleBarWidget(titleBar);
@@ -90,6 +89,9 @@ LogPanel::LogPanel(QWidget *parent) : QDockWidget("运行日志", parent) {
     historyCombo->setToolTip(
         "本次会话最近 100 次运行；每次保留最多 10000 行 / 2 Mi 字符，可保存为文本。输出按 UTF-8 解码。");
     toolbar->addWidget(historyCombo, 1);
+    detachButton = new QPushButton("分离窗口", content);
+    detachButton->setObjectName("detachLogBtn");
+    toolbar->addWidget(detachButton);
     stopButton = new QPushButton("停止", content);
     stopButton->setObjectName("stopLogBtn");
     stopButton->setEnabled(false);
@@ -110,11 +112,21 @@ LogPanel::LogPanel(QWidget *parent) : QDockWidget("运行日志", parent) {
     connect(detachButton, &QPushButton::clicked, this, [this]() {
         setFloating(!isFloating());
         show();
-        if (isFloating())
-            resize(850, 360);
+        if (isFloating()) resize(850, 360);
     });
-    connect(this, &QDockWidget::topLevelChanged, this,
-            [this](bool floating) { detachButton->setText(floating ? "停靠" : "分离窗口"); });
+    connect(this, &QDockWidget::topLevelChanged, this, [this](bool floating) {
+        if (floating) {
+            // 浮动时恢复系统原生标题栏，Windows 会显示最小化/最大化/关闭按钮。
+            setTitleBarWidget(nullptr);
+            setWindowFlags(Qt::Window | Qt::WindowTitleHint | Qt::WindowSystemMenuHint
+                | Qt::WindowMinimizeButtonHint | Qt::WindowMaximizeButtonHint | Qt::WindowCloseButtonHint);
+        } else {
+            setWindowFlags(Qt::Widget);
+            setTitleBarWidget(customTitleBar);
+        }
+        detachButton->setText(floating ? "停靠" : "分离窗口");
+        show();
+    });
     connect(hideButton, &QPushButton::clicked, this, &QWidget::hide);
     connect(historyCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &LogPanel::selectRun);
     connect(stopButton, &QPushButton::clicked, this, &LogPanel::stopCurrent);

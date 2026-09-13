@@ -2,7 +2,7 @@
 
 * {
     font-family: ".AppleSystemUIFont", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    font-size: 13px;
+    font-size: __ECR_FONT_SIZE__px;
     color: #111827;
 }
 
@@ -70,14 +70,14 @@ QTabBar {
 QTabBar::tab {
     background-color: #F3F4F6;
     color: #6B7280;
-    padding: 5px 4px 5px 8px;
+    padding: 2px 4px 2px 8px;
     min-width: 80px;
     max-width: 200px;
     border: 1px solid transparent;
     border-bottom: 2px solid #E5E7EB;
     margin-right: 2px;
-    border-top-left-radius: 6px;
-    border-top-right-radius: 6px;
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
     font-weight: 500;
 }
 
@@ -121,7 +121,7 @@ QPushButton#tabCloseBtn:hover {
 /* Labels */
 QLabel {
     color: #4B5563;
-    font-size: 13px;
+    font-size: __ECR_FONT_SIZE__px;
     font-weight: 500;
     padding: 0px;
     background: transparent;
@@ -229,7 +229,7 @@ QPushButton#paramCheckBox {
     max-width: 31px;
     min-height: 23px;
     max-height: 23px;
-    font-size: 14px;
+    font-size: __ECR_LARGE_FONT_SIZE__px;
     image: none;
 }
 
@@ -262,6 +262,17 @@ QComboBox:focus {
     border: 1px solid #3B82F6;
 }
 
+QComboBox::drop-down {
+    border: none;
+    width: 22px;
+}
+
+QComboBox::down-arrow {
+    image: url(:/classic/drop-down.svg);
+    width: 8px;
+    height: 5px;
+}
+
 /* Tab selector combo in corner - tighter */
 QComboBox#tabCombo {
     padding: 4px 8px;
@@ -273,9 +284,13 @@ QComboBox#tabCombo {
 QComboBox QAbstractItemView {
     background-color: #FFFFFF;
     border: 1px solid #E5E7EB;
-    border-radius: 6px;
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
+    padding: 4px 0;
     outline: none;
-    selection-background-color: #F3F4F6;
+    selection-background-color: #E8EEF8;
     selection-color: #111827;
 }
 
@@ -336,25 +351,47 @@ QScrollBar::handle:horizontal:hover {
 /* Menu */
 QMenu {
     background-color: #FFFFFF;
-    border: 1px solid #E5E7EB;
-    border-radius: 6px;
+    border: 1px solid #D1D5DB;
+    border-radius: 8px;
     padding: 4px 0px;
+    color: #111827;
+}
+
+QMenuBar {
+    background-color: #FFFFFF;
+    border-bottom: 1px solid #E5E7EB;
+    padding: 2px 4px;
+    color: #374151;
+}
+
+QMenuBar::item {
+    padding: 6px 10px;
+    border-radius: 5px;
+}
+
+QMenuBar::item:selected {
+    background-color: #E8EEF8;
+    color: #111827;
 }
 
 QMenu::item {
-    padding: 6px 24px;
+    padding: 7px 24px;
     color: #374151;
 }
 
 QMenu::item:selected {
-    background-color: #F3F4F6;
+    background-color: #E8EEF8;
     color: #111827;
+}
+
+QMenu::item:disabled {
+    color: #9CA3AF;
 }
 
 QMenu::separator {
     background-color: #E5E7EB;
     height: 1px;
-    margin: 4px 0px;
+    margin: 4px 8px;
 }
 
 /* Groupbox */
@@ -406,3 +443,53 @@ QSplitter#paramContentSplitter::handle:vertical {
 QSplitter#paramContentSplitter::handle:vertical:hover {
     background-color: rgba(37, 99, 235, 0.10);
 }
+
+/* Components shared by the log dock, settings dialog and native-looking controls */
+QLineEdit:disabled, QTextEdit:disabled, QPlainTextEdit:disabled {
+    color: #9CA3AF;
+    background-color: #F3F4F6;
+    border-color: #E5E7EB;
+}
+
+QTextEdit#commandPreviewEdit, QPlainTextEdit#runLogOutput {
+    background-color: #F9FAFB;
+    color: #1F2937;
+    selection-background-color: #BFDBFE;
+}
+
+QPushButton[role="nav"] {
+    background-color: transparent;
+    border: none;
+    padding: 0;
+    border-radius: 8px;
+}
+QPushButton[role="nav"]:hover { background-color: #E5E7EB; }
+QPushButton[role="nav"]:focus { border: 1px solid #93C5FD; }
+QPushButton[role="icon"] { padding: 5px; }
+QPushButton#paramRemoveBtn { background-color: transparent; border-color: transparent; }
+QPushButton#paramRemoveBtn:hover { background-color: #FEE2E2; border-color: #FCA5A5; }
+
+QDockWidget {
+    background-color: #F3F4F6;
+    border: 1px solid #D1D5DB;
+}
+QStatusBar {
+    background-color: #F3F4F6;
+    color: #6B7280;
+}
+QStatusBar::item { border: none; }
+QToolTip {
+    background-color: #FFFFFF;
+    color: #111827;
+    border: 1px solid #D1D5DB;
+    padding: 5px;
+}
+
+QSpinBox, QAbstractSpinBox {
+    color: #111827;
+    background-color: #FFFFFF;
+    border: 1px solid #D1D5DB;
+    border-radius: 6px;
+    padding: 5px 8px;
+}
+QSpinBox:focus, QAbstractSpinBox:focus { border-color: #3B82F6; }

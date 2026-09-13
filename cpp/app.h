@@ -20,6 +20,7 @@
 #include <QTimer>
 #include <QDialog>
 #include <QJsonObject>
+#include <QSpinBox>
 
 class LogPanel;
 
@@ -41,9 +42,11 @@ public:
     ~AppWindow() override;
 
     void onThemeChanged(const QString &theme);
+    void onFontSizeChanged(int size);
     void saveApplicationSettings();
     bool restoreBackup(const QString &name);
     QString getCurrentTheme() const { return currentTheme; }
+    int getFontSize() const { return uiFontSize; }
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -60,6 +63,8 @@ private slots:
     void onRunButtonClicked();
     void onSaveButtonClicked();
     void onReloadConfigClicked();
+    void onImportConfigurationClicked();
+    void onExportConfigurationClicked();
     void onCopyTabConfigClicked();
     void onPreviewCommandClicked();
 
@@ -96,6 +101,7 @@ private:
     // 配置管理
     bool loadConfiguration();
     bool saveConfiguration();
+    bool applyConfiguration(QJsonObject config, bool markSaved = true);
     QJsonObject configuration() const;
     bool confirmDiscard();
     void loadApplicationSettings();
@@ -132,6 +138,7 @@ private:
     // 设置
     QSettings *settings;
     QString currentTheme;
+    int uiFontSize;
 
     // 窗口几何信息保存
     QByteArray windowGeometry;
@@ -243,6 +250,7 @@ signals:
 
 private slots:
     void onThemeComboChanged(int index);
+    void onFontSizeChanged(int size);
     void onRestoreBackupClicked();
     void onOkClicked();
     void onCancelClicked();
@@ -254,6 +262,7 @@ private:
 
     // UI 组件
     QComboBox *themeCombo;
+    QSpinBox *fontSizeSpin;
     QComboBox *languageCombo;
     QComboBox *backupCombo;
     QPushButton *restoreButton;
@@ -263,6 +272,7 @@ private:
 
     QString currentTheme;
     QString originalTheme;
+    int originalFontSize = 13;
     bool m_loadingSettings = false;
 };
 

@@ -7,6 +7,7 @@
 class QComboBox;
 class QPlainTextEdit;
 class QPushButton;
+class QWidget;
 
 // 每次运行独立的非交互 shell；Dock 与浮动窗口共用同一组进程和日志。
 class LogPanel : public QDockWidget {
@@ -31,6 +32,7 @@ class LogPanel : public QDockWidget {
     void saveCurrent();
 
     std::vector<std::unique_ptr<Run>> runs;
+    QWidget *customTitleBar;
     QComboBox *historyCombo;
     QPlainTextEdit *outputEdit;
     QPushButton *stopButton;
