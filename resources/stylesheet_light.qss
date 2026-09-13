@@ -3,6 +3,7 @@
 * {
     font-family: ".AppleSystemUIFont", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     font-size: __ECR_FONT_SIZE__px;
+    font-weight: __ECR_FONT_WEIGHT__;
     color: #111827;
 }
 
@@ -47,45 +48,24 @@ QAbstractScrollArea > QWidget {
     background-color: transparent;
 }
 
-/* Tabs */
-QTabWidget {
-    background-color: transparent;
+/* Header dimensions are shared in stylesheet_tabs.qss. */
+QTabWidget::pane { border-color: #E5E7EB; background-color: #FFFFFF; }
+QTabBar QToolButton {
+    background: #F3F4F6; color: #374151; border-color: #E5E7EB;
 }
-
-QTabWidget::pane {
-    border: 1px solid #E5E7EB;
-    background-color: #FFFFFF;
-    border-radius: 8px;
-    margin-top: -1px; /* hide top border under tabs */
-}
-
-QTabWidget::tab-bar {
-    alignment: left;
-}
-
-QTabBar {
-    background-color: transparent;
-}
+QTabBar QToolButton:hover { background: #E5E7EB; }
+QTabBar QToolButton:disabled { background: #F3F4F6; color: #9CA3AF; }
 
 QTabBar::tab {
     background-color: #F3F4F6;
     color: #6B7280;
-    padding: 2px 4px 2px 8px;
-    min-width: 80px;
-    max-width: 200px;
-    border: 1px solid transparent;
-    border-bottom: 2px solid #E5E7EB;
-    margin-right: 2px;
-    border-top-left-radius: 10px;
-    border-top-right-radius: 10px;
-    font-weight: 500;
+    border-color: #E5E7EB;
 }
 
 QTabBar::tab:selected {
     background-color: #FFFFFF;
     color: #2563EB;
-    border: 1px solid #E5E7EB;
-    border-bottom: 2px solid #2563EB;
+    border-color: #E5E7EB;
 }
 
 QTabBar::tab:hover:!selected {
@@ -95,9 +75,6 @@ QTabBar::tab:hover:!selected {
 
 QTabBar::close-button {
     image: url(:/res/close_light.svg);
-    subcontrol-position: right;
-    width: 16px;
-    height: 16px;
 }
 
 /* Tab close button (set programmatically in C++) */
@@ -122,7 +99,7 @@ QPushButton#tabCloseBtn:hover {
 QLabel {
     color: #4B5563;
     font-size: __ECR_FONT_SIZE__px;
-    font-weight: 500;
+    font-weight: __ECR_FONT_WEIGHT__;
     padding: 0px;
     background: transparent;
     border: none;
@@ -164,7 +141,7 @@ QPushButton {
     padding: 6px 12px;
     border: 1px solid #D1D5DB;
     border-radius: 6px;
-    font-weight: 500;
+    font-weight: __ECR_FONT_WEIGHT__;
 }
 
 QPushButton:hover {
@@ -188,7 +165,7 @@ QPushButton#runBtn {
     background-color: #10B981;
     border: 1px solid #059669;
     color: #FFFFFF;
-    font-weight: 600;
+    font-weight: __ECR_FONT_WEIGHT__;
 }
 
 QPushButton#runBtn:hover {
@@ -205,7 +182,7 @@ QPushButton#saveBtn {
     background-color: #2563EB;
     border: 1px solid #1D4ED8;
     color: #FFFFFF;
-    font-weight: 600;
+    font-weight: __ECR_FONT_WEIGHT__;
 }
 
 QPushButton#saveBtn:hover {
@@ -273,34 +250,26 @@ QComboBox::down-arrow {
     height: 5px;
 }
 
-/* Tab selector combo in corner - tighter */
-QComboBox#tabCombo {
-    padding: 4px 8px;
-    min-width: 120px;
-    margin: 4px 6px 4px 0px;
-}
-
-/* Dropdown list */
-QComboBox QAbstractItemView {
+/* Dropdown list: the popup is a separate window, so style the view itself too. */
+QAbstractItemView {
     background-color: #FFFFFF;
+    color: #374151;
     border: 1px solid #E5E7EB;
-    border-top-left-radius: 0;
-    border-top-right-radius: 0;
-    border-bottom-left-radius: 8px;
-    border-bottom-right-radius: 8px;
+    border-radius: 8px;
     padding: 4px 0;
     outline: none;
     selection-background-color: #E8EEF8;
     selection-color: #111827;
 }
 
-QComboBox QAbstractItemView::item {
+QAbstractItemView::item {
     padding: 4px 12px;
     min-height: 24px;
     color: #374151;
 }
 
-QComboBox QAbstractItemView::item:selected {
+QAbstractItemView::item:selected,
+QAbstractItemView::item:hover {
     background-color: #F3F4F6;
     color: #111827;
 }
@@ -408,7 +377,7 @@ QGroupBox::title {
     subcontrol-position: top left;
     padding: 0 4px;
     color: #4B5563;
-    font-weight: 600;
+    font-weight: __ECR_FONT_WEIGHT__;
     left: 8px;
 }
 
@@ -451,6 +420,13 @@ QLineEdit:disabled, QTextEdit:disabled, QPlainTextEdit:disabled {
     border-color: #E5E7EB;
 }
 
+QLineEdit#programEdit, QLineEdit#paramFuncEdit, QLineEdit#paramValueEdit,
+QLineEdit#otherArgsEdit, QTextEdit#commandPreviewEdit, QPlainTextEdit#runLogOutput {
+    font-family: __ECR_CODE_FONT_FAMILY__;
+    font-size: __ECR_SMALL_FONT_SIZE__px;
+    font-weight: __ECR_FONT_WEIGHT__;
+}
+
 QTextEdit#commandPreviewEdit, QPlainTextEdit#runLogOutput {
     background-color: #F9FAFB;
     color: #1F2937;
@@ -490,6 +466,19 @@ QSpinBox, QAbstractSpinBox {
     background-color: #FFFFFF;
     border: 1px solid #D1D5DB;
     border-radius: 6px;
-    padding: 5px 8px;
+    padding: 5px 24px 5px 8px;
 }
+QSpinBox::up-button, QSpinBox::down-button {
+    subcontrol-origin: border;
+    right: 1px;
+    width: 20px;
+    background: #F3F4F6;
+    border-left: 1px solid #D1D5DB;
+}
+QSpinBox::up-button { subcontrol-position: top right; border-top-right-radius: 5px; }
+QSpinBox::down-button { subcontrol-position: bottom right; border-bottom-right-radius: 5px; }
+QSpinBox::up-button:hover, QSpinBox::down-button:hover { background: #E5E7EB; }
+QSpinBox::up-button:pressed, QSpinBox::down-button:pressed { background: #D1D5DB; }
+QSpinBox::up-arrow { image: url(:/res/spinbox_up_light.svg); width: 8px; height: 5px; }
+QSpinBox::down-arrow { image: url(:/res/spinbox_down_light.svg); width: 8px; height: 5px; }
 QSpinBox:focus, QAbstractSpinBox:focus { border-color: #3B82F6; }

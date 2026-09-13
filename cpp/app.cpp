@@ -2,6 +2,7 @@
 #include "log_panel.h"
 #include "rust_backend.h"
 #include "widget_helpers.h"
+#include "parameter_drag_handle.h"
 #include <QInputDialog>
 #include <QStatusBar>
 #include <QDateTime>
@@ -15,6 +16,7 @@
 #include <QGroupBox>
 #include <QMessageBox>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QClipboard>
 #include <QShortcut>
 #include <QJsonDocument>
@@ -45,11 +47,21 @@
 #include <QFont>
 #include <QFontDatabase>
 #include <QSpinBox>
+#include <QTimer>
 
 namespace {
 
 QString preferredUiFontFamily()
 {
+    // 从资源注册字体，不依赖用户安装或系统字体回退。只加载一次。
+    static const QString bundledFamily = []() {
+        const int id = QFontDatabase::addApplicationFont(":/res/fonts/SarasaMonoSC-Regular.ttf");
+        const QStringList families = QFontDatabase::applicationFontFamilies(id);
+        if (!families.isEmpty()) return families.first();
+        qWarning() << "Could not load bundled Sarasa Mono SC font";
+        return QString();
+    }();
+    if (!bundledFamily.isEmpty()) return bundledFamily;
 #if defined(Q_OS_WIN)
     const QStringList candidates = {
         QStringLiteral("Microsoft YaHei UI"),
@@ -80,14 +92,11 @@ QString preferredUiFontFamily()
     return candidates.constLast();
 }
 
-QFont preferredUiFont(int pixelSize = -1)
+QFont preferredUiFont(int pixelSize = -1, int weight = QFont::Normal)
 {
-#if defined(Q_OS_MACOS)
-    QFont font = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
-#else
     QFont font(preferredUiFontFamily());
-    font.setStyleHint(QFont::SansSerif);
-#endif
+    font.setStyleHint(QFont::Monospace);
+    font.setWeight(static_cast<QFont::Weight>(qBound(100, weight, 900)));
     if (pixelSize > 0) font.setPixelSize(pixelSize);
     return font;
 }
@@ -109,13 +118,17 @@ QString backupDirPath()
 
 QString platformFontFamily()
 {
-#if defined(Q_OS_MACOS)
-    return QStringLiteral("\".AppleSystemUIFont\", Helvetica, Arial");
-#elif defined(Q_OS_WIN)
-    return QStringLiteral("\"Microsoft YaHei UI\", \"Microsoft YaHei\", \"Segoe UI\", Arial, sans-serif");
-#else
-    return QStringLiteral("Noto Sans, Roboto, DejaVu Sans, Helvetica, Arial, sans-serif");
-#endif
+    return QStringLiteral("\"%1\"").arg(preferredUiFontFamily());
+}
+
+int normalizedFontWeight(int weight)
+{
+    static constexpr int weights[] = {100, 200, 300, 400, 500, 600, 700, 800, 900};
+    int nearest = weights[0];
+    for (int candidate : weights) {
+        if (qAbs(candidate - weight) < qAbs(nearest - weight)) nearest = candidate;
+    }
+    return nearest;
 }
 
 QJsonObject normalizeConfiguration(QJsonObject config)
@@ -152,6 +165,100 @@ QJsonObject normalizeConfiguration(QJsonObject config)
 }
 
 }
+
+// 参数区按实际行数逐行展开，最多六行，超过后在区域内滚动。
+class ParameterScrollArea final : public QScrollArea {
+public:
+    using QScrollArea::QScrollArea;
+
+    void refreshMinimumHeight() {
+        updateMinimumHeight();
+        scheduleMinimumHeightUpdate();
+    }
+    QSize sizeHint() const override {
+        return QSize(QScrollArea::sizeHint().width(), minimumHeight());
+    }
+
+protected:
+    bool event(QEvent *event) override {
+        const bool result = QScrollArea::event(event);
+        if (event->type() == QEvent::Show || event->type() == QEvent::StyleChange
+            || event->type() == QEvent::FontChange) {
+            updateMinimumHeight();
+            scheduleMinimumHeightUpdate();
+        } else if (event->type() == QEvent::LayoutRequest) {
+            scheduleMinimumHeightUpdate();
+        }
+        return result;
+    }
+    bool eventFilter(QObject *object, QEvent *event) override {
+        const bool result = QScrollArea::eventFilter(object, event);
+        if (object == widget() && event->type() == QEvent::LayoutRequest)
+            scheduleMinimumHeightUpdate();
+        return result;
+    }
+
+private:
+    void scheduleMinimumHeightUpdate() {
+        if (m_updatePending) return;
+        m_updatePending = true;
+        QTimer::singleShot(0, this, [this]() {
+            m_updatePending = false;
+            updateMinimumHeight();
+        });
+    }
+
+    void updateMinimumHeight() {
+        if (!widget() || !widget()->layout() || widget()->layout()->count() == 0) return;
+        auto *rows = widget()->layout();
+        auto *row = rows->itemAt(0)->widget();
+        if (!row) return;
+        row->ensurePolished();
+        const int visibleRows = qMin(6, rows->count());
+        if (visibleRows <= 0) return;
+        const auto margins = rows->contentsMargins();
+        const int rowHeight = qMax(30, row->sizeHint().height());
+        const int h = rowHeight * visibleRows + rows->spacing() * qMax(0, visibleRows - 1)
+            + margins.top() + margins.bottom() + 2 * frameWidth();
+        if (minimumHeight() != h) setMinimumHeight(h);
+    }
+
+    bool m_updatePending = false;
+};
+
+// Corner 和滚动按钮使用整个 tabBar 的高度；tabSizeHint 也必须使用相同高度，
+// 否则 Qt 会把较矮的 tabRect 贴在顶部，留下未绘制的底部空带。
+class HeaderTabBar final : public QTabBar {
+public:
+    using QTabBar::QTabBar;
+    void setHeaderHeight(int height) {
+        if (minimumHeight() == height) return;
+        setMinimumHeight(height);
+        // 改 minimumHeight 不会清除 Qt 缓存的 tabRect；让 QTabBar 重新计算各标签。
+        QEvent layoutStyleChange(QEvent::StyleChange);
+        QTabBar::changeEvent(&layoutStyleChange);
+        updateGeometry();
+    }
+    QSize sizeHint() const override { return QTabBar::sizeHint().expandedTo(minimumSize()); }
+    QSize minimumSizeHint() const override { return QTabBar::minimumSizeHint().expandedTo(minimumSize()); }
+
+protected:
+    QSize tabSizeHint(int index) const override {
+        const QSize size = QTabBar::tabSizeHint(index);
+        return QSize(size.width(), qMax(size.height(), minimumHeight()));
+    }
+    QSize minimumTabSizeHint(int index) const override {
+        const QSize size = QTabBar::minimumTabSizeHint(index);
+        return QSize(size.width(), qMax(size.height(), minimumHeight()));
+    }
+};
+
+class HeaderTabWidget final : public QTabWidget {
+public:
+    explicit HeaderTabWidget(QWidget *parent = nullptr) : QTabWidget(parent) {
+        setTabBar(new HeaderTabBar(this));
+    }
+};
 
 class DownwardComboBox final : public QComboBox {
 public:
@@ -270,6 +377,7 @@ AppWindow::AppWindow(QWidget *parent)
     , settings(nullptr)
     , currentTheme("dark")
     , uiFontSize(14)
+    , uiFontWeight(400)
     , currentTabIndex(0)
 {
     setWindowTitle("EasyCommandRunner");
@@ -284,8 +392,8 @@ AppWindow::AppWindow(QWidget *parent)
     }
     loadApplicationSettings();
 
-    // 先设置应用级字体，再创建任何控件；Windows 优先使用微软雅黑，避免中文回退到宋体。
-    qApp->setFont(preferredUiFont(uiFontSize));
+    // 先加载内置中英文等宽字体，再创建控件。
+    qApp->setFont(preferredUiFont(uiFontSize, uiFontWeight));
 
     // 初始化UI
     setupUI();
@@ -319,14 +427,20 @@ void AppWindow::setupUI() {
     mainLayout->setContentsMargins(10, 12, 10, 4);
     mainLayout->setSpacing(8);
 
-    tabWidget = new QTabWidget(this);
+    tabWidget = new HeaderTabWidget(this);
     tabWidget->setTabsClosable(true);
     tabWidget->setMovable(true);
     tabCombo = new DownwardComboBox(this);
     tabCombo->setObjectName("tabCombo");
     tabCombo->setView(new QListView());
     tabCombo->setMaxVisibleItems(30);
+    tabCombo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    tabCombo->setMinimumContentsLength(12);
+    tabCombo->setMaximumWidth(240);
     tabWidget->setCornerWidget(tabCombo, Qt::TopRightCorner);
+    // Qt 默认会在标签栏底部绘制一条 palette mid 色基线（常见为 #787878），
+    // 它会和下面的主内容容器连成一条线；边框交给主题 QSS 统一绘制。
+    tabWidget->tabBar()->setDrawBase(false);
     connect(tabCombo, QOverload<int>::of(&QComboBox::activated), tabWidget, &QTabWidget::setCurrentIndex);
     tabWidget->setUsesScrollButtons(true);
     QHBoxLayout *pageLayout = new QHBoxLayout();
@@ -337,7 +451,8 @@ void AppWindow::setupUI() {
     nextTabButton->setObjectName("nextTabBtn");
     for (auto *button : {previousTabButton, nextTabButton}) {
         button->setProperty("role", "nav");
-        button->setFixedSize(30, 72);
+        // 与标签按钮同高并贴在顶部，使按钮底边和标签按钮底边对齐。
+        button->setFixedSize(30, 38);
     }
     previousTabButton->setAccessibleName("上一个标签页");
     previousTabButton->setToolTip("上一个标签页 · Ctrl+←");
@@ -347,9 +462,9 @@ void AppWindow::setupUI() {
     setButtonIcon(nextTabButton, "icon_chevron_right");
     connect(previousTabButton, &QPushButton::clicked, this, &AppWindow::onPreviousTab);
     connect(nextTabButton, &QPushButton::clicked, this, &AppWindow::onNextTab);
-    pageLayout->addWidget(previousTabButton, 0, Qt::AlignVCenter);
+    pageLayout->addWidget(previousTabButton, 0, Qt::AlignTop);
     pageLayout->addWidget(tabWidget, 1);
-    pageLayout->addWidget(nextTabButton, 0, Qt::AlignVCenter);
+    pageLayout->addWidget(nextTabButton, 0, Qt::AlignTop);
     mainLayout->addLayout(pageLayout, 1);
 
     // 配置操作与运行分组，不再占用四个等权重的大按钮。
@@ -388,6 +503,7 @@ void AppWindow::setupUI() {
     logPanel = new LogPanel(this);
     addDockWidget(Qt::BottomDockWidgetArea, logPanel);
     logPanel->hide(); // 不挤占原版编辑区；首次运行或通过「视图」打开。
+    tabCombo->installEventFilter(this);
 }
 
 void AppWindow::setupMenu() {
@@ -675,15 +791,27 @@ void AppWindow::onFontSizeChanged(int size) {
     const int clamped = qBound(10, size, 24);
     if (uiFontSize == clamped) return;
     uiFontSize = clamped;
-    qApp->setFont(preferredUiFont(uiFontSize));
+    qApp->setFont(preferredUiFont(uiFontSize, uiFontWeight));
+    loadStylesheet(currentTheme);
+}
+
+void AppWindow::onFontWeightChanged(int weight) {
+    const int normalized = normalizedFontWeight(weight);
+    if (uiFontWeight == normalized) return;
+    uiFontWeight = normalized;
+    qApp->setFont(preferredUiFont(uiFontSize, uiFontWeight));
     loadStylesheet(currentTheme);
 }
 
 void AppWindow::onAboutClicked() {
-    QMessageBox::information(this, "关于",
-        "EasyCommandRunner v1.0.0\n\n"
-        "现代化的跨平台命令运行器\n\n"
-        "© 2024 SleepyKanata");
+    QMessageBox about(this);
+    about.setWindowTitle("关于");
+    about.setText("EasyCommandRunner v1.0.0\n\n现代化的跨平台命令运行器\n\n"
+        "© 2024 SleepyKanata\n\n内置字体：Sarasa Mono SC 1.0.41（SIL OFL 1.1）");
+    QFile license(":/res/fonts/OFL-Sarasa.txt");
+    if (license.open(QIODevice::ReadOnly))
+        about.setDetailedText(QString::fromUtf8(license.readAll()));
+    about.exec();
 }
 
 void AppWindow::onTrayIconActivated(QSystemTrayIcon::ActivationReason reason) {
@@ -745,16 +873,51 @@ void AppWindow::loadStylesheet(const QString &theme) {
     QFile file(filename);
     if (file.open(QFile::ReadOnly)) {
         QString stylesheet = QString::fromUtf8(file.readAll());
+        QFile tabLayout(":/res/stylesheet_tabs.qss");
+        if (tabLayout.open(QFile::ReadOnly))
+            stylesheet += '\n' + QString::fromUtf8(tabLayout.readAll());
         stylesheet.replace(
             QStringLiteral("\".AppleSystemUIFont\", \"Segoe UI\", Roboto, Helvetica, Arial, sans-serif"),
             platformFontFamily());
+        stylesheet.replace(QStringLiteral("__ECR_CODE_FONT_FAMILY__"), platformFontFamily());
+        stylesheet.replace(QStringLiteral("__ECR_FONT_WEIGHT__"), QString::number(uiFontWeight));
         const int baseSize = qBound(10, uiFontSize, 24);
         stylesheet.replace(QStringLiteral("__ECR_FONT_SIZE__"), QString::number(baseSize));
         stylesheet.replace(QStringLiteral("__ECR_SMALL_FONT_SIZE__"), QString::number(qMax(8, baseSize - 1)));
         stylesheet.replace(QStringLiteral("__ECR_LARGE_FONT_SIZE__"), QString::number(baseSize + 1));
         qApp->setStyleSheet(stylesheet);
+        syncTabHeaderHeight();
+        scheduleTabHeaderSync();
         file.close();
     }
+}
+
+void AppWindow::syncTabHeaderHeight() {
+    // Qt 的 corner 布局需要上下各 1px；实际标签也撑满相同的高度。
+    tabCombo->ensurePolished();
+    const int headerHeight = tabCombo->sizeHint().height() + 2;
+    static_cast<HeaderTabBar *>(tabWidget->tabBar())->setHeaderHeight(headerHeight);
+    previousTabButton->setFixedHeight(headerHeight);
+    nextTabButton->setFixedHeight(headerHeight);
+}
+
+void AppWindow::scheduleTabHeaderSync() {
+    if (headerSyncPending) return;
+    headerSyncPending = true;
+    QTimer::singleShot(0, this, [this]() {
+        headerSyncPending = false;
+        syncTabHeaderHeight();
+    });
+}
+
+bool AppWindow::eventFilter(QObject *object, QEvent *event) {
+    if (object == tabCombo && (event->type() == QEvent::FontChange
+        || event->type() == QEvent::StyleChange || event->type() == QEvent::LayoutRequest
+        || event->type() == QEvent::Resize)) {
+        // 字号/样式应用后，等 QComboBox 完成 sizeHint 缓存失效和布局再同步。
+        scheduleTabHeaderSync();
+    }
+    return QMainWindow::eventFilter(object, event);
 }
 
 void AppWindow::applyTheme(const QString &theme) {
@@ -888,6 +1051,7 @@ void AppWindow::loadApplicationSettings() {
         currentTheme = settings->value("ui/theme", "dark").toString();
     }
     uiFontSize = qBound(10, settings->value("ui/font_size", 14).toInt(), 24);
+    uiFontWeight = normalizedFontWeight(settings->value("ui/font_weight", 400).toInt());
     if (settings->contains("window/geometry")) {
         windowGeometry = settings->value("window/geometry").toByteArray();
     }
@@ -901,6 +1065,7 @@ void AppWindow::saveApplicationSettings() {
     settings->setValue("window/index", tabWidget->currentIndex());
     settings->setValue("ui/theme", currentTheme);
     settings->setValue("ui/font_size", uiFontSize);
+    settings->setValue("ui/font_weight", uiFontWeight);
 }
 
 void AppWindow::createTab(const QString &name) {
@@ -957,6 +1122,8 @@ CommandTab::CommandTab(QWidget *parent)
     , workingDirEdit(nullptr)
     , programEdit(nullptr)
     , parseButton(nullptr)
+    , functionsLayout(nullptr)
+    , parameterScrollArea(nullptr)
     , otherArgsEdit(nullptr)
     , descriptionEdit(nullptr)
     , commandPreviewEdit(nullptr)
@@ -1072,6 +1239,24 @@ QJsonObject CommandTab::saveConfiguration() const {
     return config;
 }
 
+void CommandTab::reorderParameterRow(QWidget *row, int targetIndex) {
+    if (!row || !functionsLayout) return;
+    const int sourceIndex = functionsLayout->indexOf(row);
+    if (sourceIndex < 0) return;
+    targetIndex = qBound(0, targetIndex, functionsLayout->count() - 1);
+    if (targetIndex == sourceIndex) return;
+
+    functionsLayout->removeWidget(row);
+    functionsLayout->insertWidget(targetIndex, row);
+    row->show();
+    rowCheckBoxes.move(sourceIndex, targetIndex);
+    functionEdits.move(sourceIndex, targetIndex);
+    parameterEdits.move(sourceIndex, targetIndex);
+    commentEdits.move(sourceIndex, targetIndex);
+    removeButtons.move(sourceIndex, targetIndex);
+    updateCommandPreview();
+}
+
 void CommandTab::clearRows() {
     while (QLayoutItem *item = functionsLayout->takeAt(0)) {
         delete item->widget();
@@ -1131,6 +1316,11 @@ void CommandTab::onAddFunctionClicked() {
     rowLayout->setContentsMargins(0, 0, 0, 0);
     rowLayout->setSpacing(6);
 
+    auto *dragHandle = new ParameterDragHandle(parameterScrollArea,
+        [this](QWidget *row, int targetIndex) {
+            reorderParameterRow(row, targetIndex);
+        });
+    dragHandle->setTheme(m_theme);
     CheckButton *checkBox = new CheckButton();
     checkBox->setTheme(m_theme);
     checkBox->setAccessibleName(QString("启用参数%1").arg(functionCounter));
@@ -1152,6 +1342,7 @@ void CommandTab::onAddFunctionClicked() {
     removeBtn->setAccessibleName("删除参数行");
     setButtonIcon(removeBtn, "icon_delete", m_theme);
     removeBtn->setObjectName("paramRemoveBtn");
+    rowLayout->addWidget(dragHandle, 0, Qt::AlignVCenter);
     rowLayout->addWidget(checkBox, 0, Qt::AlignVCenter);
     rowLayout->addWidget(funcEdit, 1);
     rowLayout->addWidget(paramEdit, 1);
@@ -1177,6 +1368,8 @@ void CommandTab::onAddFunctionClicked() {
 
     functionsLayout->addWidget(rowWidget);
     connect(commentEdit, &QLineEdit::textChanged, this, &CommandTab::configurationChanged);
+    if (parameterScrollArea)
+        static_cast<ParameterScrollArea *>(parameterScrollArea)->refreshMinimumHeight();
 
     connect(removeBtn, &QPushButton::clicked, [this, rowWidget, checkBox, funcEdit, paramEdit, commentEdit, removeBtn]() {
         rowCheckBoxes.removeOne(checkBox);
@@ -1189,6 +1382,8 @@ void CommandTab::onAddFunctionClicked() {
         rowWidget->deleteLater();
         if (functionEdits.isEmpty()) onAddFunctionClicked();
         updateCommandPreview();
+        if (parameterScrollArea)
+            static_cast<ParameterScrollArea *>(parameterScrollArea)->refreshMinimumHeight();
     });
 }
 
@@ -1201,6 +1396,10 @@ void CommandTab::updateRemoveButtonIcons(const QString &theme) {
     for (QPushButton *cb : rowCheckBoxes) {
         static_cast<CheckButton*>(cb)->setTheme(theme);
     }
+    for (auto *handle : findChildren<QWidget *>("paramDragHandle")) {
+        handle->setProperty("theme", theme);
+        handle->update();
+    }
 }
 
 void CommandTab::onRemoveFunctionClicked() {
@@ -1212,14 +1411,12 @@ void CommandTab::onPreviewCommandClicked() {
 }
 
 void CommandTab::setupUI() {
-    // 表单整体滚动；运行操作固定，页面两侧导航由主窗口提供。
+    // 只滚动参数行，名称/目录/程序和描述保持可见；预览吸收剩余空间。
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setContentsMargins(12, 12, 12, 12);
     layout->setSpacing(10);
-    QScrollArea *scrollArea = new QScrollArea(this);
-    scrollArea->setObjectName("commandScrollArea");
-    scrollArea->setWidgetResizable(true);
-    QWidget *form = new QWidget();
+    QWidget *form = new QWidget(this);
+    form->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     QVBoxLayout *formLayout = new QVBoxLayout(form);
     formLayout->setContentsMargins(4, 2, 4, 2);
     formLayout->setSpacing(10);
@@ -1269,17 +1466,27 @@ void CommandTab::setupUI() {
     formLayout->addLayout(programLayout);
 
     QHBoxLayout *parameterHeader = new QHBoxLayout();
-    parameterHeader->setContentsMargins(37, 0, 36, 0);
+    parameterHeader->setContentsMargins(65, 0, 36, 0);
     for (const QString &text : {QString("选项 / 功能"), QString("参数值"), QString("备注")}) {
         QLabel *label = new QLabel(text);
         label->setProperty("role", "hint");
         parameterHeader->addWidget(label, 1);
     }
     formLayout->addLayout(parameterHeader);
-    functionsLayout = new QVBoxLayout();
-    functionsLayout->setContentsMargins(0, 0, 0, 0);
+    auto *paramsArea = new ParameterScrollArea(this);
+    parameterScrollArea = paramsArea;
+    paramsArea->setObjectName("paramsScrollArea");
+    paramsArea->setWidgetResizable(true);
+    paramsArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto *rows = new QWidget();
+    rows->installEventFilter(paramsArea);
+    functionsLayout = new QVBoxLayout(rows);
+    functionsLayout->setContentsMargins(4, 4, 4, 4);
     functionsLayout->setSpacing(6);
-    formLayout->addLayout(functionsLayout);
+    functionsLayout->setAlignment(Qt::AlignTop);
+    functionsLayout->setSizeConstraint(QLayout::SetMinAndMaxSize);
+    paramsArea->setWidget(rows);
+    formLayout->addWidget(paramsArea);
     onAddFunctionClicked();
 
     QHBoxLayout *paramActions = new QHBoxLayout();
@@ -1320,18 +1527,19 @@ void CommandTab::setupUI() {
     descriptionEdit = new PathTextEdit();
     descriptionEdit->setObjectName("descriptionEdit");
     descriptionEdit->setPlaceholderText("描述 / 使用说明（不会执行）");
-    descriptionEdit->setMinimumHeight(64);
-    descriptionEdit->setMaximumHeight(100);
+    // 描述是辅助信息，保持固定高度；窗口多出来的空间留给命令预览。
+    descriptionEdit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    descriptionEdit->setFixedHeight(80);
     formLayout->addWidget(descriptionEdit);
     commandPreviewEdit = new QTextEdit();
     commandPreviewEdit->setObjectName("commandPreviewEdit");
     commandPreviewEdit->setReadOnly(true);
     commandPreviewEdit->setPlaceholderText("命令预览 · 修改参数后实时更新");
     commandPreviewEdit->setMinimumHeight(72);
-    commandPreviewEdit->setMaximumHeight(90);
-    scrollArea->setWidget(form);
-    layout->addWidget(scrollArea, 1);
-    layout->addWidget(commandPreviewEdit);
+    commandPreviewEdit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    // 表单区域完整显示；窗口多出来的高度分配给命令预览。
+    layout->addWidget(form, 0);
+    layout->addWidget(commandPreviewEdit, 1);
 
     QHBoxLayout *runActions = new QHBoxLayout();
     QPushButton *logButton = new QPushButton("运行日志");
@@ -1417,11 +1625,13 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     if (auto *window = qobject_cast<AppWindow*>(parent)) {
         originalTheme = window->getCurrentTheme();
         originalFontSize = window->getFontSize();
+        originalFontWeight = window->getFontWeight();
     }
     connect(this, &QDialog::rejected, this, [this]() {
         if (auto *window = qobject_cast<AppWindow*>(this->parent())) {
             window->onThemeChanged(originalTheme);
             window->onFontSizeChanged(originalFontSize);
+            window->onFontWeightChanged(originalFontWeight);
         }
     });
 }
@@ -1434,16 +1644,28 @@ void SettingsDialog::setupUI() {
     QHBoxLayout *themeLayout = new QHBoxLayout(themeGroup);
     themeLayout->addWidget(new QLabel("主题:"));
     themeCombo = new QComboBox();
+    themeCombo->setObjectName("themeCombo");
     themeCombo->addItem("深色", "dark");
     themeCombo->addItem("浅色", "light");
     themeLayout->addWidget(themeCombo);
     themeLayout->addSpacing(16);
     themeLayout->addWidget(new QLabel("界面字号:"));
     fontSizeSpin = new QSpinBox();
+    fontSizeSpin->setObjectName("fontSizeSpin");
     fontSizeSpin->setRange(10, 24);
     fontSizeSpin->setSuffix(" px");
-    fontSizeSpin->setToolTip("调整界面文字大小（10–24 px）");
+    fontSizeSpin->setToolTip("调整界面文字大小；点击“应用”或“确定”后生效");
     themeLayout->addWidget(fontSizeSpin);
+    themeLayout->addWidget(new QLabel("字重:"));
+    fontWeightCombo = new QComboBox();
+    fontWeightCombo->setObjectName("fontWeightCombo");
+    const QList<QPair<QString, int>> weights = {
+        {"细体 (300)", 300}, {"常规 (400)", 400}, {"中等 (500)", 500},
+        {"半粗 (600)", 600}, {"粗体 (700)", 700}, {"特粗 (800)", 800}
+    };
+    for (const auto &weight : weights) fontWeightCombo->addItem(weight.first, weight.second);
+    fontWeightCombo->setToolTip("调整界面字重；点击“应用”或“确定”后生效");
+    themeLayout->addWidget(fontWeightCombo);
     layout->addWidget(themeGroup);
 
     // 语言设置
@@ -1464,7 +1686,10 @@ void SettingsDialog::setupUI() {
     QHBoxLayout *backupSelectLayout = new QHBoxLayout();
     backupSelectLayout->addWidget(new QLabel("选择备份:"));
     backupCombo = new QComboBox();
-    backupSelectLayout->addWidget(backupCombo);
+    backupSelectLayout->addWidget(backupCombo, 1);
+    importBackupButton = new QPushButton("导入备份");
+    importBackupButton->setToolTip("从其他位置选择 JSON 配置，导入到备份列表");
+    backupSelectLayout->addWidget(importBackupButton);
     restoreButton = new QPushButton("恢复");
     backupSelectLayout->addWidget(restoreButton);
     backupLayout->addLayout(backupSelectLayout);
@@ -1486,44 +1711,29 @@ void SettingsDialog::setupUI() {
     layout->addLayout(buttonLayout);
 
     // 连接信号
-    connect(okButton, &QPushButton::clicked, this, &QDialog::accept);
+    connect(okButton, &QPushButton::clicked, this, &SettingsDialog::onOkClicked);
     connect(cancelButton, &QPushButton::clicked, this, &QDialog::reject);
     connect(applyButton, &QPushButton::clicked, this, &SettingsDialog::onApplyClicked);
-    connect(themeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SettingsDialog::onThemeComboChanged);
-    connect(fontSizeSpin, &QSpinBox::valueChanged, this, &SettingsDialog::onFontSizeChanged);
+    // 主题、字号和字重都只在“应用/确定”时提交，避免设置窗口操作中途改变主界面。
     connect(restoreButton, &QPushButton::clicked, this, &SettingsDialog::onRestoreBackupClicked);
+    connect(importBackupButton, &QPushButton::clicked, this, &SettingsDialog::onImportBackupClicked);
 
-    resize(400, 300);
+    resize(600, 300);
 }
 
 void SettingsDialog::loadSettings() {
-    m_loadingSettings = true;
     AppWindow* mainWindow = qobject_cast<AppWindow*>(parent());
     if (mainWindow) {
         QString currentTheme = mainWindow->getCurrentTheme();
         int index = themeCombo->findData(currentTheme);
         if (index >= 0) themeCombo->setCurrentIndex(index);
         fontSizeSpin->setValue(mainWindow->getFontSize());
+        const int weightIndex = fontWeightCombo->findData(mainWindow->getFontWeight());
+        if (weightIndex >= 0) fontWeightCombo->setCurrentIndex(weightIndex);
     }
     backupCombo->clear();
     for (const QString &name : RustBackend::getBackups(configFilePath(), backupDirPath())) backupCombo->addItem(name);
     restoreButton->setEnabled(backupCombo->count() > 0);
-    m_loadingSettings = false;
-}
-
-void SettingsDialog::onThemeComboChanged(int index) {
-    if (m_loadingSettings) return;  // Don't fire during loadSettings()
-    QString theme = themeCombo->itemData(index).toString();
-    // Emit signal or apply directly if we have a pointer to main window
-    AppWindow* mainWindow = qobject_cast<AppWindow*>(parent());
-    if (mainWindow) {
-        mainWindow->onThemeChanged(theme);
-    }
-}
-
-void SettingsDialog::onFontSizeChanged(int size) {
-    if (m_loadingSettings) return;
-    if (auto *mainWindow = qobject_cast<AppWindow*>(parent())) mainWindow->onFontSizeChanged(size);
 }
 
 void SettingsDialog::onRestoreBackupClicked() {
@@ -1534,11 +1744,62 @@ void SettingsDialog::onRestoreBackupClicked() {
     if (window->restoreBackup(backupCombo->currentText())) {
         originalTheme = window->getCurrentTheme();
         originalFontSize = window->getFontSize();
+        originalFontWeight = window->getFontWeight();
         loadSettings();
     } else QMessageBox::warning(this, "恢复失败", "恢复未完成；现有配置已保留。");
 }
 
+void SettingsDialog::onImportBackupClicked() {
+    const QString sourcePath = QFileDialog::getOpenFileName(
+        this, "导入备份", QString(), "JSON 配置 (*.json);;所有文件 (*)");
+    if (sourcePath.isEmpty()) return;
+
+    QFile source(sourcePath);
+    if (!source.open(QIODevice::ReadOnly)) {
+        QMessageBox::warning(this, "导入失败", "无法读取备份文件：" + source.errorString());
+        return;
+    }
+    const QByteArray content = source.readAll();
+    QJsonParseError error;
+    const QJsonDocument document = QJsonDocument::fromJson(content, &error);
+    if (error.error != QJsonParseError::NoError || !document.isObject()) {
+        QMessageBox::warning(this, "导入失败", "备份文件不是有效的 JSON 对象：" + error.errorString());
+        return;
+    }
+
+    QDir backupDir(backupDirPath());
+    if (!backupDir.exists() && !QDir().mkpath(backupDirPath())) {
+        QMessageBox::warning(this, "导入失败", "无法创建备份目录：" + backupDirPath());
+        return;
+    }
+
+    QString fileName = QFileInfo(sourcePath).fileName();
+    if (fileName.isEmpty()) fileName = "imported_backup.json";
+    if (!fileName.endsWith(".json", Qt::CaseInsensitive)) fileName += ".json";
+
+    const QString extension = ".json";
+    const QString baseName = fileName.left(fileName.size() - extension.size());
+    QString targetName = fileName;
+    int suffix = 2;
+    while (QFile::exists(backupDir.filePath(targetName))) {
+        targetName = baseName + QString(" (%1)").arg(suffix++) + extension;
+    }
+
+    QSaveFile target(backupDir.filePath(targetName));
+    if (!target.open(QIODevice::WriteOnly) || target.write(content) != content.size() || !target.commit()) {
+        QMessageBox::warning(this, "导入失败", "无法写入备份目录：" + target.errorString());
+        return;
+    }
+
+    loadSettings();
+    const int index = backupCombo->findText(targetName);
+    if (index >= 0) backupCombo->setCurrentIndex(index);
+    QMessageBox::information(this, "导入成功",
+        QString("备份已导入：%1\n请点击“恢复”应用此备份。").arg(targetName));
+}
+
 void SettingsDialog::onOkClicked() {
+    onApplyClicked();
     accept();
 }
 
@@ -1553,9 +1814,11 @@ void SettingsDialog::onApplyClicked() {
     if (mainWindow) {
         mainWindow->onThemeChanged(theme);
         mainWindow->onFontSizeChanged(fontSizeSpin->value());
+        mainWindow->onFontWeightChanged(fontWeightCombo->currentData().toInt());
         mainWindow->saveApplicationSettings();
         originalTheme = theme;
         originalFontSize = fontSizeSpin->value();
+        originalFontWeight = fontWeightCombo->currentData().toInt();
     }
 }
 

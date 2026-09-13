@@ -2,8 +2,11 @@
 <RCC version="1.0">
     <qresource prefix="/res">
         <file>app_icon.png</file>
+        <file>fonts/SarasaMonoSC-Regular.ttf</file>
+        <file>fonts/OFL-Sarasa.txt</file>
         <file>stylesheet_dark.qss</file>
         <file>stylesheet_light.qss</file>
+        <file>stylesheet_tabs.qss</file>
         <file>icon_run.svg</file>
         <file>icon_save.svg</file>
         <file>icon_add.svg</file>
@@ -22,6 +25,10 @@
         <file>icon_chevron_right.svg</file>
         <file>icon_folder.svg</file>
         <file>icon_terminal.svg</file>
+        <file>spinbox_up.svg</file>
+        <file>spinbox_down.svg</file>
+        <file>spinbox_up_light.svg</file>
+        <file>spinbox_down_light.svg</file>
     </qresource>
     <qresource prefix="/classic">
         <file alias="checked_image.png">../css/checked_image.png</file>

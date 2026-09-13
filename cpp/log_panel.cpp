@@ -15,6 +15,8 @@
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QProcess>
+#include <QProcessEnvironment>
+#include <QEvent>
 #include <QPushButton>
 #include <QSaveFile>
 #include <QScrollBar>
@@ -25,6 +27,9 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#endif
 #ifdef Q_OS_UNIX
 #include <pwd.h>
 #include <signal.h>
@@ -103,6 +108,7 @@ LogPanel::LogPanel(QWidget *parent) : QDockWidget("运行日志 - EasyCommandRun
     layout->addLayout(toolbar);
     outputEdit = new QPlainTextEdit(content);
     outputEdit->setObjectName("runLogOutput");
+    outputEdit->installEventFilter(this);
     outputEdit->setReadOnly(true);
     outputEdit->setMinimumHeight(100);
     outputEdit->setPlaceholderText("每次运行都会启动独立 shell，输出和历史显示在这里。\n这是日志视图，不是交互终端。");
@@ -161,6 +167,13 @@ LogPanel::~LogPanel() {
     }
 }
 
+bool LogPanel::eventFilter(QObject *object, QEvent *event) {
+    if (object == outputEdit && event->type() == QEvent::FontChange) {
+        for (const auto &run : runs) run->document->setDefaultFont(outputEdit->font());
+    }
+    return QDockWidget::eventFilter(object, event);
+}
+
 int LogPanel::runningCount() const {
     int count = 0;
     for (const auto &run : runs) {
@@ -196,6 +209,7 @@ void LogPanel::startCommand(const QString &title, const QString &command, const 
     run->caption = QDateTime::currentDateTime().toString("HH:mm:ss") + "  " +
                    (title.trimmed().isEmpty() ? command.left(60) : title);
     run->document = new QTextDocument(this);
+    run->document->setDefaultFont(outputEdit->font());
     run->document->setDocumentLayout(new QPlainTextDocumentLayout(run->document));
     run->document->setMaximumBlockCount(10000);
     run->process = new QProcess(this);
@@ -215,9 +229,24 @@ void LogPanel::startCommand(const QString &title, const QString &command, const 
     run->process->setProcessChannelMode(QProcess::MergedChannels);
     run->process->setInputChannelMode(QProcess::ManagedInputChannel);
 #ifdef Q_OS_WIN
-    // Windows Terminal 是宿主，COMSPEC 才是 cmd 的选择；不启动外部终端窗口。
-    // 让 Qt 负责把完整命令作为一个参数传给 cmd，避免手工拼 native 引号。
-    run->process->setArguments({"/D", "/S", "/C", command});
+    // Python 在 Windows 管道中默认输出本地编码，但日志按 UTF-8 增量解码。
+    // 只影响本次子进程，不修改全局环境或脚本的文件读写编码。
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    environment.insert("PYTHONIOENCODING", "utf-8");
+    environment.insert("PYTHONUNBUFFERED", "1");
+    run->process->setProcessEnvironment(environment);
+    // cmd 不采用 C runtime 的引号规则；setArguments 会把内部引号变成反斜杠引号，
+    // 导致带空格/中文的路径被拆开。/S 仅去掉最外层引号，命令内部保持原文。
+    // cmd 会在启动时缓存输出代码页：先 chcp，再启动执行命令的内层 cmd。
+    // 单层的 chcp & echo 仍可能输出 GBK；不要用 /U（它会混入 UTF-16）。
+    run->process->setNativeArguments("/D /S /C \"chcp 65001>nul & \""
+        + QDir::toNativeSeparators(shell) + "\" /D /S /C \"" + command + "\"\"");
+    run->process->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *args) {
+        // 独立的隐藏控制台，避免 chcp 修改启动 EasyCommandRunner 的终端代码页。
+        args->flags = (args->flags & ~CREATE_NO_WINDOW) | CREATE_NEW_CONSOLE;
+        args->startupInfo->dwFlags |= STARTF_USESHOWWINDOW;
+        args->startupInfo->wShowWindow = SW_HIDE;
+    });
 #else
     run->process->setArguments({"-c", command});
     // 独立进程组，停止时同时结束 shell 派生的普通子进程。

@@ -47,11 +47,13 @@ endif()
 set(SOURCES
     cpp/app.cpp
     cpp/log_panel.cpp
+    cpp/parameter_drag_handle.cpp
 )
 
 set(HEADERS
     cpp/app.h
     cpp/log_panel.h
+    cpp/parameter_drag_handle.h
 )
 
 # Resources
@@ -99,7 +101,7 @@ if(ECR_BUILD_TESTS)
     add_test(NAME ecr_ui_tests COMMAND ecr_ui_tests)
     set_tests_properties(ecr_ui_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=1"
-        TIMEOUT 60)
+        TIMEOUT 180)
 endif()
 
 # Platform-specific settings

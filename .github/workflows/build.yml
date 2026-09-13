@@ -1,202 +1,323 @@
-name: Cross-Platform Build
+name: Build and test
 
 on:
-  workflow_dispatch:
+  push: {}
+  pull_request: {}
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QT_VERSION: "6.8.3"
 
 jobs:
-  build-linux-x86:
-    runs-on: ubuntu-latest
+  rust:
+    name: Rust tests
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Qt6
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Rust tests
+        run: cargo test --all-targets --locked
+
+  linux-x86_64:
+    name: Linux x86_64
+    runs-on: ubuntu-24.04
+    env:
+      QT_QPA_PLATFORM: offscreen
+      QT_SCALE_FACTOR: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install native tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y qt6-base-dev qt6-tools-dev
-      
+          sudo apt-get install -y ninja-build
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-      
-      - name: Build
-        run: |
-          mkdir -p build
-          cd build
-          cmake -DCMAKE_BUILD_TYPE=Release ..
-          make -j$(nproc)
-      
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: easycommandrunner-linux-x86
-          path: build/EasyCommandRunner
 
-  build-linux-arm:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust ARM target
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-unknown-linux-gnu
-      
-      - name: Install ARM dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            crossbuild-essential-arm64 \
-            qt6-base-dev:arm64 \
-            qt6-tools-dev:arm64
-      
-      - name: Build
-        env:
-          CC: aarch64-linux-gnu-gcc
-          CXX: aarch64-linux-gnu-g++
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-        run: |
-          mkdir -p build
-          cd build
-          cmake -DCMAKE_BUILD_TYPE=Release \
-                -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
-                -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
-                ..
-          make -j$(nproc)
-      
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: easycommandrunner-linux-arm64
-          path: build/EasyCommandRunner
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
 
-  build-windows-x86:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Qt6
-        run: |
-          choco install -y qt-opensource
-      
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-      
-      - name: Add MSVC toolset
-        run: |
-          choco install -y visualstudio2022-workload-vctools
-      
-      - name: Build
-        shell: pwsh
-        run: |
-          mkdir build -Force
-          cd build
-          cmake -G "Visual Studio 17 2022" -A Win32 ..
-          cmake --build . --config Release
-      
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
         with:
-          name: easycommandrunner-windows-x86
-          path: build/Release/EasyCommandRunner.exe
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: gcc_64
+          modules: qtsvg
+          install-deps: true
+          cache: true
 
-  build-windows-arm:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Qt6
+      - name: Configure Qt runtime paths
+        shell: bash
         run: |
-          choco install -y qt-opensource
-      
-      - name: Install Rust ARM target
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-pc-windows-msvc
-      
-      - name: Build
-        shell: pwsh
-        run: |
-          mkdir build -Force
-          cd build
-          cmake -G "Visual Studio 17 2022" -A ARM64 ..
-          cmake --build . --config Release
-      
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: easycommandrunner-windows-arm64
-          path: build/Release/EasyCommandRunner.exe
+          test -n "$QT_ROOT_DIR"
+          echo "CMAKE_PREFIX_PATH=$QT_ROOT_DIR" >> "$GITHUB_ENV"
+          echo "QT_PLUGIN_PATH=$QT_ROOT_DIR/plugins" >> "$GITHUB_ENV"
+          echo "QT_QPA_PLATFORM_PLUGIN_PATH=$QT_ROOT_DIR/plugins/platforms" >> "$GITHUB_ENV"
+          qmake --version
 
-  build-macos-arm:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Qt6
-        run: |
-          brew install qt
-      
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-      
+      - name: Configure
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DECR_BUILD_TESTS=ON
+          -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
+
       - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Package Linux AppImage
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
         run: |
-          mkdir -p build
-          cd build
-          cmake -DCMAKE_BUILD_TYPE=Release ..
-          make -j$(sysctl -n hw.ncpu)
-      
-      - name: Create DMG
+          set -euo pipefail
+          mkdir -p packaging dist
+          cat > packaging/EasyCommandRunner.desktop <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=EasyCommandRunner
+          Comment=Rust and Qt command runner
+          Exec=EasyCommandRunner
+          Icon=EasyCommandRunner
+          Categories=Utility;
+          Terminal=false
+          EOF
+
+          curl --fail --retry 3 --location \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage \
+            --output packaging/linuxdeploy
+          curl --fail --retry 3 --location \
+            https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage \
+            --output packaging/linuxdeploy-plugin-qt
+          chmod +x packaging/linuxdeploy packaging/linuxdeploy-plugin-qt
+
+          export PATH="$PWD/packaging:$PATH"
+          export QMAKE="$(command -v qmake)"
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          export EXTRA_QT_MODULES="svg;"
+          packaging/linuxdeploy \
+            --appdir AppDir \
+            --executable build/EasyCommandRunner \
+            --desktop-file packaging/EasyCommandRunner.desktop \
+            --icon-file resources/app_icon.png
+          packaging/linuxdeploy --appdir AppDir --plugin qt --output appimage
+
+          appimage="$(find . -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
+          test -n "$appimage"
+          mv "$appimage" dist/EasyCommandRunner-linux-x86_64.AppImage
+
+      - name: Collect CI binary
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        shell: bash
         run: |
           mkdir -p dist
-          cp -r build/EasyCommandRunner.app dist/
-          hdiutil create -volname "EasyCommandRunner 0.9.0" \
-                        -srcfolder dist \
-                        -ov -format UDZO \
-                        EasyCommandRunner-0.9.0.dmg
-      
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: easycommandrunner-macos-arm64
-          path: EasyCommandRunner-0.9.0.dmg
+          cp build/EasyCommandRunner dist/EasyCommandRunner-linux-x86_64
 
-  create-release:
-    needs: [build-linux-x86, build-linux-arm, build-windows-x86, build-windows-arm, build-macos-arm]
-    runs-on: ubuntu-latest
-    if: success()
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Download all artifacts
-        uses: actions/download-artifact@v3
-      
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
         with:
+          name: ecr-linux-x86_64
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-x86_64:
+    name: Windows x86_64
+    runs-on: windows-2022
+    env:
+      QT_QPA_PLATFORM: offscreen
+      QT_SCALE_FACTOR: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          modules: qtsvg
+          cache: true
+
+      - name: Configure Qt runtime paths
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:QT_ROOT_DIR)) {
+            throw "QT_ROOT_DIR was not set by install-qt-action"
+          }
+          $qmake = (Get-Command qmake.exe -ErrorAction Stop).Source
+          $plugins = (& $qmake -query QT_INSTALL_PLUGINS).Trim()
+          "CMAKE_PREFIX_PATH=$env:QT_ROOT_DIR" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "QT_PLUGIN_PATH=$plugins" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "QT_QPA_PLATFORM_PLUGIN_PATH=$plugins\platforms" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          & $qmake --version
+
+      - name: Configure
+        shell: pwsh
+        run: >-
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+          -DECR_BUILD_TESTS=ON
+          -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package Windows application
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $windeployqt = (Get-Command windeployqt.exe -ErrorAction Stop).Source
+          & $windeployqt --release --no-translations --compiler-runtime `
+            --dir dist build\Release\EasyCommandRunner.exe
+          if (-not (Test-Path dist\EasyCommandRunner.exe)) {
+            throw "windeployqt did not copy EasyCommandRunner.exe"
+          }
+          $svg = Join-Path $env:QT_ROOT_DIR "plugins\imageformats\qsvg.dll"
+          if (Test-Path $svg) {
+            New-Item -ItemType Directory -Force dist\imageformats | Out-Null
+            Copy-Item $svg dist\imageformats\qsvg.dll -Force
+            $svgRuntime = Join-Path $env:QT_ROOT_DIR "bin\Qt6Svg.dll"
+            if (Test-Path $svgRuntime) {
+              Copy-Item $svgRuntime dist\Qt6Svg.dll -Force
+            }
+          }
+          Compress-Archive -Path dist\* -DestinationPath EasyCommandRunner-windows-x86_64.zip -Force
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecr-windows-x86_64
+          path: EasyCommandRunner-windows-x86_64.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  macos-arm64:
+    name: macOS arm64
+    runs-on: macos-14
+    env:
+      QT_QPA_PLATFORM: offscreen
+      QT_SCALE_FACTOR: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: mac
+          target: desktop
+          arch: clang_64
+          modules: qtsvg
+          cache: true
+
+      - name: Configure Qt runtime paths
+        shell: bash
+        run: |
+          test -n "$QT_ROOT_DIR"
+          echo "CMAKE_PREFIX_PATH=$QT_ROOT_DIR" >> "$GITHUB_ENV"
+          echo "QT_PLUGIN_PATH=$QT_ROOT_DIR/plugins" >> "$GITHUB_ENV"
+          echo "QT_QPA_PLATFORM_PLUGIN_PATH=$QT_ROOT_DIR/plugins/platforms" >> "$GITHUB_ENV"
+          qmake --version
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DECR_BUILD_TESTS=ON \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
+
+      - name: Build
+        run: cmake --build build --parallel "$(sysctl -n hw.ncpu)"
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Package macOS application
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          macdeployqt build/EasyCommandRunner.app -dmg
+          dmg="$(find . -maxdepth 2 -type f -name 'EasyCommandRunner.dmg' -print -quit)"
+          test -n "$dmg"
+          mv "$dmg" dist/EasyCommandRunner-macos-arm64.dmg
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecr-macos-arm64
+          path: dist/EasyCommandRunner-macos-arm64.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Create GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - linux-x86_64
+      - windows-x86_64
+      - macos-arm64
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ecr-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: EasyCommandRunner ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
-            easycommandrunner-linux-x86/EasyCommandRunner
-            easycommandrunner-linux-arm64/EasyCommandRunner
-            easycommandrunner-windows-x86/EasyCommandRunner.exe
-            easycommandrunner-windows-arm64/EasyCommandRunner.exe
-            easycommandrunner-macos-arm64/EasyCommandRunner-0.9.0.dmg
-          tag_name: v0.9.0
-          release_name: EasyCommandRunner v0.9.0
-          body: |
-            # EasyCommandRunner v0.9.0 Release
-            
-            ## 新特性
-            - ✨ 现代化 UI 设计（SVG 图标）
-            - 🚀 Rust + Qt6 完全重写
-            - 📦 大幅减小包体积（~70% 缩减）
-            - ⚡ 显著提升启动速度（~5x 加速）
-            - 🎨 日间/夜间主题切换
-            - 🖥️ 多平台支持（Linux/Windows/macOS）
-            
-            ## 下载
-            - Linux x86_64: `EasyCommandRunner-linux-x86`
-            - Linux ARM64: `EasyCommandRunner-linux-arm64`
-            - Windows x86: `EasyCommandRunner-windows-x86.exe`
-            - Windows ARM64: `EasyCommandRunner-windows-arm64.exe`
-            - macOS ARM64: `EasyCommandRunner-0.9.0.dmg`
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            dist/EasyCommandRunner-linux-x86_64.AppImage
+            dist/EasyCommandRunner-windows-x86_64.zip
+            dist/EasyCommandRunner-macos-arm64.dmg

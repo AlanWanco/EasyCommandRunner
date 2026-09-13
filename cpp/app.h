@@ -23,6 +23,7 @@
 #include <QSpinBox>
 
 class LogPanel;
+class QScrollArea;
 
 /**
  * @brief 主应用窗口
@@ -43,14 +44,17 @@ public:
 
     void onThemeChanged(const QString &theme);
     void onFontSizeChanged(int size);
+    void onFontWeightChanged(int weight);
     void saveApplicationSettings();
     bool restoreBackup(const QString &name);
     QString getCurrentTheme() const { return currentTheme; }
     int getFontSize() const { return uiFontSize; }
+    int getFontWeight() const { return uiFontWeight; }
 
 protected:
     void closeEvent(QCloseEvent *event) override;
     void changeEvent(QEvent *event) override;
+    bool eventFilter(QObject *object, QEvent *event) override;
 
 private slots:
     // 主窗口操作
@@ -93,6 +97,8 @@ private:
     void setupTrayIcon();
     void setupConnections();
     void loadStylesheet(const QString &theme);
+    void syncTabHeaderHeight();
+    void scheduleTabHeaderSync();
     void applyTheme(const QString &theme);
     
     // 图标管理
@@ -125,6 +131,7 @@ private:
     QLabel *sessionLabel;
     QJsonObject savedConfig;
     bool configWritable = true;
+    bool headerSyncPending = false;
 
     // 菜单和托盘
     QSystemTrayIcon *trayIcon;
@@ -139,6 +146,7 @@ private:
     QSettings *settings;
     QString currentTheme;
     int uiFontSize;
+    int uiFontWeight;
 
     // 窗口几何信息保存
     QByteArray windowGeometry;
@@ -193,6 +201,7 @@ private:
     void setupUI();
     void setupConnections();
     void updateCommandPreview();
+    void reorderParameterRow(QWidget *row, int targetIndex);
     void clearRows();
 
     // 标题区域
@@ -207,6 +216,7 @@ private:
     
     // 函数/参数行（动态创建）
     QVBoxLayout *functionsLayout;
+    QScrollArea *parameterScrollArea;
     QVector<QPushButton*> rowCheckBoxes;
     QVector<QLineEdit*> functionEdits;
     QVector<QLineEdit*> parameterEdits;
@@ -249,9 +259,8 @@ signals:
     void languageChanged(const QString &language);
 
 private slots:
-    void onThemeComboChanged(int index);
-    void onFontSizeChanged(int size);
     void onRestoreBackupClicked();
+    void onImportBackupClicked();
     void onOkClicked();
     void onCancelClicked();
     void onApplyClicked();
@@ -263,9 +272,11 @@ private:
     // UI 组件
     QComboBox *themeCombo;
     QSpinBox *fontSizeSpin;
+    QComboBox *fontWeightCombo;
     QComboBox *languageCombo;
     QComboBox *backupCombo;
     QPushButton *restoreButton;
+    QPushButton *importBackupButton;
     QPushButton *okButton;
     QPushButton *cancelButton;
     QPushButton *applyButton;
@@ -273,7 +284,7 @@ private:
     QString currentTheme;
     QString originalTheme;
     int originalFontSize = 14;
-    bool m_loadingSettings = false;
+    int originalFontWeight = 400;
 };
 
 /**

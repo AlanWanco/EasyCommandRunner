@@ -23,6 +23,9 @@ class LogPanel : public QDockWidget {
   public slots:
     void stopCurrent();
 
+  protected:
+    bool eventFilter(QObject *object, QEvent *event) override;
+
   private:
     struct Run;
     void selectRun(int index);

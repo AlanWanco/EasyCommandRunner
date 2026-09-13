@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build --parallel 4 --target EasyCommandRunner
+cmake --build build --config Debug --parallel 4 --target EasyCommandRunner
 
 # 与旧版配置、系统 QSettings 隔离，不覆盖现有用户数据。
 export ECR_DATA_DIR="${ECR_DATA_DIR:-$PWD/build/dev-data}"
@@ -17,6 +17,16 @@ done
 printf '\n开发数据目录：%s\n' "$ECR_DATA_DIR"
 case "$(uname -s)" in
     Darwin) exec ./build/EasyCommandRunner.app/Contents/MacOS/EasyCommandRunner ;;
-    MINGW*|MSYS*|CYGWIN*) exec ./build/EasyCommandRunner.exe ;;
+    MINGW*|MSYS*|CYGWIN*)
+        # Visual Studio 是多配置生成器，Debug 可执行文件位于 build/Debug/。
+        if [[ -f ./build/Debug/EasyCommandRunner.exe ]]; then
+            exec ./build/Debug/EasyCommandRunner.exe
+        elif [[ -f ./build/EasyCommandRunner.exe ]]; then
+            exec ./build/EasyCommandRunner.exe
+        else
+            echo "找不到 Debug 可执行文件" >&2
+            exit 1
+        fi
+        ;;
     *) exec ./build/EasyCommandRunner ;;
 esac

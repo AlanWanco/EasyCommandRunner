@@ -1,0 +1,46 @@
+/* Shared tab geometry. Theme files only supply colors/images for this header. */
+QTabWidget { background: transparent; }
+QTabWidget::pane {
+    border-style: solid;
+    border-width: 1px;
+    border-top-width: 0;
+    border-radius: 8px;
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+    margin: 0;
+    padding: 0;
+}
+QTabWidget::tab-bar { alignment: left; }
+QTabBar { background: transparent; margin: 0; padding: 0; }
+QTabBar::tab {
+    border-style: solid;
+    border-width: 1px;
+    border-bottom-width: 0;
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
+    padding: 5px 12px;
+    margin: 0 3px 0 0;
+    min-width: 62px;
+}
+QTabBar::scroller { width: 48px; }
+QTabBar QToolButton {
+    border-style: solid;
+    border-width: 1px;
+    border-radius: 0;
+    margin: 0;
+    padding: 0;
+    width: 24px;
+}
+QTabBar::close-button {
+    subcontrol-position: right;
+    width: 20px;
+    height: 20px;
+}
+QComboBox#tabCombo {
+    border-style: solid;
+    border-width: 1px;
+    border-radius: 5px;
+    padding: 6px 24px 6px 9px;
+    margin: 0 0 0 8px;
+}
+QComboBox#tabCombo::drop-down { border: none; width: 20px; }
