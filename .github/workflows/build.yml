@@ -63,7 +63,6 @@ jobs:
           host: linux
           target: desktop
           arch: gcc_64
-          modules: qtsvg
           install-deps: true
           cache: true
 
@@ -167,7 +166,6 @@ jobs:
           host: windows
           target: desktop
           arch: win64_msvc2022_64
-          modules: qtsvg
           cache: true
 
       - name: Configure Qt runtime paths
@@ -248,7 +246,6 @@ jobs:
           host: mac
           target: desktop
           arch: clang_64
-          modules: qtsvg
           cache: true
 
       - name: Configure Qt runtime paths
