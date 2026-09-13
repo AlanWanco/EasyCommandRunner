@@ -62,7 +62,8 @@ jobs:
           version: ${{ env.QT_VERSION }}
           host: linux
           target: desktop
-          arch: gcc_64
+          # Qt 6.8.3 advertises the Linux toolchain as linux_gcc_64.
+          arch: linux_gcc_64
           install-deps: true
           cache: true
 
@@ -147,7 +148,7 @@ jobs:
     name: Windows x86_64
     runs-on: windows-2022
     env:
-      QT_QPA_PLATFORM: offscreen
+      QT_QPA_PLATFORM: windows
       QT_SCALE_FACTOR: "1"
     steps:
       - name: Checkout

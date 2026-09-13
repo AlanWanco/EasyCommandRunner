@@ -79,6 +79,12 @@ target_link_libraries(${PROJECT_NAME}
     ${RUST_LIB_PATH}
 )
 
+# Rust's Windows process implementation imports NtCreateNamedPipeFile
+# from ntdll; static libraries do not propagate this system dependency.
+if(WIN32)
+    target_link_libraries(${PROJECT_NAME} ntdll)
+endif()
+
 # Add dependency on Rust build
 add_dependencies(${PROJECT_NAME} rust_build)
 
@@ -97,10 +103,20 @@ if(ECR_BUILD_TESTS)
     target_compile_definitions(ecr_ui_tests PRIVATE ECR_NO_MAIN)
     target_include_directories(ecr_ui_tests PRIVATE cpp)
     target_link_libraries(ecr_ui_tests PRIVATE Qt6::Test Qt6::Widgets ${RUST_LIB_PATH})
+    if(WIN32)
+        target_link_libraries(ecr_ui_tests PRIVATE ntdll)
+    endif()
     add_dependencies(ecr_ui_tests rust_build)
     add_test(NAME ecr_ui_tests COMMAND ecr_ui_tests)
+    if(WIN32)
+        # Qt's Windows offscreen backend crashes before QTest starts on the
+        # MSVC build; the hosted runner provides a usable Windows desktop.
+        set(ECR_TEST_QPA_PLATFORM windows)
+    else()
+        set(ECR_TEST_QPA_PLATFORM offscreen)
+    endif()
     set_tests_properties(ecr_ui_tests PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=1"
+        ENVIRONMENT "QT_QPA_PLATFORM=${ECR_TEST_QPA_PLATFORM};QT_SCALE_FACTOR=1"
         TIMEOUT 180)
 endif()
 
