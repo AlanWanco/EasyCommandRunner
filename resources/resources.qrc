@@ -1,8 +1,7 @@
 <!DOCTYPE RCC>
 <RCC version="1.0">
     <qresource prefix="/res">
-        <file>../icon2.ico</file>
-        <file>../pic/SleepyKanata.jpg</file>
+        <file>app_icon.png</file>
         <file>stylesheet_dark.qss</file>
         <file>stylesheet_light.qss</file>
         <file>icon_run.svg</file>
@@ -19,5 +18,17 @@
         <file>close_light.svg</file>
         <file>close_dark.svg</file>
         <file>icon_close.svg</file>
+        <file>icon_chevron_left.svg</file>
+        <file>icon_chevron_right.svg</file>
+        <file>icon_folder.svg</file>
+        <file>icon_terminal.svg</file>
+    </qresource>
+    <qresource prefix="/classic">
+        <file alias="checked_image.png">../css/checked_image.png</file>
+        <file alias="unchecked_image.png">../css/unchecked_image.png</file>
+        <file alias="close-button.png">../css/close-button.png</file>
+        <file alias="close-button_hover.png">../css/close-button_hover.png</file>
+        <file alias="lose-button_pressed.png">../css/lose-button_pressed.png</file>
+        <file>drop-down.svg</file>
     </qresource>
 </RCC>

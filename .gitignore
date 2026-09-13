@@ -163,3 +163,7 @@ cython_debug/
 backup/
 config.json
 AGENT.md
+
+# Rust / Qt development outputs
+/build/
+/target/

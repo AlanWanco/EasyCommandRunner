@@ -60,12 +60,11 @@ impl ConfigManager {
         let old_content =
             fs::read_to_string(&self.config_path).map_err(|e| format!("读取旧配置失败: {}", e))?;
 
-        let new_content = serde_json::to_string_pretty(new_config)
-            .map_err(|e| format!("序列化新配置失败: {}", e))?;
+        let old_config = serde_json::from_str::<Value>(&old_content).ok();
 
-        if old_content != new_content {
+        if old_config.as_ref() != Some(new_config) {
             // 创建备份
-            let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S");
+            let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S_%f");
             let backup_path = format!("{}/config_{}.json", self.backup_dir, timestamp);
 
             fs::write(&backup_path, &old_content).map_err(|e| format!("创建备份失败: {}", e))?;
@@ -84,9 +83,10 @@ impl ConfigManager {
 
         let mut backup_files: Vec<_> = entries
             .filter_map(|entry| {
-                entry
-                    .ok()
-                    .filter(|e| e.path().extension().map_or(false, |ext| ext == "json"))
+                entry.ok().filter(|e| {
+                    e.file_name().to_string_lossy().starts_with("config_")
+                        && e.path().extension().map_or(false, |ext| ext == "json")
+                })
             })
             .collect();
 
@@ -140,6 +140,7 @@ impl ConfigManager {
         let content =
             fs::read_to_string(&backup_path).map_err(|e| format!("读取备份文件失败: {}", e))?;
 
+        serde_json::from_str::<Value>(&content).map_err(|e| format!("备份 JSON 无效: {}", e))?;
         fs::write(&self.config_path, content).map_err(|e| format!("恢复备份失败: {}", e))
     }
 }
@@ -148,6 +149,20 @@ impl ConfigManager {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn test_backup_ignores_formatting_and_preserves_rapid_saves() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.json");
+        let backup = dir.path().join("backup");
+        let manager = ConfigManager::new(path.to_str().unwrap(), backup.to_str().unwrap());
+        fs::write(&path, "{\"value\": 0}").unwrap();
+        manager.save(&json!({"value": 0})).unwrap();
+        assert!(manager.get_backups().unwrap().is_empty());
+        manager.save(&json!({"value": 1})).unwrap();
+        manager.save(&json!({"value": 2})).unwrap();
+        assert_eq!(manager.get_backups().unwrap().len(), 2);
+    }
 
     #[test]
     fn test_save_and_load() {

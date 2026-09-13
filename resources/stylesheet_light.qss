@@ -94,10 +94,10 @@ QTabBar::tab:hover:!selected {
 }
 
 QTabBar::close-button {
-    image: none;
+    image: url(:/res/close_light.svg);
     subcontrol-position: right;
-    width: 0px;
-    height: 0px;
+    width: 16px;
+    height: 16px;
 }
 
 /* Tab close button (set programmatically in C++) */
@@ -225,11 +225,11 @@ QPushButton#paramCheckBox {
     border-radius: 4px;
     padding: 0px;
     margin: 0px;
-    min-width: 18px;
-    max-width: 18px;
-    min-height: 18px;
-    max-height: 18px;
-    font-size: 0px;
+    min-width: 31px;
+    max-width: 31px;
+    min-height: 23px;
+    max-height: 23px;
+    font-size: 14px;
     image: none;
 }
 

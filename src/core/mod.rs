@@ -1,4 +1,5 @@
 pub mod command;
+pub mod command_line;
 pub mod config;
 pub mod parser;
 

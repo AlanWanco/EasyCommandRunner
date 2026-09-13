@@ -26,6 +26,40 @@ pub struct CommandResult {
 
 pub struct CommandExecutor;
 
+fn shell_command(
+    command: &str,
+    working_path: &PathBuf,
+    capture_output: bool,
+) -> Result<(String, String, i32), String> {
+    #[cfg(windows)]
+    let shell = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string());
+    #[cfg(not(windows))]
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+
+    let mut process = Command::new(shell);
+    #[cfg(windows)]
+    process.args(["/D", "/S", "/C", command]);
+    #[cfg(not(windows))]
+    process.args(["-c", command]);
+    process.current_dir(working_path);
+
+    if capture_output {
+        let output = process
+            .output()
+            .map_err(|e| format!("执行命令失败: {}", e))?;
+        Ok((
+            String::from_utf8_lossy(&output.stdout).to_string(),
+            String::from_utf8_lossy(&output.stderr).to_string(),
+            output.status.code().unwrap_or(-1),
+        ))
+    } else {
+        process
+            .spawn()
+            .map_err(|e| format!("启动命令失败: {}", e))?;
+        Ok((String::new(), String::new(), 0))
+    }
+}
+
 impl CommandExecutor {
     /// 执行命令
     pub fn execute(
@@ -44,60 +78,8 @@ impl CommandExecutor {
             return Err(format!("工作目录不存在: {:?}", working_path));
         }
 
-        let (stdout, stderr, exit_code) = if capture_output {
-            let output = if cfg!(windows) {
-                Command::new("cmd")
-                    .args(&["/C", command_str])
-                    .current_dir(&working_path)
-                    .output()
-                    .map_err(|e| format!("执行命令失败: {}", e))?
-            } else {
-                Command::new("sh")
-                    .arg("-c")
-                    .arg(command_str)
-                    .current_dir(&working_path)
-                    .output()
-                    .map_err(|e| format!("执行命令失败: {}", e))?
-            };
-
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            let exit_code = output.status.code().unwrap_or(-1);
-
-            (stdout, stderr, exit_code)
-        } else {
-            // 不捕获输出（用于需要交互的命令）
-            if cfg!(windows) {
-                Command::new("cmd")
-                    .args(&["/K", command_str])
-                    .current_dir(&working_path)
-                    .spawn()
-                    .map_err(|e| format!("启动命令失败: {}", e))?;
-            } else {
-                // Unix 系统
-                #[cfg(target_os = "macos")]
-                {
-                    Command::new("open")
-                        .args(&["-a", "Terminal"])
-                        .arg(command_str)
-                        .current_dir(&working_path)
-                        .spawn()
-                        .map_err(|e| format!("启动命令失败: {}", e))?;
-                }
-
-                #[cfg(not(target_os = "macos"))]
-                {
-                    // Linux
-                    Command::new("sh")
-                        .arg("-c")
-                        .arg(&format!("x-terminal-emulator -e '{}'", command_str))
-                        .current_dir(&working_path)
-                        .spawn()
-                        .map_err(|e| format!("启动命令失败: {}", e))?;
-                }
-            }
-            (String::new(), String::new(), 0)
-        };
+        let (stdout, stderr, exit_code) =
+            shell_command(command_str, &working_path, capture_output)?;
 
         Ok(CommandResult {
             exit_code,

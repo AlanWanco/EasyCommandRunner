@@ -64,12 +64,18 @@ extern "C" {
         int count;
     } ParsedCommand;
 
-    ParsedCommand rust_parse_command(
-        const char* program,
-        const char* parameters
-    );
+    ParsedCommand rust_parse_command(const char* input, bool is_append);
 
     void rust_free_parsed_command(ParsedCommand cmd);
+
+    // 跨平台命令构建 FFI
+    typedef struct {
+        const char* data;
+        int length;
+    } StringData;
+
+    StringData rust_build_command(const char* input_json);
+    void rust_free_string_data(StringData value);
 
     // 日志 FFI
     void rust_init_logger(void);

@@ -3,6 +3,8 @@
 #include <QByteArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
+#include <QPair>
 #include <memory>
 
 /**
@@ -112,14 +114,10 @@ public:
     /**
      * 解析命令
      */
-    static QVector<QString> parseCommand(const QString& program, const QString& parameters) {
+    static QVector<QString> parseCommand(const QString& input, bool append = false) {
         QVector<QString> result;
-        const QByteArray programUtf8 = program.toUtf8();
-        const QByteArray parametersUtf8 = parameters.toUtf8();
-        const char* prog_c = programUtf8.constData();
-        const char* params_c = parameters.isEmpty() ? nullptr : parametersUtf8.constData();
-
-        ParsedCommand parsed = rust_parse_command(prog_c, params_c);
+        const QByteArray inputUtf8 = input.toUtf8();
+        ParsedCommand parsed = rust_parse_command(inputUtf8.constData(), append);
 
         if (parsed.commands && parsed.count > 0) {
             for (int i = 0; i < parsed.count; ++i) {
@@ -129,6 +127,36 @@ public:
         }
 
         return result;
+    }
+
+    /**
+     * 按目标平台 shell 规则构建命令。参数行在这里以结构化数据传给 Rust，
+     * 避免 C++/Qt 和 Rust 各自实现一套引号、空格、反斜杠规则。
+     */
+    static QString buildCommand(const QString& program,
+                                const QVector<QPair<QString, QString>>& functions,
+                                const QVector<bool>& enabled,
+                                const QString& otherArgs) {
+        QJsonObject input;
+        input.insert("program", program);
+        QJsonArray arguments;
+        for (int i = 0; i < functions.size(); ++i) {
+            QJsonObject item;
+            item.insert("function", functions[i].first);
+            item.insert("parameter", functions[i].second);
+            item.insert("enabled", i >= enabled.size() || enabled[i]);
+            arguments.append(item);
+        }
+        input.insert("arguments", arguments);
+        input.insert("other_args", otherArgs);
+        const QByteArray json = QJsonDocument(input).toJson(QJsonDocument::Compact);
+        StringData result = rust_build_command(json.constData());
+        QString command;
+        if (result.data) {
+            command = QString::fromUtf8(result.data, result.length);
+            rust_free_string_data(result);
+        }
+        return command;
     }
 
     /**

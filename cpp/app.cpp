@@ -1,9 +1,15 @@
 #include "app.h"
+#include "log_panel.h"
 #include "rust_backend.h"
+#include "widget_helpers.h"
+#include <QInputDialog>
+#include <QStatusBar>
+#include <QDateTime>
+#include <QSignalBlocker>
+#include <algorithm>
 #include <QApplication>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QSplitter>
 #include <QScrollArea>
 #include <QGroupBox>
 #include <QMessageBox>
@@ -26,23 +32,28 @@
 #include <QEnterEvent>
 #include <QPixmap>
 #include <QPainter>
-#include <QRegularExpression>
 #include <QSize>
 #include <QAbstractButton>
 #include <QTabBar>
-#include <QStyledItemDelegate>
 #include <QListView>
+#include <QStyleFactory>
+#include <QDir>
 
 namespace {
 
+QString dataDirPath()
+{
+    return qEnvironmentVariable("ECR_DATA_DIR", QCoreApplication::applicationDirPath());
+}
+
 QString configFilePath()
 {
-    return QCoreApplication::applicationDirPath() + "/config.json";
+    return dataDirPath() + "/config.json";
 }
 
 QString backupDirPath()
 {
-    return QCoreApplication::applicationDirPath() + "/backup";
+    return dataDirPath() + "/backup";
 }
 
 QString platformFontFamily()
@@ -59,23 +70,6 @@ QString platformFontFamily()
 }
 
 // ============================================================================
-// Combo box item delegate: fixed row height
-// ============================================================================
-
-class ComboItemDelegate : public QStyledItemDelegate {
-public:
-    explicit ComboItemDelegate(int rowHeight, QObject *parent = nullptr)
-        : QStyledItemDelegate(parent), m_rowHeight(rowHeight) {}
-    QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override {
-        QSize s = QStyledItemDelegate::sizeHint(option, index);
-        s.setHeight(m_rowHeight);
-        return s;
-    }
-private:
-    int m_rowHeight;
-};
-
-// ============================================================================
 // CheckButton: fully custom-painted checkbox button (bypasses macOS native)
 // ============================================================================
 
@@ -84,7 +78,8 @@ public:
     explicit CheckButton(QWidget *parent = nullptr) : QPushButton(parent) {
         setCheckable(true);
         setChecked(true);
-        setFixedSize(18, 18);
+        setObjectName("paramCheckBox");
+        setFixedSize(31, 23);
         setCursor(Qt::PointingHandCursor);
         // No text, no icon — all painting is manual
         setText(QString());
@@ -98,9 +93,18 @@ public:
 protected:
     void paintEvent(QPaintEvent *) override {
         QPainter p(this);
+        if (m_isDark) {
+            const QPixmap image(isChecked() ? ":/classic/checked_image.png" : ":/classic/unchecked_image.png");
+            p.drawPixmap(5, (height() - 13) / 2, 13, 13, image);
+            if (hasFocus()) {
+                p.setPen(QPen(QColor("#707070"), 1, Qt::DotLine));
+                p.drawRect(QRect(3, 3, 17, 17));
+            }
+            return;
+        }
         p.setRenderHint(QPainter::Antialiasing);
 
-        const QRectF r = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+        const QRectF r(5.5, 4.5, 13, 13);
         const bool on = isChecked();
         const bool hov = underMouse();
 
@@ -121,8 +125,8 @@ protected:
         // Checkmark
         if (on) {
             p.setPen(QPen(Qt::white, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-            const float cx = width() / 2.0f;
-            const float cy = height() / 2.0f;
+            const float cx = r.center().x();
+            const float cy = r.center().y();
             // polyline: left-bottom of check, bottom apex, top-right
             QPointF pts[3] = {
                 { cx - 4.0f, cy },
@@ -140,35 +144,9 @@ private:
     bool m_isDark = true;
 };
 
-// ============================================================================
-// Shared helper: themed SVG icon
-// ============================================================================
-
-static QIcon makeThemedIcon(const QString &svgPath, const QString &theme) {
-    QFile file(svgPath);
-    if (!file.open(QFile::ReadOnly)) return QIcon();
-
-    QString svgData = QString::fromUtf8(file.readAll());
-    file.close();
-
-    // Softer colors — not pure black/white
-    const QString iconColor = (theme == "light") ? "#4B5563" : "#C1C2C5";
-
-    svgData.replace("fill=\"currentColor\"",   QString("fill=\"%1\"").arg(iconColor));
-    svgData.replace("stroke=\"currentColor\"", QString("stroke=\"%1\"").arg(iconColor));
-    // Also replace any hardcoded fill hex so SVG looks right when re-themed
-    QRegularExpression fillHex("fill=\"#[0-9a-fA-F]{6}\"");
-    svgData.replace(fillHex, QString("fill=\"%1\"").arg(iconColor));
-
-    QPixmap pixmap;
-    pixmap.loadFromData(svgData.toUtf8(), "SVG");
-    return QIcon(pixmap);
-}
-
 static QIcon makeAppIcon() {
-    QIcon icon;
-    icon.addFile(":/res/SleepyKanata.jpg");
-    icon.addFile(":/res/icon2.ico");
+    // 统一使用带透明圆角的应用图标，避免窗口和托盘显示方形灰底。
+    QIcon icon(":/res/app_icon.png");
     return icon;
 }
 // AppWindow Implementation
@@ -180,7 +158,6 @@ AppWindow::AppWindow(QWidget *parent)
     , tabCombo(nullptr)
     , addTabButton(nullptr)
     , saveButton(nullptr)
-    , runButton(nullptr)
     , trayIcon(nullptr)
     , trayMenu(nullptr)
     , settings(nullptr)
@@ -191,7 +168,12 @@ AppWindow::AppWindow(QWidget *parent)
     setWindowIcon(makeAppIcon());
 
     // 应用设置
-    settings = new QSettings("SleepyKanata", "EasyCommandRunner", this);
+    if (qEnvironmentVariableIsSet("ECR_DATA_DIR")) {
+        QDir().mkpath(dataDirPath());
+        settings = new QSettings(dataDirPath() + "/settings.ini", QSettings::IniFormat, this);
+    } else {
+        settings = new QSettings("SleepyKanata", "EasyCommandRunner", this);
+    }
 
     // 初始化UI
     setupUI();
@@ -223,97 +205,78 @@ AppWindow::~AppWindow() {
 void AppWindow::setupUI() {
     QWidget *centralWidget = new QWidget(this);
     QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
-    mainLayout->setContentsMargins(16, 16, 16, 8);
+    mainLayout->setContentsMargins(10, 12, 10, 4);
     mainLayout->setSpacing(8);
 
-    // 创建标签页widget
     tabWidget = new QTabWidget(this);
     tabWidget->setTabsClosable(true);
     tabWidget->setMovable(true);
-    tabWidget->setDocumentMode(false);
-
-    // 下拉菜单选择标签
     tabCombo = new QComboBox(this);
     tabCombo->setObjectName("tabCombo");
-    tabCombo->setItemDelegate(new ComboItemDelegate(32, tabCombo));
+    tabCombo->setView(new QListView());
+    tabCombo->setMaxVisibleItems(30);
     tabWidget->setCornerWidget(tabCombo, Qt::TopRightCorner);
     connect(tabCombo, QOverload<int>::of(&QComboBox::activated), tabWidget, &QTabWidget::setCurrentIndex);
+    tabWidget->setUsesScrollButtons(true);
+    QHBoxLayout *pageLayout = new QHBoxLayout();
+    pageLayout->setSpacing(4);
+    previousTabButton = new QPushButton(this);
+    previousTabButton->setObjectName("previousTabBtn");
+    nextTabButton = new QPushButton(this);
+    nextTabButton->setObjectName("nextTabBtn");
+    for (auto *button : {previousTabButton, nextTabButton}) {
+        button->setProperty("role", "nav");
+        button->setFixedSize(30, 72);
+    }
+    previousTabButton->setAccessibleName("上一个标签页");
+    previousTabButton->setToolTip("上一个标签页 · Ctrl+←");
+    nextTabButton->setAccessibleName("下一个标签页");
+    nextTabButton->setToolTip("下一个标签页 · Ctrl+→");
+    setButtonIcon(previousTabButton, "icon_chevron_left");
+    setButtonIcon(nextTabButton, "icon_chevron_right");
+    connect(previousTabButton, &QPushButton::clicked, this, &AppWindow::onPreviousTab);
+    connect(nextTabButton, &QPushButton::clicked, this, &AppWindow::onNextTab);
+    pageLayout->addWidget(previousTabButton, 0, Qt::AlignVCenter);
+    pageLayout->addWidget(tabWidget, 1);
+    pageLayout->addWidget(nextTabButton, 0, Qt::AlignVCenter);
+    mainLayout->addLayout(pageLayout, 1);
 
-    mainLayout->addWidget(tabWidget);
-
-    // 按钮布局 - 现代化设计
-    QHBoxLayout *buttonLayout = new QHBoxLayout();
-    buttonLayout->setContentsMargins(8, 8, 8, 8);
+    // 配置操作与运行分组，不再占用四个等权重的大按钮。
+    QWidget *buttonContainer = new QWidget(this);
+    QHBoxLayout *buttonLayout = new QHBoxLayout(buttonContainer);
+    buttonLayout->setContentsMargins(34, 4, 34, 4);
     buttonLayout->setSpacing(6);
-
-    addTabButton = new QPushButton(this);
-    addTabButton->setIcon(QIcon(":/res/icon_add.svg"));
-    addTabButton->setText("新建");
-    addTabButton->setObjectName("addTabBtn");
-    addTabButton->setMinimumWidth(80);
-    addTabButton->setMinimumHeight(36);
-    addTabButton->setIconSize(QSize(20, 20));
-
-    reloadButton = new QPushButton(this);
-    reloadButton->setIcon(QIcon(":/res/icon_refresh.svg"));
-    reloadButton->setText("重载");
-    reloadButton->setObjectName("reloadBtn");
-    reloadButton->setMinimumWidth(80);
-    reloadButton->setMinimumHeight(36);
-    reloadButton->setIconSize(QSize(20, 20));
-
-    copyTabButton = new QPushButton(this);
-    copyTabButton->setIcon(QIcon(":/res/icon_copy.svg"));
-    copyTabButton->setText("复制");
-    copyTabButton->setObjectName("copyTabBtn");
-    copyTabButton->setMinimumWidth(80);
-    copyTabButton->setMinimumHeight(36);
-    copyTabButton->setIconSize(QSize(20, 20));
-
-    previewButton = new QPushButton(this);
-    previewButton->setIcon(QIcon(":/res/icon_preview.svg"));
-    previewButton->setText("预览");
-    previewButton->setObjectName("previewBtn");
-    previewButton->setMinimumWidth(80);
-    previewButton->setMinimumHeight(36);
-    previewButton->setIconSize(QSize(20, 20));
-
-    saveButton = new QPushButton(this);
-    saveButton->setIcon(QIcon(":/res/icon_save.svg"));
-    saveButton->setText("保存");
+    addTabButton = new QPushButton("新建标签", this);
+    reloadButton = new QPushButton("重新加载", this);
+    copyTabButton = new QPushButton("复制标签", this);
+    saveButton = new QPushButton("保存", this);
     saveButton->setObjectName("saveBtn");
-    saveButton->setMinimumWidth(80);
-    saveButton->setMinimumHeight(36);
-    saveButton->setIconSize(QSize(20, 20));
-
-    runButton = new QPushButton(this);
-    runButton->setIcon(QIcon(":/res/icon_run.svg"));
-    runButton->setText("运行");
-    runButton->setObjectName("runBtn");
-    runButton->setMinimumWidth(80);
-    runButton->setMinimumHeight(36);
-    runButton->setIconSize(QSize(20, 20));
-
-    settingsButton = new QPushButton(this);
-    settingsButton->setIcon(QIcon(":/res/icon_settings.svg"));
-    settingsButton->setText("设置");
-    settingsButton->setObjectName("settingsBtn");
-    settingsButton->setMinimumWidth(80);
-    settingsButton->setMinimumHeight(36);
-    settingsButton->setIconSize(QSize(20, 20));
-
-    buttonLayout->addWidget(addTabButton);
-    buttonLayout->addWidget(reloadButton);
-    buttonLayout->addWidget(copyTabButton);
-    buttonLayout->addWidget(previewButton);
+    saveButton->setToolTip("保存所有标签配置 · Ctrl+S");
+    addTabButton->setToolTip("新建标签 · Ctrl+T");
+    reloadButton->setToolTip("从磁盘重新加载 · Ctrl+L");
+    setButtonIcon(addTabButton, "icon_add");
+    setButtonIcon(reloadButton, "icon_refresh");
+    setButtonIcon(copyTabButton, "icon_copy");
+    setButtonIcon(saveButton, "icon_save");
+    for (auto *button : {addTabButton, copyTabButton, reloadButton}) buttonLayout->addWidget(button);
     buttonLayout->addStretch();
-    buttonLayout->addWidget(saveButton);
-    buttonLayout->addWidget(runButton);
+    QPushButton *settingsButton = new QPushButton(this);
+    settingsButton->setProperty("role", "icon");
+    settingsButton->setToolTip("设置 / 备份恢复");
+    settingsButton->setAccessibleName("设置");
+    setButtonIcon(settingsButton, "icon_settings");
+    connect(settingsButton, &QPushButton::clicked, this, &AppWindow::onSettingsClicked);
     buttonLayout->addWidget(settingsButton);
-
-    mainLayout->addLayout(buttonLayout);
-
+    buttonLayout->addWidget(saveButton);
+    sessionLabel = new QLabel(this);
+    sessionLabel->setProperty("role", "hint");
+    statusBar()->addPermanentWidget(sessionLabel);
+    mainLayout->addWidget(buttonContainer);
     setCentralWidget(centralWidget);
+
+    logPanel = new LogPanel(this);
+    addDockWidget(Qt::BottomDockWidgetArea, logPanel);
+    logPanel->hide(); // 不挤占原版编辑区；首次运行或通过「视图」打开。
 }
 
 void AppWindow::setupMenu() {
@@ -345,17 +308,22 @@ void AppWindow::setupMenu() {
     // 编辑菜单
     QMenu *editMenu = menuBar->addMenu("编辑(&E)");
 
-    QAction *selectAllAction = editMenu->addAction("全选(&A)");
-    selectAllAction->setShortcut(Qt::CTRL | Qt::Key_A);
-    connect(selectAllAction, &QAction::triggered, [this]() {
-        CommandTab *tab = qobject_cast<CommandTab*>(tabWidget->currentWidget());
-        if (tab) {
-            // 在标签页中实现全选
-        }
+    // 文本框保留 Ctrl+A 的直觉语义；参数全选使用 Ctrl+Shift+A。
+    QAction *selectAllAction = editMenu->addAction("启用全部参数");
+    selectAllAction->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_A);
+    connect(selectAllAction, &QAction::triggered, this, [this]() {
+        if (auto *tab = qobject_cast<CommandTab*>(tabWidget->currentWidget())) tab->selectAllParameters(true);
+    });
+    QAction *deselectAllAction = editMenu->addAction("禁用全部参数");
+    deselectAllAction->setShortcut(Qt::CTRL | Qt::Key_D);
+    connect(deselectAllAction, &QAction::triggered, this, [this]() {
+        if (auto *tab = qobject_cast<CommandTab*>(tabWidget->currentWidget())) tab->selectAllParameters(false);
     });
 
     // 视图菜单
     QMenu *viewMenu = menuBar->addMenu("视图(&V)");
+    viewMenu->addAction(logPanel->toggleViewAction());
+    viewMenu->addSeparator();
 
     QAction *nextTabAction = viewMenu->addAction("下一个标签页(&N)");
     nextTabAction->setShortcut(Qt::CTRL | Qt::Key_Right);
@@ -414,11 +382,8 @@ void AppWindow::setupConnections() {
 
     connect(addTabButton, &QPushButton::clicked, this, &AppWindow::onAddTabClicked);
     connect(saveButton, &QPushButton::clicked, this, &AppWindow::onSaveButtonClicked);
-    connect(runButton, &QPushButton::clicked, this, &AppWindow::onRunButtonClicked);
     connect(reloadButton, &QPushButton::clicked, this, &AppWindow::onReloadConfigClicked);
     connect(copyTabButton, &QPushButton::clicked, this, &AppWindow::onCopyTabConfigClicked);
-    connect(previewButton, &QPushButton::clicked, this, &AppWindow::onPreviewCommandClicked);
-    connect(settingsButton, &QPushButton::clicked, this, &AppWindow::onSettingsClicked);
 
     // 快捷键
     new QShortcut(Qt::CTRL | Qt::Key_Return, this, SLOT(onRunButtonClicked()));
@@ -427,8 +392,13 @@ void AppWindow::setupConnections() {
 void AppWindow::closeEvent(QCloseEvent *event) {
     saveApplicationSettings();
     saveConfiguration();
-    event->ignore();
-    hide();
+    if (QSystemTrayIcon::isSystemTrayAvailable()) {
+        event->ignore();
+        hide();
+    } else {
+        event->ignore();
+        onExitClicked();
+    }
 }
 
 void AppWindow::changeEvent(QEvent *event) {
@@ -462,6 +432,7 @@ void AppWindow::onCloseTab(int index) {
 void AppWindow::onTabChanged(int index) {
     currentTabIndex = index;
     tabCombo->setCurrentIndex(index);
+    sessionLabel->setText(QString("%1 / %2 个标签").arg(index + 1).arg(tabWidget->count()));
 }
 
 void AppWindow::onTabMoved(int from, int to) {
@@ -473,24 +444,24 @@ void AppWindow::onRunButtonClicked() {
     if (!tab) return;
 
     QString program = tab->getProgram();
-    if (program.isEmpty()) {
+    if (program.trimmed().isEmpty()) {
         QMessageBox::warning(this, "提示", "请输入程序名称");
         return;
     }
 
-    // 这里调用 Rust 函数执行命令
-    // rust_execute_command(...)
+    logPanel->startCommand(tab->getTabName(), tab->getCommand(), tab->getWorkingDirectory());
 }
 
 void AppWindow::onSaveButtonClicked() {
-    if (saveConfiguration()) {
-        QMessageBox::information(this, "成功", "配置已保存！");
-    }
+    if (saveConfiguration()) statusBar()->showMessage("已保存所有标签配置", 3500);
 }
 
 void AppWindow::onReloadConfigClicked() {
-    loadConfiguration();
-    QMessageBox::information(this, "成功", "配置已重新加载！");
+    if (!confirmDiscard()) return;
+    if (loadConfiguration()) {
+        applyTheme(currentTheme);
+        statusBar()->showMessage("已重新加载配置", 3500);
+    }
 }
 
 void AppWindow::onCopyTabConfigClicked() {
@@ -498,9 +469,10 @@ void AppWindow::onCopyTabConfigClicked() {
     if (!currentTab) return;
 
     const QString sourceName = currentTab->getTabName().trimmed();
-    const QString newName = sourceName.isEmpty()
-        ? QString("标签%1").arg(tabWidget->count() + 1)
-        : sourceName + " - 副本";
+    const QString baseName = sourceName.isEmpty() ? "未命名" : sourceName;
+    QString newName = baseName + " - 副本";
+    int suffix = 2;
+    while (tabCombo->findText(newName) >= 0) newName = baseName + QString(" - 副本 %1").arg(suffix++);
 
     createTab(newName);
 
@@ -558,19 +530,24 @@ void AppWindow::onRestoreFromTray() {
 }
 
 void AppWindow::onExitClicked() {
+    if (logPanel->runningCount() > 0 && QMessageBox::question(this, "退出",
+        QString("还有 %1 个任务正在运行，退出将停止这些任务。是否继续？").arg(logPanel->runningCount()),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) {
+        return;
+    }
     QApplication::quit();
 }
 
 void AppWindow::onNextTab() {
     int index = tabWidget->currentIndex();
     int count = tabWidget->count();
-    tabWidget->setCurrentIndex((index + 1) % count);
+    if (count > 0) tabWidget->setCurrentIndex((index + 1) % count);
 }
 
 void AppWindow::onPreviousTab() {
     int index = tabWidget->currentIndex();
     int count = tabWidget->count();
-    tabWidget->setCurrentIndex((index - 1 + count) % count);
+    if (count > 0) tabWidget->setCurrentIndex((index - 1 + count) % count);
 }
 
 void AppWindow::onCommandExecuted(const QString &output) {
@@ -593,7 +570,7 @@ void AppWindow::loadStylesheet(const QString &theme) {
 
     QFile file(filename);
     if (file.open(QFile::ReadOnly)) {
-        QString stylesheet = QLatin1String(file.readAll());
+        QString stylesheet = QString::fromUtf8(file.readAll());
         stylesheet.replace(
             QStringLiteral("\".AppleSystemUIFont\", \"Segoe UI\", Roboto, Helvetica, Arial, sans-serif"),
             platformFontFamily());
@@ -609,55 +586,65 @@ void AppWindow::applyTheme(const QString &theme) {
     settings->setValue("ui/theme", theme);
 }
 
-QIcon AppWindow::createThemedIcon(const QString &svgPath, const QString &theme) {
-    return makeThemedIcon(svgPath, theme);
-}
-
 void AppWindow::updateButtonIcons() {
-    // 根据当前主题更新所有按钮的图标
-    addTabButton->setIcon(createThemedIcon(":/res/icon_add.svg", currentTheme));
-    reloadButton->setIcon(createThemedIcon(":/res/icon_refresh.svg", currentTheme));
-    copyTabButton->setIcon(createThemedIcon(":/res/icon_copy.svg", currentTheme));
-    previewButton->setIcon(createThemedIcon(":/res/icon_preview.svg", currentTheme));
-    saveButton->setIcon(createThemedIcon(":/res/icon_save.svg", currentTheme));
-    runButton->setIcon(createThemedIcon(":/res/icon_run.svg", currentTheme));
-    settingsButton->setIcon(createThemedIcon(":/res/icon_settings.svg", currentTheme));
-
-    // 更新所有标签页关闭按钮
+    for (auto *button : findChildren<QPushButton*>()) {
+        const QString icon = button->property("svgIcon").toString();
+        if (!icon.isEmpty()) button->setIcon(themedIcon(icon, currentTheme));
+    }
     for (int i = 0; i < tabWidget->count(); ++i) {
-        QAbstractButton *btn = qobject_cast<QAbstractButton*>(
-            tabWidget->tabBar()->tabButton(i, QTabBar::RightSide));
-        if (btn) {
-            btn->setIcon(createThemedIcon(":/res/icon_close.svg", currentTheme));
-        }
-        // 更新参数行删除按钮
         CommandTab *tab = qobject_cast<CommandTab*>(tabWidget->widget(i));
-        if (tab) {
-            tab->updateRemoveButtonIcons(currentTheme);
-        }
+        if (tab) tab->updateRemoveButtonIcons(currentTheme);
     }
 }
 
 
-void AppWindow::loadConfiguration() {
+bool AppWindow::loadConfiguration() {
+    // 先验证磁盘内容，避免后端把读取错误吞成 {} 后在退出时覆盖损坏配置。
+    QFile file(configFilePath());
+    if (file.exists()) {
+        QJsonParseError error;
+        const bool readable = file.open(QIODevice::ReadOnly);
+        const QJsonDocument original = QJsonDocument::fromJson(readable ? file.readAll() : QByteArray(), &error);
+        if (!readable || error.error != QJsonParseError::NoError || !original.isObject()) {
+            configWritable = false;
+            if (tabWidget->count() == 0) createTab("标签1");
+            statusBar()->showMessage("配置读取失败；已阻止自动覆盖。请修复文件或从设置恢复备份。");
+            return false;
+        }
+    }
     const QString configJson = RustBackend::loadConfig(configFilePath(), backupDirPath());
-    if (configJson.trimmed().isEmpty()) {
-        if (tabWidget->count() == 0) {
-            createTab(QStringLiteral("标签1"));
-        }
-        return;
-    }
+    QJsonObject config = QJsonDocument::fromJson(configJson.toUtf8()).object();
+    configWritable = true;
 
-    QJsonParseError parseError;
-    const QJsonDocument doc = QJsonDocument::fromJson(configJson.toUtf8(), &parseError);
-    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-        if (tabWidget->count() == 0) {
-            createTab(QStringLiteral("标签1"));
+    // PyQt5 旧版把控件名称当字段名、行号/勾选状态分开保存；仅在内存迁移。
+    QJsonArray normalizedTabs;
+    const QJsonArray legacyRows = config.value("line_codes").toArray();
+    const QJsonArray legacyChecks = config.value("checkbox_statuses").toArray();
+    int tabIndex = 0;
+    for (const QJsonValue &value : config.value("tabs").toArray()) {
+        QJsonObject tab = value.toObject();
+        if (tab.contains("name_edit2")) {
+            const QJsonObject checks = tabIndex < legacyChecks.size() ? legacyChecks.at(tabIndex).toObject() : QJsonObject();
+            QJsonArray rows;
+            rows.append(QJsonObject{{"function", tab.value("name_edit3_1")},
+                {"parameter", tab.value("name_edit3_2")}, {"comment", tab.value("name_edit3_3")},
+                {"enabled", checks.value("chkbox1").toBool(true)}});
+            QStringList codes = tabIndex < legacyRows.size() ? legacyRows.at(tabIndex).toObject().keys() : QStringList();
+            std::sort(codes.begin(), codes.end(), [](const QString &a, const QString &b) { return a.toInt() < b.toInt(); });
+            for (const QString &code : codes) {
+                rows.append(QJsonObject{{"function", tab.value("function" + code)},
+                    {"parameter", tab.value("parameter" + code)}, {"comment", tab.value("comment" + code)},
+                    {"enabled", checks.value("chkbox" + code).toBool(true)}});
+            }
+            tab = QJsonObject{{"name", tab.value("name_edit_title")}, {"working_dir", tab.value("name_edit1")},
+                {"program", tab.value("name_edit2")}, {"other_args", tab.value("name_editOther")},
+                {"description", tab.value("editDescription")}, {"functions", rows}};
         }
-        return;
+        normalizedTabs.append(tab);
+        ++tabIndex;
     }
-
-    const QJsonObject config = doc.object();
+    config["tabs"] = normalizedTabs;
+    const int requestedIndex = config.value("current_tab_index").toInt(currentTabIndex);
 
     if (config.contains("theme") && config.value("theme").isString()) {
         currentTheme = config.value("theme").toString(currentTheme);
@@ -685,16 +672,18 @@ void AppWindow::loadConfiguration() {
         createTab(QStringLiteral("标签1"));
     }
 
-    int savedIndex = config.value("current_tab_index").toInt(currentTabIndex);
+    int savedIndex = requestedIndex;
     if (savedIndex < 0 || savedIndex >= tabWidget->count()) {
         savedIndex = 0;
     }
     tabWidget->setCurrentIndex(savedIndex);
     currentTabIndex = savedIndex;
     updateTabCombo();
+    savedConfig = configuration();
+    return true;
 }
 
-bool AppWindow::saveConfiguration() {
+QJsonObject AppWindow::configuration() const {
     QJsonObject config;
     config["theme"] = currentTheme;
     config["current_tab_index"] = tabWidget->currentIndex();
@@ -707,13 +696,44 @@ bool AppWindow::saveConfiguration() {
         }
     }
     config["tabs"] = tabsArray;
+    return config;
+}
 
+bool AppWindow::saveConfiguration() {
+    if (!configWritable) return false;
+    const QJsonObject config = configuration();
     const QJsonDocument doc(config);
     if (!RustBackend::saveConfig(configFilePath(), backupDirPath(), QString::fromUtf8(doc.toJson(QJsonDocument::Indented)))) {
         QMessageBox::warning(this, "错误", "保存配置失败");
         return false;
     }
 
+    savedConfig = config;
+    return true;
+}
+
+bool AppWindow::confirmDiscard() {
+    if (configuration() == savedConfig) return true;
+    const auto answer = QMessageBox::question(this, "未保存的修改", "当前配置已修改。先保存再继续？",
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Cancel);
+    return answer == QMessageBox::Discard || (answer == QMessageBox::Save && saveConfiguration());
+}
+
+bool AppWindow::restoreBackup(const QString &name) {
+    QFile candidate(backupDirPath() + "/" + name);
+    if (!candidate.open(QIODevice::ReadOnly) || !QJsonDocument::fromJson(candidate.readAll()).isObject()) {
+        QMessageBox::warning(this, "恢复失败", "备份文件不是有效的 JSON 对象。");
+        return false;
+    }
+    if (!confirmDiscard()) return false;
+    // 恢复前独立备份当前磁盘文件，包括损坏文件，以便撤销恢复操作。
+    if (QFile::exists(configFilePath())) {
+        const QString safety = backupDirPath() + "/before_restore_" + QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_zzz") + ".json";
+        if (!QFile::copy(configFilePath(), safety)) return false;
+    }
+    if (!RustBackend::restoreBackup(configFilePath(), backupDirPath(), name)) return false;
+    if (!loadConfiguration()) return false;
+    applyTheme(currentTheme);
     return true;
 }
 
@@ -737,22 +757,18 @@ void AppWindow::saveApplicationSettings() {
 
 void AppWindow::createTab(const QString &name) {
     CommandTab *tab = new CommandTab(this);
+    tab->setTabName(name);
     int index = tabWidget->addTab(tab, name);
 
     // Apply theme icons to the new tab's param rows immediately
     tab->updateRemoveButtonIcons(currentTheme);
 
-    // Set a proper themed close button instead of the QSS-controlled one
-    QPushButton *closeBtn = createTabCloseButton();
-    tabWidget->tabBar()->setTabButton(index, QTabBar::RightSide, closeBtn);
-    connect(closeBtn, &QPushButton::clicked, [this, closeBtn]() {
-        // Find which tab this button belongs to
-        for (int i = 0; i < tabWidget->tabBar()->count(); ++i) {
-            if (tabWidget->tabBar()->tabButton(i, QTabBar::RightSide) == closeBtn) {
-                onCloseTab(i);
-                break;
-            }
-        }
+    connect(tab, &CommandTab::runRequested, this, &AppWindow::onRunButtonClicked);
+    connect(tab, &CommandTab::previousTabRequested, this, &AppWindow::onPreviousTab);
+    connect(tab, &CommandTab::nextTabRequested, this, &AppWindow::onNextTab);
+    connect(tab, &CommandTab::logRequested, this, [this]() { logPanel->show(); logPanel->raise(); });
+    connect(tab, &CommandTab::configurationChanged, this, [this]() {
+        if (configuration() != savedConfig) statusBar()->showMessage("有未保存的修改 · Ctrl+S 保存");
     });
 
     tabWidget->setCurrentIndex(index);
@@ -769,18 +785,6 @@ void AppWindow::createTab(const QString &name) {
     });
 }
 
-QPushButton* AppWindow::createTabCloseButton() {
-    QPushButton *btn = new QPushButton(this);
-    btn->setIcon(createThemedIcon(":/res/icon_close.svg", currentTheme));
-    btn->setFixedSize(22, 22);
-    btn->setIconSize(QSize(12, 12));
-    btn->setFlat(true);
-    btn->setObjectName("tabCloseBtn");
-    btn->setCursor(Qt::PointingHandCursor);
-    btn->setToolTip("关闭标签页");
-    return btn;
-}
-
 void AppWindow::updateTabCombo() {
     tabCombo->blockSignals(true);
     tabCombo->clear();
@@ -789,6 +793,10 @@ void AppWindow::updateTabCombo() {
     }
     tabCombo->setCurrentIndex(tabWidget->currentIndex());
     tabCombo->blockSignals(false);
+    const bool multiple = tabWidget->count() > 1;
+    previousTabButton->setEnabled(multiple);
+    nextTabButton->setEnabled(multiple);
+    sessionLabel->setText(QString("%1 / %2 个标签").arg(tabWidget->currentIndex() + 1).arg(tabWidget->count()));
 }
 
 // ============================================================================
@@ -812,6 +820,7 @@ CommandTab::CommandTab(QWidget *parent)
 {
     setupUI();
     setupConnections();
+    updateCommandPreview();
 }
 
 QString CommandTab::getTabName() const {
@@ -830,11 +839,22 @@ QString CommandTab::getProgram() const {
     return programEdit->text();
 }
 
+QString CommandTab::getCommand() const {
+    return commandPreviewEdit->toPlainText();
+}
+
 QVector<QPair<QString, QString>> CommandTab::getFunctions() const {
     QVector<QPair<QString, QString>> result;
     for (int i = 0; i < functionEdits.size(); ++i) {
         result.append({functionEdits[i]->text(), parameterEdits[i]->text()});
     }
+    return result;
+}
+
+QVector<bool> CommandTab::getEnabledStates() const {
+    QVector<bool> result;
+    result.reserve(rowCheckBoxes.size());
+    for (auto *checkBox : rowCheckBoxes) result.append(checkBox && checkBox->isChecked());
     return result;
 }
 
@@ -847,43 +867,28 @@ QString CommandTab::getDescription() const {
 }
 
 void CommandTab::loadConfiguration(const QJsonObject &config) {
+    m_loading = true;
+    clearRows();
     titleEdit->setText(config.value("name").toString());
     workingDirEdit->setText(config.value("working_dir").toString());
     programEdit->setText(config.value("program").toString());
     otherArgsEdit->setText(config.value("other_args").toString());
-    descriptionEdit->setText(config.value("description").toString());
-
-    // 清除现有参数行（保留第一行占位符，先全清）
-    // Remove all existing rows from the layout
-    while (functionEdits.size() > 0) {
-        QLineEdit *fe = functionEdits.takeLast();
-        QLineEdit *pe = parameterEdits.takeLast();
-        QLineEdit *ce = commentEdits.size() > 0 ? commentEdits.takeLast() : nullptr;
-        QPushButton *rb = removeButtons.size() > 0 ? removeButtons.takeLast() : nullptr;
-        QPushButton *cb = rowCheckBoxes.size() > 0 ? rowCheckBoxes.takeLast() : nullptr;
-        // Find and remove the parent rowWidget
-        if (fe->parentWidget()) {
-            QWidget *row = fe->parentWidget();
-            functionsLayout->removeWidget(row);
-            row->deleteLater();
-        }
-        Q_UNUSED(pe); Q_UNUSED(ce); Q_UNUSED(rb); Q_UNUSED(cb);
-    }
-
-    rowCheckBoxes.clear();
-    removeButtons.clear();
-    commentEdits.clear();
-    parameterEdits.clear();
-    functionEdits.clear();
+    descriptionEdit->setPlainText(config.value("description").toString());
 
     // 加载函数列表
     QJsonArray functions = config.value("functions").toArray();
     for (const auto &func : functions) {
         QJsonObject funcObj = func.toObject();
+        if (func.isArray()) {
+            const QJsonArray pair = func.toArray();
+            funcObj["function"] = pair.size() > 0 ? pair.at(0) : QJsonValue("");
+            funcObj["parameter"] = pair.size() > 1 ? pair.at(1) : QJsonValue("");
+        }
         onAddFunctionClicked();
         int last = functionEdits.size() - 1;
         functionEdits[last]->setText(funcObj.value("function").toString());
         parameterEdits[last]->setText(funcObj.value("parameter").toString());
+        rowCheckBoxes[last]->setChecked(funcObj.value("enabled").toBool(true));
         if (last < commentEdits.size()) {
             commentEdits[last]->setText(funcObj.value("comment").toString());
         }
@@ -893,6 +898,8 @@ void CommandTab::loadConfiguration(const QJsonObject &config) {
     if (functionEdits.isEmpty()) {
         onAddFunctionClicked();
     }
+    m_loading = false;
+    updateCommandPreview();
 }
 
 QJsonObject CommandTab::saveConfiguration() const {
@@ -909,6 +916,7 @@ QJsonObject CommandTab::saveConfiguration() const {
         func.insert("function", functionEdits[i]->text());
         func.insert("parameter", parameterEdits[i]->text());
         func.insert("comment", i < commentEdits.size() ? commentEdits[i]->text() : QString());
+        func.insert("enabled", rowCheckBoxes[i]->isChecked());
         functions.append(func);
     }
     config.insert("functions", functions);
@@ -916,62 +924,91 @@ QJsonObject CommandTab::saveConfiguration() const {
     return config;
 }
 
-void CommandTab::clear() {
-    titleEdit->clear();
-    workingDirEdit->clear();
-    programEdit->clear();
-    otherArgsEdit->clear();
-    descriptionEdit->clear();
+void CommandTab::clearRows() {
+    while (QLayoutItem *item = functionsLayout->takeAt(0)) {
+        delete item->widget();
+        delete item;
+    }
+    rowCheckBoxes.clear();
     functionEdits.clear();
     parameterEdits.clear();
     commentEdits.clear();
+    removeButtons.clear();
+    functionCounter = 1;
+}
+
+void CommandTab::clear() {
+    loadConfiguration(QJsonObject());
+}
+
+bool CommandTab::parseCommandText(const QString &text, bool append) {
+    const auto tokens = RustBackend::parseCommand(text, append);
+    if (tokens.isEmpty()) return false;
+    m_loading = true;
+    if (!append) {
+        clearRows();
+        programEdit->setText(tokens[0]);
+        otherArgsEdit->clear();
+    } else if (functionEdits.size() == 1 && functionEdits[0]->text().isEmpty()
+        && parameterEdits[0]->text().isEmpty() && commentEdits[0]->text().isEmpty()) {
+        clearRows();
+    }
+    for (int i = append ? 0 : 1; i < tokens.size(); i += 2) {
+        onAddFunctionClicked();
+        functionEdits.last()->setText(tokens[i]);
+        parameterEdits.last()->setText(i + 1 < tokens.size() ? tokens[i + 1] : QString());
+    }
+    if (functionEdits.isEmpty()) onAddFunctionClicked();
+    m_loading = false;
+    updateCommandPreview();
+    return true;
 }
 
 void CommandTab::onParseCommandClicked() {
-    // 实现命令解析
+    const bool hasRows = std::any_of(functionEdits.begin(), functionEdits.end(), [](auto *edit) { return !edit->text().isEmpty(); })
+        || std::any_of(parameterEdits.begin(), parameterEdits.end(), [](auto *edit) { return !edit->text().isEmpty(); })
+        || std::any_of(commentEdits.begin(), commentEdits.end(), [](auto *edit) { return !edit->text().isEmpty(); })
+        || !otherArgsEdit->text().isEmpty();
+    if (hasRows && QMessageBox::question(this, "解析命令", "解析将替换现有参数和行备注，是否继续？",
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
+    if (!parseCommandText(programEdit->text())) QMessageBox::warning(this, "无法解析", "请输入命令，并检查引号是否完整。");
+}
+
+void CommandTab::selectAllParameters(bool selected) {
+    for (auto *check : rowCheckBoxes) check->setChecked(selected);
 }
 
 void CommandTab::onAddFunctionClicked() {
-    // 行内水平布局：左右各 4px 边距（和 spacing 对称），上下 0（由 rowWidget 固定高度控制）
     QHBoxLayout *rowLayout = new QHBoxLayout();
-    rowLayout->setContentsMargins(4, 0, 4, 0);
+    rowLayout->setContentsMargins(0, 0, 0, 0);
     rowLayout->setSpacing(6);
 
-    // 多选框：自绘 CheckButton，完全绕过 macOS native button 渲染
     CheckButton *checkBox = new CheckButton();
     checkBox->setTheme(m_theme);
+    checkBox->setAccessibleName(QString("启用参数%1").arg(functionCounter));
 
-    QLineEdit *funcEdit = new QLineEdit();
-    funcEdit->setPlaceholderText("参数名");
+    QLineEdit *funcEdit = new PathLineEdit();
+    funcEdit->setPlaceholderText(QString("功能%1").arg(functionCounter));
     funcEdit->setObjectName("paramFuncEdit");
-    funcEdit->setFixedHeight(28);
-
-    QLineEdit *paramEdit = new QLineEdit();
-    paramEdit->setPlaceholderText("参数值");
+    QLineEdit *paramEdit = new PathLineEdit();
+    paramEdit->setPlaceholderText(QString("参数%1").arg(functionCounter));
     paramEdit->setObjectName("paramValueEdit");
-    paramEdit->setFixedHeight(28);
-
-    QLineEdit *commentEdit = new QLineEdit();
-    commentEdit->setPlaceholderText("备注");
+    QLineEdit *commentEdit = new PathLineEdit();
+    commentEdit->setPlaceholderText("备注（不参与执行）");
     commentEdit->setObjectName("paramCommentEdit");
-    commentEdit->setFixedHeight(28);
 
     QPushButton *removeBtn = new QPushButton();
-    removeBtn->setIcon(makeThemedIcon(":/res/icon_delete.svg", m_theme));
-    removeBtn->setFixedSize(26, 26);
-    removeBtn->setIconSize(QSize(13, 13));
-    removeBtn->setToolTip("删除此参数");
-    removeBtn->setCursor(Qt::PointingHandCursor);
+    removeBtn->setProperty("role", "icon");
+    removeBtn->setFixedSize(30, 30);
+    removeBtn->setToolTip("删除此参数行");
+    removeBtn->setAccessibleName("删除参数行");
+    setButtonIcon(removeBtn, "icon_delete", m_theme);
     removeBtn->setObjectName("paramRemoveBtn");
-
-    // 垂直居中对齐所有 widget
-    rowLayout->setAlignment(Qt::AlignVCenter);
     rowLayout->addWidget(checkBox, 0, Qt::AlignVCenter);
-    // 参数名:参数值:备注 = 2:4:2
-    rowLayout->addWidget(funcEdit, 2);
-    rowLayout->addWidget(paramEdit, 4);
-    rowLayout->addWidget(commentEdit, 2);
-    rowLayout->addWidget(removeBtn, 0, Qt::AlignVCenter);
+    rowLayout->addWidget(funcEdit, 1);
+    rowLayout->addWidget(paramEdit, 1);
+    rowLayout->addWidget(commentEdit, 1);
+    rowLayout->addWidget(removeBtn);
 
     rowCheckBoxes.append(checkBox);
     functionEdits.append(funcEdit);
@@ -982,8 +1019,7 @@ void CommandTab::onAddFunctionClicked() {
     QWidget *rowWidget = new QWidget();
     rowWidget->setLayout(rowLayout);
     rowWidget->setObjectName(QString("paramRow_%1").arg(functionCounter++));
-    // 固定行高：28px 内容 + 0 margins = 36px 给足空间不截字
-    rowWidget->setFixedHeight(36);
+    rowWidget->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 
     // 勾选变化时实时更新预览
     connect(checkBox, &QPushButton::toggled, this, &CommandTab::updateCommandPreview);
@@ -991,8 +1027,8 @@ void CommandTab::onAddFunctionClicked() {
     connect(funcEdit,  &QLineEdit::textChanged, this, &CommandTab::updateCommandPreview);
     connect(paramEdit, &QLineEdit::textChanged, this, &CommandTab::updateCommandPreview);
 
-    // Insert before the stretch
-    functionsLayout->insertWidget(functionsLayout->count() - 1, rowWidget);
+    functionsLayout->addWidget(rowWidget);
+    connect(commentEdit, &QLineEdit::textChanged, this, &CommandTab::configurationChanged);
 
     connect(removeBtn, &QPushButton::clicked, [this, rowWidget, checkBox, funcEdit, paramEdit, commentEdit, removeBtn]() {
         rowCheckBoxes.removeOne(checkBox);
@@ -1001,30 +1037,22 @@ void CommandTab::onAddFunctionClicked() {
         commentEdits.removeOne(commentEdit);
         removeButtons.removeOne(removeBtn);
         functionsLayout->removeWidget(rowWidget);
+        rowWidget->hide();
         rowWidget->deleteLater();
+        if (functionEdits.isEmpty()) onAddFunctionClicked();
         updateCommandPreview();
     });
 }
 
 void CommandTab::updateRemoveButtonIcons(const QString &theme) {
     m_theme = theme;
-    QIcon icon = makeThemedIcon(":/res/icon_delete.svg", theme);
-    for (QPushButton *btn : removeButtons) {
-        btn->setIcon(icon);
+    for (auto *button : findChildren<QPushButton*>()) {
+        const QString icon = button->property("svgIcon").toString();
+        if (!icon.isEmpty()) button->setIcon(themedIcon(icon, theme));
     }
-    // 同步 CheckButton 主题色
     for (QPushButton *cb : rowCheckBoxes) {
         static_cast<CheckButton*>(cb)->setTheme(theme);
     }
-    // 同步参数操作按钮图标
-    if (addFunctionButton)
-        addFunctionButton->setIcon(makeThemedIcon(":/res/icon_add.svg", theme));
-    if (selectAllButton)
-        selectAllButton->setIcon(makeThemedIcon(":/res/icon_select_all.svg", theme));
-    if (deselectAllButton)
-        deselectAllButton->setIcon(makeThemedIcon(":/res/icon_deselect_all.svg", theme));
-    if (previewButton)
-        previewButton->setIcon(makeThemedIcon(":/res/icon_preview.svg", theme));
 }
 
 void CommandTab::onRemoveFunctionClicked() {
@@ -1036,173 +1064,147 @@ void CommandTab::onPreviewCommandClicked() {
 }
 
 void CommandTab::setupUI() {
+    // 表单整体滚动；运行操作固定，页面两侧导航由主窗口提供。
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setContentsMargins(12, 12, 12, 12);
-    layout->setSpacing(8);
+    layout->setSpacing(10);
+    QScrollArea *scrollArea = new QScrollArea(this);
+    scrollArea->setObjectName("commandScrollArea");
+    scrollArea->setWidgetResizable(true);
+    QWidget *form = new QWidget();
+    QVBoxLayout *formLayout = new QVBoxLayout(form);
+    formLayout->setContentsMargins(4, 2, 4, 2);
+    formLayout->setSpacing(10);
+    auto fieldLabel = [](const QString &text) {
+        auto *label = new QLabel(text);
+        label->setFixedWidth(66);
+        return label;
+    };
 
-    // ===== 标题行 =====
     QHBoxLayout *titleLayout = new QHBoxLayout();
-    titleLayout->setSpacing(8);
-    QLabel *titleLabel = new QLabel("标题:");
-    titleLabel->setMinimumWidth(80);
-    titleLabel->setMaximumWidth(80);
-    titleEdit = new QLineEdit();
-    titleLayout->addWidget(titleLabel);
+    titleEdit = new PathLineEdit();
+    titleEdit->setObjectName("titleEdit");
+    titleEdit->setPlaceholderText("给这条命令起个名字");
+    titleLayout->addWidget(fieldLabel("名称"));
     titleLayout->addWidget(titleEdit);
-    layout->addLayout(titleLayout);
+    formLayout->addLayout(titleLayout);
 
-    // ===== 运行路径行 =====
     QHBoxLayout *dirLayout = new QHBoxLayout();
-    dirLayout->setSpacing(8);
-    QLabel *dirLabel = new QLabel("运行路径:");
-    dirLabel->setMinimumWidth(80);
-    dirLabel->setMaximumWidth(80);
-    workingDirEdit = new QLineEdit();
+    workingDirEdit = new PathLineEdit();
+    workingDirEdit->setObjectName("workingDirEdit");
     workingDirEdit->setPlaceholderText("为空则使用程序当前目录");
-    dirLayout->addWidget(dirLabel);
+    dirLayout->addWidget(fieldLabel("工作目录"));
     dirLayout->addWidget(workingDirEdit);
-    layout->addLayout(dirLayout);
+    QPushButton *browseButton = new QPushButton();
+    browseButton->setProperty("role", "icon");
+    browseButton->setFixedSize(32, 32);
+    browseButton->setToolTip("选择工作目录，也可以直接拖入文件夹");
+    browseButton->setAccessibleName("选择工作目录");
+    setButtonIcon(browseButton, "icon_folder");
+    dirLayout->addWidget(browseButton);
+    connect(browseButton, &QPushButton::clicked, this, [this]() {
+        const QString path = QFileDialog::getExistingDirectory(this, "选择工作目录", workingDirEdit->text());
+        if (!path.isEmpty()) workingDirEdit->setText(path);
+    });
+    formLayout->addLayout(dirLayout);
 
-    // ===== 程序本体行 =====
     QHBoxLayout *programLayout = new QHBoxLayout();
-    programLayout->setSpacing(8);
-    QLabel *programLabel = new QLabel("程序本体:");
-    programLabel->setMinimumWidth(80);
-    programLabel->setMaximumWidth(80);
-    programEdit = new QLineEdit();
+    programEdit = new PathLineEdit();
+    programEdit->setObjectName("programEdit");
     programEdit->setPlaceholderText("粘贴命令可以解析");
     parseButton = new QPushButton("解析");
-    parseButton->setMaximumWidth(80);
-    parseButton->setMinimumHeight(32);
-    programLayout->addWidget(programLabel);
+    parseButton->setToolTip("将完整命令拆成可编辑的参数行（不会执行）");
+    setButtonIcon(parseButton, "icon_preview");
+    programLayout->addWidget(fieldLabel("程序"));
     programLayout->addWidget(programEdit);
     programLayout->addWidget(parseButton);
-    layout->addLayout(programLayout);
+    formLayout->addLayout(programLayout);
 
-    // ===== 函数/参数区域（使用滚动区，更紧凑）=====
-    QLabel *functionsLabel = new QLabel("参数配置:");
-    functionsLabel->setStyleSheet("font-weight: bold;");
-    layout->addWidget(functionsLabel);
-    
-    QScrollArea *scrollArea = new QScrollArea();
-    scrollArea->setObjectName("paramsScrollArea");
-    scrollArea->setMinimumHeight(150);
-    scrollArea->setFrameShape(QFrame::NoFrame);
-    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-
-    QWidget *scrollWidget = new QWidget();
-    functionsLayout = new QVBoxLayout(scrollWidget);
-    functionsLayout->setContentsMargins(6, 4, 6, 4);
-    functionsLayout->setSpacing(4);
-
-    // stretch 先加，后续 insertWidget(count-1) 永远插在它前面
-    functionsLayout->addStretch();
-
-    // 默认添加一行
+    QHBoxLayout *parameterHeader = new QHBoxLayout();
+    parameterHeader->setContentsMargins(37, 0, 36, 0);
+    for (const QString &text : {QString("选项 / 功能"), QString("参数值"), QString("备注")}) {
+        QLabel *label = new QLabel(text);
+        label->setProperty("role", "hint");
+        parameterHeader->addWidget(label, 1);
+    }
+    formLayout->addLayout(parameterHeader);
+    functionsLayout = new QVBoxLayout();
+    functionsLayout->setContentsMargins(0, 0, 0, 0);
+    functionsLayout->setSpacing(6);
+    formLayout->addLayout(functionsLayout);
     onAddFunctionClicked();
 
-    scrollArea->setWidget(scrollWidget);
-    scrollArea->setWidgetResizable(true);
-
-    QHBoxLayout *paramActionLayout = new QHBoxLayout();
-    paramActionLayout->setSpacing(6);
-    paramActionLayout->setContentsMargins(0, 2, 0, 2);
-
-    addFunctionButton = new QPushButton("增加参数行");
-    addFunctionButton->setIcon(makeThemedIcon(":/res/icon_add.svg", m_theme));
-    addFunctionButton->setIconSize(QSize(15, 15));
-    addFunctionButton->setMinimumHeight(30);
-
+    QHBoxLayout *paramActions = new QHBoxLayout();
+    addFunctionButton = new QPushButton("添加参数");
+    setButtonIcon(addFunctionButton, "icon_add");
+    addFunctionButton->setObjectName("addFunctionBtn");
     selectAllButton = new QPushButton("全选");
-    selectAllButton->setIcon(makeThemedIcon(":/res/icon_select_all.svg", m_theme));
-    selectAllButton->setIconSize(QSize(15, 15));
-    selectAllButton->setMinimumHeight(30);
+    selectAllButton->setToolTip("启用全部参数 · Ctrl+Shift+A");
+    deselectAllButton = new QPushButton("全不选");
+    deselectAllButton->setToolTip("禁用全部参数 · Ctrl+D");
+    paramActions->addWidget(addFunctionButton);
+    paramActions->addWidget(selectAllButton);
+    paramActions->addWidget(deselectAllButton);
+    paramActions->addStretch();
+    parameterCountLabel = new QLabel();
+    parameterCountLabel->setProperty("role", "hint");
+    paramActions->addWidget(parameterCountLabel);
+    formLayout->addLayout(paramActions);
 
-    deselectAllButton = new QPushButton("取消全选");
-    deselectAllButton->setIcon(makeThemedIcon(":/res/icon_deselect_all.svg", m_theme));
-    deselectAllButton->setIconSize(QSize(15, 15));
-    deselectAllButton->setMinimumHeight(30);
+    QHBoxLayout *appendLayout = new QHBoxLayout();
+    appendCommandEdit = new PathLineEdit();
+    appendCommandEdit->setObjectName("appendCommandEdit");
+    appendCommandEdit->setPlaceholderText("粘贴部分命令，追加到现有参数…");
+    QPushButton *appendButton = new QPushButton("追加解析");
+    appendLayout->addWidget(appendCommandEdit, 1);
+    appendLayout->addWidget(appendButton);
+    formLayout->addLayout(appendLayout);
+    connect(appendButton, &QPushButton::clicked, this, [this]() {
+        if (parseCommandText(appendCommandEdit->text(), true)) appendCommandEdit->clear();
+        else QMessageBox::warning(this, "无法解析", "请输入部分命令，并检查引号是否完整。");
+    });
+    connect(appendCommandEdit, &QLineEdit::returnPressed, appendButton, &QPushButton::click);
 
-    paramActionLayout->addWidget(addFunctionButton);
-    paramActionLayout->addWidget(selectAllButton);
-    paramActionLayout->addWidget(deselectAllButton);
-    paramActionLayout->addStretch();
-
-    QWidget *paramSection = new QWidget(this);
-    paramSection->setMinimumHeight(188);
-    QVBoxLayout *paramSectionLayout = new QVBoxLayout(paramSection);
-    paramSectionLayout->setContentsMargins(0, 0, 0, 0);
-    paramSectionLayout->setSpacing(4);
-    paramSectionLayout->addWidget(scrollArea);
-    paramSectionLayout->addLayout(paramActionLayout);
-
-    QWidget *detailsSection = new QWidget(this);
-    detailsSection->setMinimumHeight(120);
-    QVBoxLayout *detailsLayout = new QVBoxLayout(detailsSection);
-    detailsLayout->setContentsMargins(0, 0, 0, 0);
-    detailsLayout->setSpacing(8);
-
-    QSplitter *paramSplitter = new QSplitter(Qt::Vertical, this);
-    paramSplitter->setObjectName("paramContentSplitter");
-    paramSplitter->setChildrenCollapsible(false);
-    paramSplitter->setHandleWidth(10);
-
-    // ===== 其他参数行 =====
-    QHBoxLayout *otherLayout = new QHBoxLayout();
-    otherLayout->setSpacing(8);
-    QLabel *otherLabel = new QLabel("其他参数:");
-    otherLabel->setMinimumWidth(80);
-    otherLabel->setMaximumWidth(80);
-    otherArgsEdit = new QLineEdit();
-    otherArgsEdit->setPlaceholderText("额外的命令行参数");
-    otherLayout->addWidget(otherLabel);
-    otherLayout->addWidget(otherArgsEdit);
-    detailsLayout->addLayout(otherLayout);
-
-    // ===== 描述 =====
-    QLabel *descLabel = new QLabel("描述:");
-    descLabel->setStyleSheet("font-weight: bold;");
-    detailsLayout->addWidget(descLabel);
-    descriptionEdit = new QTextEdit();
-    descriptionEdit->setPlaceholderText("输入命令描述信息");
-    descriptionEdit->setMaximumHeight(80);
-    descriptionEdit->setMinimumHeight(0);
-    detailsLayout->addWidget(descriptionEdit);
-
-    // ===== 命令预览 =====
-    QLabel *previewLabel = new QLabel("预览命令:");
-    previewLabel->setStyleSheet("font-weight: bold;");
-    detailsLayout->addWidget(previewLabel);
+    otherArgsEdit = new PathLineEdit();
+    otherArgsEdit->setObjectName("otherArgsEdit");
+    otherArgsEdit->setPlaceholderText("其他参数 / 重定向 / 管道（按原文追加）");
+    formLayout->addWidget(otherArgsEdit);
+    descriptionEdit = new PathTextEdit();
+    descriptionEdit->setObjectName("descriptionEdit");
+    descriptionEdit->setPlaceholderText("描述 / 使用说明（不会执行）");
+    descriptionEdit->setMinimumHeight(64);
+    descriptionEdit->setMaximumHeight(100);
+    formLayout->addWidget(descriptionEdit);
     commandPreviewEdit = new QTextEdit();
+    commandPreviewEdit->setObjectName("commandPreviewEdit");
     commandPreviewEdit->setReadOnly(true);
-    commandPreviewEdit->setPlaceholderText("最终执行的完整命令");
-    commandPreviewEdit->setMaximumHeight(100);
-    commandPreviewEdit->setMinimumHeight(0);
-    detailsLayout->addWidget(commandPreviewEdit);
+    commandPreviewEdit->setPlaceholderText("命令预览 · 修改参数后实时更新");
+    commandPreviewEdit->setMinimumHeight(72);
+    commandPreviewEdit->setMaximumHeight(90);
+    scrollArea->setWidget(form);
+    layout->addWidget(scrollArea, 1);
+    layout->addWidget(commandPreviewEdit);
 
-    // ===== 预生成命令按钮 =====
-    QHBoxLayout *previewButtonLayout = new QHBoxLayout();
-    previewButtonLayout->setSpacing(6);
-    previewButtonLayout->setContentsMargins(0, 2, 0, 2);
-
-    previewButton = new QPushButton("预生成命令");
-    previewButton->setIcon(makeThemedIcon(":/res/icon_preview.svg", m_theme));
-    previewButton->setIconSize(QSize(15, 15));
-    previewButton->setMinimumHeight(30);
-
-    previewButtonLayout->addStretch();
-    previewButtonLayout->addWidget(previewButton);
-
-    detailsLayout->addLayout(previewButtonLayout);
-    detailsLayout->addStretch();
-
-    paramSplitter->addWidget(paramSection);
-    paramSplitter->addWidget(detailsSection);
-    paramSplitter->setStretchFactor(0, 0);
-    paramSplitter->setStretchFactor(1, 1);
-    paramSplitter->setSizes(QList<int>() << 220 << 320);
-
-    layout->addWidget(paramSplitter, 1);
+    QHBoxLayout *runActions = new QHBoxLayout();
+    QPushButton *logButton = new QPushButton("运行日志");
+    setButtonIcon(logButton, "icon_terminal");
+    connect(logButton, &QPushButton::clicked, this, &CommandTab::logRequested);
+    runActions->addWidget(logButton);
+    runActions->addStretch();
+    previewButton = new QPushButton("刷新预览");
+    setButtonIcon(previewButton, "icon_preview");
+    runActions->addWidget(previewButton);
+    QPushButton *copyButton = new QPushButton("复制命令");
+    setButtonIcon(copyButton, "icon_copy");
+    connect(copyButton, &QPushButton::clicked, this, [this]() { QApplication::clipboard()->setText(getCommand()); });
+    runActions->addWidget(copyButton);
+    QPushButton *runButton = new QPushButton("运行");
+    runButton->setObjectName("runBtn");
+    runButton->setToolTip("在独立 shell 进程中运行 · Ctrl+Enter");
+    setButtonIcon(runButton, "icon_run");
+    runActions->addWidget(runButton);
+    layout->addLayout(runActions);
+    connect(runButton, &QPushButton::clicked, this, &CommandTab::runRequested);
 }
 
 void CommandTab::setupConnections() {
@@ -1210,6 +1212,9 @@ void CommandTab::setupConnections() {
     connect(addFunctionButton, &QPushButton::clicked, this, &CommandTab::onAddFunctionClicked);
     connect(previewButton, &QPushButton::clicked, this, &CommandTab::onPreviewCommandClicked);
     connect(titleEdit, &QLineEdit::textChanged, this, &CommandTab::titleChanged);
+    connect(titleEdit, &QLineEdit::textChanged, this, &CommandTab::configurationChanged);
+    connect(workingDirEdit, &QLineEdit::textChanged, this, &CommandTab::configurationChanged);
+    connect(descriptionEdit, &QTextEdit::textChanged, this, &CommandTab::configurationChanged);
 
     // Live preview on program / other-args changes
     connect(programEdit,  &QLineEdit::textChanged, this, &CommandTab::updateCommandPreview);
@@ -1229,27 +1234,25 @@ void CommandTab::setupConnections() {
 }
 
 void CommandTab::updateCommandPreview() {
+    if (m_loading || !commandPreviewEdit) return;
+    int checkedCount = 0;
+    for (auto *check : rowCheckBoxes) if (check->isChecked()) ++checkedCount;
+    parameterCountLabel->setText(QString("%1 / %2 已启用").arg(checkedCount).arg(rowCheckBoxes.size()));
+    emit configurationChanged();
     QString program = programEdit->text().trimmed();
     if (program.isEmpty()) {
         commandPreviewEdit->setPlainText(QString());
         return;
     }
 
-    QStringList parts;
-    parts << program;
-
-    for (int i = 0; i < rowCheckBoxes.size(); ++i) {
-        if (!rowCheckBoxes[i] || !rowCheckBoxes[i]->isChecked()) continue;
-        QString func  = (i < functionEdits.size())  ? functionEdits[i]->text().trimmed()  : QString();
-        QString param = (i < parameterEdits.size())  ? parameterEdits[i]->text().trimmed() : QString();
-        if (!func.isEmpty())  parts << func;
-        if (!param.isEmpty()) parts << param;
+    QVector<QPair<QString, QString>> functions;
+    functions.reserve(functionEdits.size());
+    for (int i = 0; i < functionEdits.size(); ++i) {
+        // 保留参数首尾空格的原始内容；只用 trimmed() 判断这一格是否为空。
+        functions.append({functionEdits[i]->text(), parameterEdits[i]->text()});
     }
-
-    QString other = otherArgsEdit->text().trimmed();
-    if (!other.isEmpty()) parts << other;
-
-    commandPreviewEdit->setPlainText(parts.join(' '));
+    const QString command = RustBackend::buildCommand(program, functions, getEnabledStates(), otherArgsEdit->text());
+    commandPreviewEdit->setPlainText(command);
 }
 
 // ============================================================================
@@ -1263,6 +1266,10 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     setModal(true);
     setupUI();
     loadSettings();
+    if (auto *window = qobject_cast<AppWindow*>(parent)) originalTheme = window->getCurrentTheme();
+    connect(this, &QDialog::rejected, this, [this]() {
+        if (auto *window = qobject_cast<AppWindow*>(this->parent())) window->onThemeChanged(originalTheme);
+    });
 }
 
 void SettingsDialog::setupUI() {
@@ -1285,6 +1292,8 @@ void SettingsDialog::setupUI() {
     languageCombo = new QComboBox();
     languageCombo->addItem("中文", "zh_CN");
     languageCombo->addItem("English", "en_US");
+    languageCombo->setEnabled(false);
+    languageCombo->setToolTip("翻译资源尚未提供，目前仅支持中文");
     langLayout->addWidget(languageCombo);
     layout->addWidget(langGroup);
 
@@ -1335,6 +1344,9 @@ void SettingsDialog::loadSettings() {
             themeCombo->setCurrentIndex(index);
         }
     }
+    backupCombo->clear();
+    for (const QString &name : RustBackend::getBackups(configFilePath(), backupDirPath())) backupCombo->addItem(name);
+    restoreButton->setEnabled(backupCombo->count() > 0);
     m_loadingSettings = false;
 }
 
@@ -1349,7 +1361,14 @@ void SettingsDialog::onThemeComboChanged(int index) {
 }
 
 void SettingsDialog::onRestoreBackupClicked() {
-    // 恢复备份
+    auto *window = qobject_cast<AppWindow*>(parent());
+    if (!window || backupCombo->currentText().isEmpty()) return;
+    if (QMessageBox::question(this, "恢复备份", "将用所选备份替换当前配置。恢复前会保留现有文件副本。继续？",
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
+    if (window->restoreBackup(backupCombo->currentText())) {
+        originalTheme = window->getCurrentTheme();
+        loadSettings();
+    } else QMessageBox::warning(this, "恢复失败", "恢复未完成；现有配置已保留。");
 }
 
 void SettingsDialog::onOkClicked() {
@@ -1367,6 +1386,7 @@ void SettingsDialog::onApplyClicked() {
     if (mainWindow) {
         mainWindow->onThemeChanged(theme);
         mainWindow->saveApplicationSettings();
+        originalTheme = theme;
     }
 }
 
@@ -1495,9 +1515,11 @@ void OutputWindow::setupConnections() {
 // main() function
 // ============================================================================
 
+#ifndef ECR_NO_MAIN
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
+    app.setStyle(QStyleFactory::create("Fusion"));
     app.setApplicationName("EasyCommandRunner");
     app.setApplicationVersion("1.0.0");
     app.setWindowIcon(makeAppIcon());
@@ -1505,3 +1527,4 @@ int main(int argc, char *argv[])
     AppWindow window;
     return app.exec();
 }
+#endif

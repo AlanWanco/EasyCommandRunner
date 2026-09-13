@@ -2,7 +2,9 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::ptr;
 
+use crate::core::command_line::CommandLine;
 use crate::ui::app;
+use serde_json::Value;
 
 /// 命令执行结果 (FFI)
 #[repr(C)]
@@ -31,6 +33,13 @@ pub struct BackupList {
 pub struct ParsedCommand {
     pub commands: *const *const c_char,
     pub count: i32,
+}
+
+/// Rust 生成的 UTF-8 命令字符串 (FFI)
+#[repr(C)]
+pub struct StringData {
+    pub data: *const c_char,
+    pub length: i32,
 }
 
 // ============================================================================
@@ -329,7 +338,7 @@ pub extern "C" fn rust_free_backup_list(list: BackupList) {
 
 /// 解析命令
 #[no_mangle]
-pub extern "C" fn rust_parse_command(input: *const c_char) -> ParsedCommand {
+pub extern "C" fn rust_parse_command(input: *const c_char, is_append: bool) -> ParsedCommand {
     if input.is_null() {
         return ParsedCommand {
             commands: ptr::null(),
@@ -347,7 +356,7 @@ pub extern "C" fn rust_parse_command(input: *const c_char) -> ParsedCommand {
         }
     };
 
-    let parsed_commands = app::parse_command(input_str);
+    let parsed_commands = crate::core::CommandParser::parse(input_str, is_append);
     let mut c_strings = Vec::new();
     for cmd in parsed_commands {
         if let Ok(c_str) = CString::new(cmd) {
@@ -382,6 +391,81 @@ pub extern "C" fn rust_free_parsed_command(cmd: ParsedCommand) {
                 cmd.commands as *mut *mut c_char,
                 cmd.count as usize,
             ));
+        }
+    }
+}
+
+// ============================================================================
+// 跨平台命令构建 FFI
+// ============================================================================
+
+#[no_mangle]
+pub extern "C" fn rust_build_command(input_json: *const c_char) -> StringData {
+    if input_json.is_null() {
+        return StringData {
+            data: ptr::null(),
+            length: 0,
+        };
+    }
+    let input = match unsafe { CStr::from_ptr(input_json).to_str() } {
+        Ok(value) => value,
+        Err(_) => {
+            return StringData {
+                data: ptr::null(),
+                length: 0,
+            }
+        }
+    };
+    let value: Value = match serde_json::from_str(input) {
+        Ok(value) => value,
+        Err(_) => {
+            return StringData {
+                data: ptr::null(),
+                length: 0,
+            }
+        }
+    };
+    let program = value
+        .get("program")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let mut arguments = Vec::new();
+    if let Some(items) = value.get("arguments").and_then(Value::as_array) {
+        for item in items {
+            let enabled = item.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+            if !enabled {
+                continue;
+            }
+            if let Some(function) = item.get("function").and_then(Value::as_str) {
+                if !function.trim().is_empty() {
+                    arguments.push(function.to_string());
+                }
+            }
+            if let Some(parameter) = item.get("parameter").and_then(Value::as_str) {
+                if !parameter.trim().is_empty() {
+                    arguments.push(parameter.to_string());
+                }
+            }
+        }
+    }
+    let other_args = value
+        .get("other_args")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let command = CommandLine::build(program, &arguments, other_args);
+    let length = command.len() as i32;
+    let data = CString::new(command).unwrap_or_default();
+    StringData {
+        data: data.into_raw(),
+        length,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn rust_free_string_data(value: StringData) {
+    if !value.data.is_null() {
+        unsafe {
+            let _ = CString::from_raw(value.data as *mut c_char);
         }
     }
 }

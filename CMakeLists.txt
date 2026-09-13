@@ -46,10 +46,12 @@ endif()
 # Source files
 set(SOURCES
     cpp/app.cpp
+    cpp/log_panel.cpp
 )
 
 set(HEADERS
     cpp/app.h
+    cpp/log_panel.h
 )
 
 # Resources
@@ -84,6 +86,21 @@ target_include_directories(${PROJECT_NAME}
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp
     ${CMAKE_CURRENT_BINARY_DIR}
 )
+
+option(ECR_BUILD_TESTS "Build Qt UI and process integration tests" OFF)
+if(ECR_BUILD_TESTS)
+    enable_testing()
+    find_package(Qt6 COMPONENTS Test REQUIRED)
+    add_executable(ecr_ui_tests tests/ui_test.cpp ${SOURCES} ${HEADERS} ${RESOURCES})
+    target_compile_definitions(ecr_ui_tests PRIVATE ECR_NO_MAIN)
+    target_include_directories(ecr_ui_tests PRIVATE cpp)
+    target_link_libraries(ecr_ui_tests PRIVATE Qt6::Test Qt6::Widgets ${RUST_LIB_PATH})
+    add_dependencies(ecr_ui_tests rust_build)
+    add_test(NAME ecr_ui_tests COMMAND ecr_ui_tests)
+    set_tests_properties(ecr_ui_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=1"
+        TIMEOUT 60)
+endif()
 
 # Platform-specific settings
 if(WIN32)

@@ -19,6 +19,9 @@
 #include <QThread>
 #include <QTimer>
 #include <QDialog>
+#include <QJsonObject>
+
+class LogPanel;
 
 /**
  * @brief 主应用窗口
@@ -39,6 +42,7 @@ public:
 
     void onThemeChanged(const QString &theme);
     void saveApplicationSettings();
+    bool restoreBackup(const QString &name);
     QString getCurrentTheme() const { return currentTheme; }
 
 protected:
@@ -87,13 +91,13 @@ private:
     void applyTheme(const QString &theme);
     
     // 图标管理
-    QIcon createThemedIcon(const QString &svgPath, const QString &theme);
-    QPushButton* createTabCloseButton();
     void updateButtonIcons();
 
     // 配置管理
-    void loadConfiguration();
+    bool loadConfiguration();
     bool saveConfiguration();
+    QJsonObject configuration() const;
+    bool confirmDiscard();
     void loadApplicationSettings();
 
     // 其他
@@ -107,11 +111,14 @@ private:
     // 按钮
     QPushButton *addTabButton;
     QPushButton *saveButton;
-    QPushButton *runButton;
     QPushButton *reloadButton;
     QPushButton *copyTabButton;
-    QPushButton *settingsButton;
-    QPushButton *previewButton;
+    LogPanel *logPanel;
+    QPushButton *previousTabButton;
+    QPushButton *nextTabButton;
+    QLabel *sessionLabel;
+    QJsonObject savedConfig;
+    bool configWritable = true;
 
     // 菜单和托盘
     QSystemTrayIcon *trayIcon;
@@ -146,7 +153,9 @@ public:
 
     QString getWorkingDirectory() const;
     QString getProgram() const;
+    QString getCommand() const;
     QVector<QPair<QString, QString>> getFunctions() const;
+    QVector<bool> getEnabledStates() const;
     QString getOtherArgs() const;
     QString getDescription() const;
 
@@ -154,9 +163,16 @@ public:
     QJsonObject saveConfiguration() const;
 
     void clear();
+    bool parseCommandText(const QString &text, bool append = false);
+    void selectAllParameters(bool selected);
 
 signals:
     void titleChanged(const QString &newTitle);
+    void runRequested();
+    void previousTabRequested();
+    void nextTabRequested();
+    void configurationChanged();
+    void logRequested();
 
 public slots:
     void onParseCommandClicked();
@@ -170,6 +186,7 @@ private:
     void setupUI();
     void setupConnections();
     void updateCommandPreview();
+    void clearRows();
 
     // 标题区域
     QLineEdit *titleEdit;
@@ -191,6 +208,9 @@ private:
     
     // 其他参数
     QLineEdit *otherArgsEdit;
+    QLineEdit *appendCommandEdit;
+    QLabel *parameterCountLabel;
+    bool m_loading = false;
     
     // 描述
     QTextEdit *descriptionEdit;
@@ -242,6 +262,7 @@ private:
     QPushButton *applyButton;
 
     QString currentTheme;
+    QString originalTheme;
     bool m_loadingSettings = false;
 };
 

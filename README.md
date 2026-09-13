@@ -138,6 +138,52 @@ EasyCommandRunner是一个简单的保存命令行配置与运行命令行的GUI
 ![gif3](./pic/2024-01-26_17-12-23.gif)
 
 
+## 跨平台适配说明（Rust + Qt6 重构版）
+
+> 本节描述当前 `rust` 开发分支的方向。原版 PyQt5 主要在 Windows 环境中使用，旧版说明中的“打开新窗口运行”属于原版行为。
+
+### 平台定位
+
+EasyCommandRunner 的核心价值是保存可复用的 CLI 命令模板、切换参数组合和记录运行结果。它更偏向 **Windows 优先**：Windows 用户通常更需要把复杂的 `cmd.exe` 命令保存成可点击的配置。macOS/Linux 自带的 zsh/bash 已经提供历史记录、补全、alias 和管道操作，因此在这些平台上，ECR 主要提供命令模板、参数开关、工作目录和日志能力，不试图替代系统终端。
+
+### 当前运行模型
+
+Rust + Qt6 重构版在所有平台都采用相同的模型：
+
+- 每次点击运行都会启动一个新的 shell 子进程，不复用上一次 shell 的状态。
+- stdout/stderr 会实时显示在程序内的“运行日志”面板中；面板默认停靠在主窗口下方，也可以分离成独立窗口。
+- 默认不启动 Windows Terminal、Terminal.app 或其他外部终端窗口。
+- 运行日志是非交互式日志视图，不是 PTY 终端；密码提示、REPL、全屏终端程序暂不适合在其中运行。
+- shell 历史记录不会与系统终端共享，命令也不会自动写入用户的 shell history。
+
+### 各平台 shell
+
+| 平台 | 默认 shell | 实际调用方式 | 说明 |
+| --- | --- | --- | --- |
+| Windows | `%COMSPEC%`，通常是 `cmd.exe` | `cmd.exe /D /S /C "命令"` | 不启动 Windows Terminal；后续可增加 PowerShell/shell 选择 |
+| macOS | `$SHELL`，通常是 `/bin/zsh` | `zsh -c "命令"` | 非交互模式，不加载完整 `.zshrc` 历史/alias 环境 |
+| Linux | `$SHELL`，否则回退到 `/bin/sh` | `shell -c "命令"` | 具体行为取决于用户默认 shell |
+
+从 Finder、桌面快捷方式启动 macOS/Linux GUI 时，系统传给程序的 `PATH` 可能比终端中短。找不到 Homebrew、Cargo 或用户目录下的命令时，建议填写绝对路径或工作目录；未来可以增加 login shell 和环境变量配置。
+
+### Unix 执行权限
+
+macOS/Linux 的 shell 本身（例如 `/bin/zsh`）已经有执行权限，ECR 不需要也不应该每次运行时修改权限。
+
+- 直接运行 `./tool` 或 `./script.sh` 时，目标文件需要执行权限：`chmod +x ./script.sh`。
+- 使用 `zsh script.sh`、`bash script.sh` 或 `python script.py` 时，由解释器执行脚本，脚本文件本身通常不需要 `+x`。
+- `Permission denied` 可能来自执行位、目录权限、代码签名或 macOS Gatekeeper，这些问题不能简单地都用 `chmod` 解决。
+- ECR 不会自动对用户的二进制或脚本执行 `chmod +x`，避免悄悄修改文件权限。
+
+Windows 不存在 Unix 执行位这一层限制；程序能否运行主要取决于文件类型、系统策略、PATH、工作目录以及 Defender/Gatekeeper 类安全策略。
+
+### 路径、环境与构建
+
+- 路径输入、拖拽和文件剪贴板粘贴遵循当前平台的原生路径格式，不会把 macOS/Linux 路径强制转换成 Windows 反斜杠。
+- 命令中的引号、管道、重定向等 shell 语法由对应平台的 shell 解释；运行前应查看命令预览。
+- 重构版构建需要 Rust、CMake、Qt6 和 C++17 编译器；目标是 Windows/macOS/Linux 共用 Qt6 UI 和 Rust 核心。
+- 当前优先保证 Windows 使用体验；macOS/Linux 保持可运行和配置兼容，但 Windows 旧工具的 OEM/ANSI 输出编码、跨平台打包图标和完整 shell 选择仍需分别实测。
+
 # 碎碎念
 * 由于本人学艺不精，大部分代码有参考GPT生成的代码，本人负责设计逻辑、调试和debug。~~理由其实很简单因为`N_m3u8_RE`命令和`N_m3u8DL-CLI`不一样还没有GUI，于是自己想了个可以兼容所有CLI工具的GUI。~~
 * 开发缘由是平时用到各种各样的CLI工具的频率太高，关键时刻又记不住命令，GUI填起来还是比输入命令方便的，便简单构思了这个GUI应用。
