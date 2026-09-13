@@ -258,6 +258,8 @@ jobs:
     env:
       QT_QPA_PLATFORM: windows
       QT_SCALE_FACTOR: "1"
+      # GitHub's Windows runner can suppress QtTest output unless forced.
+      QT_FORCE_STDERR_LOGGING: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -338,6 +340,8 @@ jobs:
     env:
       QT_QPA_PLATFORM: windows
       QT_SCALE_FACTOR: "1"
+      # GitHub's Windows runner can suppress QtTest output unless forced.
+      QT_FORCE_STDERR_LOGGING: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
