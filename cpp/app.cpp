@@ -269,7 +269,7 @@ AppWindow::AppWindow(QWidget *parent)
     , trayMenu(nullptr)
     , settings(nullptr)
     , currentTheme("dark")
-    , uiFontSize(13)
+    , uiFontSize(14)
     , currentTabIndex(0)
 {
     setWindowTitle("EasyCommandRunner");
@@ -887,7 +887,7 @@ void AppWindow::loadApplicationSettings() {
     if (settings->contains("ui/theme")) {
         currentTheme = settings->value("ui/theme", "dark").toString();
     }
-    uiFontSize = qBound(10, settings->value("ui/font_size", 13).toInt(), 24);
+    uiFontSize = qBound(10, settings->value("ui/font_size", 14).toInt(), 24);
     if (settings->contains("window/geometry")) {
         windowGeometry = settings->value("window/geometry").toByteArray();
     }

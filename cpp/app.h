@@ -272,7 +272,7 @@ private:
 
     QString currentTheme;
     QString originalTheme;
-    int originalFontSize = 13;
+    int originalFontSize = 14;
     bool m_loadingSettings = false;
 };
 
