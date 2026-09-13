@@ -303,7 +303,20 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       - name: Test
-        run: ctest --test-dir build -C Release --output-on-failure
+        shell: pwsh
+        run: |
+          # Run QtTest directly: GitHub's Windows runner may drop child
+          # process output when the test is launched through CTest.
+          $log = Join-Path $env:RUNNER_TEMP "ecr-ui-tests.txt"
+          $test = Join-Path $env:GITHUB_WORKSPACE "build\Release\ecr_ui_tests.exe"
+          & $test "-o" "$log,txt"
+          $exitCode = $LASTEXITCODE
+          if (Test-Path $log) {
+            Get-Content -LiteralPath $log
+          }
+          if ($exitCode -ne 0) {
+            exit $exitCode
+          }
 
       - name: Package Windows application
         shell: pwsh
@@ -385,7 +398,20 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       - name: Test
-        run: ctest --test-dir build -C Release --output-on-failure
+        shell: pwsh
+        run: |
+          # Run QtTest directly: GitHub's Windows runner may drop child
+          # process output when the test is launched through CTest.
+          $log = Join-Path $env:RUNNER_TEMP "ecr-ui-tests.txt"
+          $test = Join-Path $env:GITHUB_WORKSPACE "build\Release\ecr_ui_tests.exe"
+          & $test "-o" "$log,txt"
+          $exitCode = $LASTEXITCODE
+          if (Test-Path $log) {
+            Get-Content -LiteralPath $log
+          }
+          if ($exitCode -ne 0) {
+            exit $exitCode
+          }
 
       - name: Package Windows ARM64 application
         shell: pwsh
