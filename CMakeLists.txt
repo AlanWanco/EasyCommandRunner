@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(EasyCommandRunner LANGUAGES CXX)
+project(EasyCommandRunner VERSION 0.9.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -107,6 +107,10 @@ target_link_libraries(${PROJECT_NAME}
     Qt6::Concurrent
     ${RUST_LIB_PATH}
 )
+target_compile_definitions(${PROJECT_NAME}
+    PRIVATE
+    "ECR_APPLICATION_VERSION=\"${PROJECT_VERSION}\""
+)
 
 # Rust's Windows process implementation imports NtCreateNamedPipeFile
 # from ntdll; static libraries do not propagate this system dependency.
@@ -160,8 +164,8 @@ elseif(APPLE)
     set_target_properties(${PROJECT_NAME} PROPERTIES
         MACOSX_BUNDLE ON
         MACOSX_BUNDLE_BUNDLE_NAME "EasyCommandRunner"
-        MACOSX_BUNDLE_BUNDLE_VERSION "1.0.0"
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}"
         MACOSX_BUNDLE_ICON_FILE "app_icon.icns"
     )
 endif()
@@ -174,7 +178,7 @@ install(TARGETS ${PROJECT_NAME}
 
 # CPack configuration
 set(CPACK_PACKAGE_NAME "EasyCommandRunner")
-set(CPACK_PACKAGE_VERSION "0.9.0")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
 set(CPACK_PACKAGE_VENDOR "SleepyKanata")
 set(CPACK_PACKAGE_DESCRIPTION "A modern cross-platform command runner with GUI")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "EasyCommandRunner")

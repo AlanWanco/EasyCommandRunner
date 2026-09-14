@@ -1953,7 +1953,7 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
     app.setStyle(QStyleFactory::create("Fusion"));
     app.setApplicationName("EasyCommandRunner");
-    app.setApplicationVersion("1.0.0");
+    app.setApplicationVersion(QStringLiteral(ECR_APPLICATION_VERSION));
     app.setWindowIcon(makeAppIcon());
 
     AppWindow window;
