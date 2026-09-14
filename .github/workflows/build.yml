@@ -323,10 +323,14 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           $windeployqt = (Get-Command windeployqt.exe -ErrorAction Stop).Source
+          $exe = Join-Path $env:GITHUB_WORKSPACE "build\Release\EasyCommandRunner.exe"
+          # windeployqt deploys dependencies into --dir but does not copy
+          # the application executable itself.
+          Copy-Item $exe dist\EasyCommandRunner.exe -Force
           & $windeployqt --release --no-translations --compiler-runtime `
-            --dir dist build\Release\EasyCommandRunner.exe
+            --dir dist $exe
           if (-not (Test-Path dist\EasyCommandRunner.exe)) {
-            throw "windeployqt did not copy EasyCommandRunner.exe"
+            throw "failed to stage EasyCommandRunner.exe"
           }
           $svg = Join-Path $env:QT_ROOT_DIR "plugins\imageformats\qsvg.dll"
           if (Test-Path $svg) {
@@ -418,10 +422,14 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           $windeployqt = (Get-Command windeployqt.exe -ErrorAction Stop).Source
+          $exe = Join-Path $env:GITHUB_WORKSPACE "build\Release\EasyCommandRunner.exe"
+          # windeployqt deploys dependencies into --dir but does not copy
+          # the application executable itself.
+          Copy-Item $exe dist\EasyCommandRunner.exe -Force
           & $windeployqt --release --no-translations --compiler-runtime `
-            --dir dist build\Release\EasyCommandRunner.exe
+            --dir dist $exe
           if (-not (Test-Path dist\EasyCommandRunner.exe)) {
-            throw "windeployqt did not copy EasyCommandRunner.exe"
+            throw "failed to stage EasyCommandRunner.exe"
           }
           $svg = Join-Path $env:QT_ROOT_DIR "plugins\imageformats\qsvg.dll"
           if (Test-Path $svg) {
