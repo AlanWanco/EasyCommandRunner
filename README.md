@@ -220,3 +220,13 @@ Windows 不存在 Unix 执行位这一层限制；程序能否运行主要取决
 * 当前发布版使用 Rust + Qt6；旧版 PyQt5 实现保留在 `legacy` 分支。
 * 打包版已经包含 Qt 运行库和更纱黑体字体，不需要额外安装运行环境或字体。
 * 困困小彼方很可爱。
+
+---
+
+## 支持作者
+
+如果这个项目对你有帮助，欢迎请我喝杯咖啡 ☕️
+
+<p align="center">
+  <img src="./pic/buy-me-a-coffee.png" alt="Buy me a coffee" width="580">
+</p>
