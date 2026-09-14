@@ -100,7 +100,7 @@
 - macOS `.app` 的运行时 PNG 图标不会自动成为 Finder 的 bundle 图标；必须把原生 `app_icon.icns` 放进 `Contents/Resources`，并设置 `MACOSX_BUNDLE_ICON_FILE`。
 - `macdeployqt build/EasyCommandRunner.app -dmg` 的快捷方式不会可靠地创建拖拽安装所需的 `/Applications` 链接。当前流程先运行 `macdeployqt` 部署依赖，再用 `hdiutil` 从 staging 目录生成 DMG，并显式创建 `ln -s /Applications Applications`。
 - macOS ARM64 使用上述手动 staging 流程生成 DMG。
-- 普通提交/PR 的 `build.yml` 只构建和测试；`package_artifacts` 默认为 false，因此不会生成正式平台安装包。需要时可以上传 CI 原始二进制。
+- 普通 push 的 `build.yml` 会构建、测试并上传各平台安装包 artifact，但不会创建 GitHub Release；PR 和普通手动运行默认只构建测试（Linux 可上传原始 CI 二进制）。`package_artifacts` 在可复用 workflow 中用于强制启用正式打包。
 
 ## Release 配置
 

@@ -107,7 +107,7 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
       - name: Package Linux AppImage
-        if: ${{ inputs.package_artifacts }}
+        if: ${{ inputs.package_artifacts || github.event_name == 'push' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -150,7 +150,7 @@ jobs:
           mv "$appimage" dist/EasyCommandRunner-linux-x86_64.AppImage
 
       - name: Collect CI binary
-        if: ${{ !inputs.package_artifacts }}
+        if: ${{ !inputs.package_artifacts && github.event_name != 'push' }}
         shell: bash
         run: |
           mkdir -p dist
@@ -220,7 +220,7 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
       - name: Package Linux ARM64 AppImage
-        if: ${{ inputs.package_artifacts }}
+        if: ${{ inputs.package_artifacts || github.event_name == 'push' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -263,7 +263,7 @@ jobs:
           mv "$appimage" dist/EasyCommandRunner-linux-arm64.AppImage
 
       - name: Collect CI binary
-        if: ${{ !inputs.package_artifacts }}
+        if: ${{ !inputs.package_artifacts && github.event_name != 'push' }}
         shell: bash
         run: |
           mkdir -p dist
@@ -346,7 +346,7 @@ jobs:
           }
 
       - name: Package Windows application
-        if: ${{ inputs.package_artifacts }}
+        if: ${{ inputs.package_artifacts || github.event_name == 'push' }}
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
@@ -372,7 +372,7 @@ jobs:
           Compress-Archive -Path dist\* -DestinationPath EasyCommandRunner-windows-x86_64.zip -Force
 
       - name: Upload Windows artifact
-        if: ${{ inputs.package_artifacts }}
+        if: ${{ inputs.package_artifacts || github.event_name == 'push' }}
         uses: actions/upload-artifact@v4
         with:
           name: ecr-windows-x86_64
@@ -449,7 +449,7 @@ jobs:
           }
 
       - name: Package Windows ARM64 application
-        if: ${{ inputs.package_artifacts }}
+        if: ${{ inputs.package_artifacts || github.event_name == 'push' }}
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
@@ -475,7 +475,7 @@ jobs:
           Compress-Archive -Path dist\* -DestinationPath EasyCommandRunner-windows-arm64.zip -Force
 
       - name: Upload Windows ARM64 artifact
-        if: ${{ inputs.package_artifacts }}
+        if: ${{ inputs.package_artifacts || github.event_name == 'push' }}
         uses: actions/upload-artifact@v4
         with:
           name: ecr-windows-arm64
@@ -534,7 +534,7 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
       - name: Package macOS application
-        if: ${{ inputs.package_artifacts }}
+        if: ${{ inputs.package_artifacts || github.event_name == 'push' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -559,7 +559,7 @@ jobs:
           test -f dist/EasyCommandRunner-macos-arm64.dmg
 
       - name: Upload macOS artifact
-        if: ${{ inputs.package_artifacts }}
+        if: ${{ inputs.package_artifacts || github.event_name == 'push' }}
         uses: actions/upload-artifact@v4
         with:
           name: ecr-macos-arm64
