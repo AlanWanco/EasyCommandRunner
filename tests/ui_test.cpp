@@ -758,17 +758,21 @@ class UiTest : public QObject {
         auto *history = log.findChild<QComboBox *>("runHistoryCombo");
         auto *output = log.findChild<QPlainTextEdit *>("runLogOutput");
         QVERIFY(history && output);
-        log.startCommand("font", childCommand("--short-log"), data->path());
-        QTRY_COMPARE(log.runningCount(), 0);
 
         const int initialSize = output->font().pixelSize();
         QVERIFY(initialSize >= 8 && initialSize < 32);
         output->viewport()->setFocus(Qt::OtherFocusReason);
         QTest::keyClick(output->viewport(), Qt::Key_Equal, Qt::ControlModifier);
         QCOMPARE(output->font().pixelSize(), initialSize + 1);
+        // With no run yet, the placeholder is painted from the empty
+        // document's default font, so it must be updated too.
         QCOMPARE(output->document()->defaultFont().pixelSize(), initialSize + 1);
         QTest::keyClick(output->viewport(), Qt::Key_Minus, Qt::ControlModifier);
         QCOMPARE(output->font().pixelSize(), initialSize);
+        QCOMPARE(output->document()->defaultFont().pixelSize(), initialSize);
+
+        log.startCommand("font", childCommand("--short-log"), data->path());
+        QTRY_COMPARE(log.runningCount(), 0);
 
         // The shortcut is local to the log editor and must not react when
         // focus is on the history selector.

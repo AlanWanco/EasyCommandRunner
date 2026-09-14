@@ -176,6 +176,7 @@ bool LogPanel::eventFilter(QObject *object, QEvent *event) {
     const bool isOutputTarget = object == outputEdit || object == outputEdit->viewport();
     if (isOutputTarget) {
         if (object == outputEdit && event->type() == QEvent::FontChange) {
+            outputEdit->document()->setDefaultFont(outputEdit->font());
             for (const auto &run : runs) run->document->setDefaultFont(outputEdit->font());
         } else if (event->type() == QEvent::KeyPress) {
             auto *keyEvent = static_cast<QKeyEvent *>(event);
@@ -206,9 +207,9 @@ void LogPanel::adjustOutputFontSize(int delta) {
 
     font.setPixelSize(nextSize);
     outputEdit->setFont(font);
-    // FontChange normally updates these documents through eventFilter. Keep
-    // this explicit as well so a document switched during the key event is
-    // never left with the previous size.
+    // Keep the empty editor's document (used by the placeholder) and every
+    // historical run in sync with the zoomed widget font.
+    outputEdit->document()->setDefaultFont(font);
     for (const auto &run : runs) run->document->setDefaultFont(font);
 }
 
