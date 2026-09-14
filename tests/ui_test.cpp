@@ -763,11 +763,11 @@ class UiTest : public QObject {
 
         const int initialSize = output->font().pixelSize();
         QVERIFY(initialSize >= 8 && initialSize < 32);
-        output->setFocus(Qt::OtherFocusReason);
-        QTest::keyClick(output, Qt::Key_Equal, Qt::ControlModifier);
+        output->viewport()->setFocus(Qt::OtherFocusReason);
+        QTest::keyClick(output->viewport(), Qt::Key_Equal, Qt::ControlModifier);
         QCOMPARE(output->font().pixelSize(), initialSize + 1);
         QCOMPARE(output->document()->defaultFont().pixelSize(), initialSize + 1);
-        QTest::keyClick(output, Qt::Key_Minus, Qt::ControlModifier);
+        QTest::keyClick(output->viewport(), Qt::Key_Minus, Qt::ControlModifier);
         QCOMPARE(output->font().pixelSize(), initialSize);
 
         // The shortcut is local to the log editor and must not react when

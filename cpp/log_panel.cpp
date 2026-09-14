@@ -110,6 +110,9 @@ LogPanel::LogPanel(QWidget *parent) : QDockWidget("运行日志 - EasyCommandRun
     outputEdit = new QPlainTextEdit(content);
     outputEdit->setObjectName("runLogOutput");
     outputEdit->installEventFilter(this);
+    // QAbstractScrollArea may deliver keyboard events to its viewport when
+    // the user clicks inside the log text. Handle both focus targets.
+    outputEdit->viewport()->installEventFilter(this);
     outputEdit->setReadOnly(true);
     outputEdit->setMinimumHeight(100);
     outputEdit->setToolTip("日志字体：Ctrl+- 缩小，Ctrl+= 放大");
@@ -170,8 +173,9 @@ LogPanel::~LogPanel() {
 }
 
 bool LogPanel::eventFilter(QObject *object, QEvent *event) {
-    if (object == outputEdit) {
-        if (event->type() == QEvent::FontChange) {
+    const bool isOutputTarget = object == outputEdit || object == outputEdit->viewport();
+    if (isOutputTarget) {
+        if (object == outputEdit && event->type() == QEvent::FontChange) {
             for (const auto &run : runs) run->document->setDefaultFont(outputEdit->font());
         } else if (event->type() == QEvent::KeyPress) {
             auto *keyEvent = static_cast<QKeyEvent *>(event);
