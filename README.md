@@ -3,9 +3,35 @@
 
 # 介绍
 
-EasyCommandRunner是一个简单的保存命令行配置与运行命令行的GUI应用。这个应用的灵感来自`N_m3u8DL-CLI`自带的`N_m3u8DL-CLI-SimpleG`和`QuickCut`。本应用由python编写，通过pyQT5生成GUI界面，理论上支持所有命令行工具。
+EasyCommandRunner 是一个用于保存、编辑和运行命令行配置的 GUI 应用，理论上支持所有命令行工具。
+
+当前发布版 `v0.9.0` 使用 **Rust + Qt6** 重构，支持 Windows、Linux 和 macOS。原 PyQt5 版本保留在 [`legacy`](https://github.com/AlanWanco/EasyCommandRunner/tree/legacy) 分支。
+
+## 下载
+
+最新版本：[v0.9.0 Release](https://github.com/AlanWanco/EasyCommandRunner/releases/tag/v0.9.0)
+
+| 平台 | 文件 |
+| --- | --- |
+| Windows x86_64 | [Portable ZIP](https://github.com/AlanWanco/EasyCommandRunner/releases/download/v0.9.0/EasyCommandRunner-windows-x86_64.zip) |
+| Windows ARM64 | [Portable ZIP](https://github.com/AlanWanco/EasyCommandRunner/releases/download/v0.9.0/EasyCommandRunner-windows-arm64.zip) |
+| Linux x86_64 | [AppImage](https://github.com/AlanWanco/EasyCommandRunner/releases/download/v0.9.0/EasyCommandRunner-linux-x86_64.AppImage) |
+| Linux ARM64 | [AppImage](https://github.com/AlanWanco/EasyCommandRunner/releases/download/v0.9.0/EasyCommandRunner-linux-arm64.AppImage) |
+| macOS ARM64 | [DMG](https://github.com/AlanWanco/EasyCommandRunner/releases/download/v0.9.0/EasyCommandRunner-macos-arm64.dmg) |
+
+Windows 版本为免安装 Portable ZIP，解压后直接运行；Linux 首次运行前需要执行 `chmod +x EasyCommandRunner-*.AppImage`。
+
+## 内置字体
+
+打包版内置 **更纱黑体等宽（Sarasa Mono SC Regular）1.0.41**，字体和 SIL Open Font License 1.1 许可证通过 Qt 资源编译进程序，不需要在系统中安装字体，也不需要联网下载。字体用于界面、命令编辑框、预览和运行日志。
 
 ## 更新历史
+### **v0.9.0 更新（Rust + Qt6 重构版）**
+* 使用 Rust + Qt6 重构核心和界面，支持 Windows、Linux、macOS
+* 支持标签页、参数编辑与拖动排序、独立运行日志、配置备份和恢复
+* 提供 Windows Portable ZIP、Linux AppImage 和 macOS DMG
+* 内置更纱黑体等宽字体，不依赖系统字体
+
 ### **v0.74更新**
 * 增加可以手动选择是否打开新窗口运行的选项
 
@@ -116,11 +142,11 @@ EasyCommandRunner是一个简单的保存命令行配置与运行命令行的GUI
 
 ### v0.6更新 命令行解析
 
-![](https://raw.githubusercontent.com/AlanWanco/EasyCommandRunner/main/pic/2024-01-28_22-33-56.gif)
+![](https://raw.githubusercontent.com/AlanWanco/EasyCommandRunner/v0.9.0/pic/2024-01-28_22-33-56.gif)
 
 为了方便美观，如果有两个连续的动作（比如`-动作1 -动作2`或者CMD的`/a /b`，程序会在后面生成一个空格，这种情况下偶尔会生成这种顺序：
 
-![](https://github.com/AlanWanco/EasyCommandRunner/blob/main/pic/Snipaste_2024-01-28_23-11-35.png?raw=true)
+![](https://github.com/AlanWanco/EasyCommandRunner/blob/v0.9.0/pic/Snipaste_2024-01-28_23-11-35.png?raw=true)
 
 善用命令预生成功能，空的编辑框不影响命令运行，命令本身有问题才会影响命令运行。
 
@@ -140,7 +166,7 @@ EasyCommandRunner是一个简单的保存命令行配置与运行命令行的GUI
 
 ## 跨平台适配说明（Rust + Qt6 重构版）
 
-> 本节描述当前 `rust` 开发分支的方向。原版 PyQt5 主要在 Windows 环境中使用，旧版说明中的“打开新窗口运行”属于原版行为。
+> 当前发布版为 Rust + Qt6 重构版。原 PyQt5 版本保留在 `legacy` 分支，旧版说明中的“打开新窗口运行”属于原版行为。
 
 ### 平台定位
 
@@ -190,6 +216,6 @@ Windows 不存在 Unix 执行位这一层限制；程序能否运行主要取决
 * 在准备保存配置的时候，善用预生成命令功能进行调试。
 * ~~可以同时保存多条甚至不能共用的参数，当不需要的时候点击减号并不保存，然后运行~~。新增了复选框按钮，可以自由选择需要运行的参数。
 * ~~别问为啥关闭标签页的按钮风格那么突兀，因为pyQT5貌似改不了。~~ 把标签页关闭按钮改成了更现代的样式
-* 别问我这程序打包起来为什么这么大，pyQT5的框架太大了没办法，本体还是很小巧的。
-* 可能有人要问为什么用pyQT5，因为我只会一点python。
+* 当前发布版使用 Rust + Qt6；旧版 PyQt5 实现保留在 `legacy` 分支。
+* 打包版已经包含 Qt 运行库和更纱黑体字体，不需要额外安装运行环境或字体。
 * 困困小彼方很可爱。

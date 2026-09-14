@@ -42,6 +42,7 @@
 - Qt 6.8.3 传入 `modules: qtsvg` 会触发：
   `The packages ['qtsvg'] were not found while parsing XML of package information!`
   当前工作流不要传 `modules: qtsvg`；所有 job 都已移除该参数。
+- macOS 的 `macdeployqt` 只会根据实际链接依赖部署模块。若代码通过 `QPixmap::loadFromData(..., "SVG")` 间接依赖 SVG 插件，打包后的 `.app` 可能所有 SVG 都失效；当前做法是显式加入 `Qt6::Svg`，并用 `QSvgRenderer` 直接渲染资源 SVG。
 - 不要硬编码 Qt 安装目录。安装步骤之后使用 action 设置的 `QT_ROOT_DIR`，并将以下路径写入 `GITHUB_ENV`：
   `CMAKE_PREFIX_PATH`、`QT_PLUGIN_PATH`、`QT_QPA_PLATFORM_PLUGIN_PATH`。
 - Windows 下建议通过 `Get-Command qmake.exe` 获取 qmake，再执行 `qmake -query QT_INSTALL_PLUGINS`，不要假设 Qt 路径或 shell 风格。

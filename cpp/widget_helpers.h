@@ -16,6 +16,7 @@
 #include <QPushButton>
 #include <QTextEdit>
 #include <QUrl>
+#include <QSvgRenderer>
 
 inline QIcon themedIcon(const QString &name, const QString &theme) {
     QFile file(":/res/" + name + ".svg");
@@ -23,8 +24,17 @@ inline QIcon themedIcon(const QString &name, const QString &theme) {
         return {};
     QByteArray svg = file.readAll();
     svg.replace("currentColor", theme == "light" ? "#4b5563" : "#c6c9cc");
-    QPixmap image;
-    image.loadFromData(svg, "SVG");
+
+    // Render through QtSvg directly instead of QPixmap's image-format plugin.
+    // This keeps resource SVGs working in a macOS .app/DMG where deployment
+    // of the qsvg image plugin is not guaranteed.
+    QSvgRenderer renderer(svg);
+    if (!renderer.isValid())
+        return {};
+    QPixmap image(64, 64);
+    image.fill(Qt::transparent);
+    QPainter painter(&image);
+    renderer.render(&painter);
     return QIcon(image);
 }
 

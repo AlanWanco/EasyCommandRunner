@@ -18,6 +18,7 @@ find_package(Qt6 COMPONENTS
     Network
     Sql
     Concurrent
+    Svg
     REQUIRED
 )
 
@@ -105,6 +106,7 @@ target_link_libraries(${PROJECT_NAME}
     Qt6::Network
     Qt6::Sql
     Qt6::Concurrent
+    Qt6::Svg
     ${RUST_LIB_PATH}
 )
 target_compile_definitions(${PROJECT_NAME}
@@ -135,7 +137,7 @@ if(ECR_BUILD_TESTS)
     add_executable(ecr_ui_tests tests/ui_test.cpp ${SOURCES} ${HEADERS} ${RESOURCES})
     target_compile_definitions(ecr_ui_tests PRIVATE ECR_NO_MAIN)
     target_include_directories(ecr_ui_tests PRIVATE cpp)
-    target_link_libraries(ecr_ui_tests PRIVATE Qt6::Test Qt6::Widgets ${RUST_LIB_PATH})
+    target_link_libraries(ecr_ui_tests PRIVATE Qt6::Test Qt6::Widgets Qt6::Svg ${RUST_LIB_PATH})
     if(WIN32)
         target_link_libraries(ecr_ui_tests PRIVATE ntdll)
     endif()
