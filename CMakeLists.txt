@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(EasyCommandRunner VERSION 0.9.0 LANGUAGES CXX)
+project(EasyCommandRunner VERSION 0.9.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -135,7 +135,10 @@ if(ECR_BUILD_TESTS)
     enable_testing()
     find_package(Qt6 COMPONENTS Test REQUIRED)
     add_executable(ecr_ui_tests tests/ui_test.cpp ${SOURCES} ${HEADERS} ${RESOURCES})
-    target_compile_definitions(ecr_ui_tests PRIVATE ECR_NO_MAIN)
+    target_compile_definitions(ecr_ui_tests PRIVATE
+        ECR_NO_MAIN
+        "ECR_APPLICATION_VERSION=\"${PROJECT_VERSION}\""
+    )
     target_include_directories(ecr_ui_tests PRIVATE cpp)
     target_link_libraries(ecr_ui_tests PRIVATE Qt6::Test Qt6::Widgets Qt6::Svg ${RUST_LIB_PATH})
     if(WIN32)

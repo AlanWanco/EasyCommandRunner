@@ -32,6 +32,7 @@ class LogPanel : public QDockWidget {
     void append(Run *run, const QString &text);
     void updateRun(Run *run, const QString &status);
     void stopRun(Run *run);
+    void adjustOutputFontSize(int delta);
     void saveCurrent();
 
     std::vector<std::unique_ptr<Run>> runs;

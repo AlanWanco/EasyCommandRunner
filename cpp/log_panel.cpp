@@ -10,6 +10,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QMessageBox>
 #include <QPlainTextEdit>
@@ -111,6 +112,7 @@ LogPanel::LogPanel(QWidget *parent) : QDockWidget("运行日志 - EasyCommandRun
     outputEdit->installEventFilter(this);
     outputEdit->setReadOnly(true);
     outputEdit->setMinimumHeight(100);
+    outputEdit->setToolTip("日志字体：Ctrl+- 缩小，Ctrl+= 放大");
     outputEdit->setPlaceholderText("每次运行都会启动独立 shell，输出和历史显示在这里。\n这是日志视图，不是交互终端。");
     layout->addWidget(outputEdit, 1);
     setWidget(content);
@@ -168,10 +170,42 @@ LogPanel::~LogPanel() {
 }
 
 bool LogPanel::eventFilter(QObject *object, QEvent *event) {
-    if (object == outputEdit && event->type() == QEvent::FontChange) {
-        for (const auto &run : runs) run->document->setDefaultFont(outputEdit->font());
+    if (object == outputEdit) {
+        if (event->type() == QEvent::FontChange) {
+            for (const auto &run : runs) run->document->setDefaultFont(outputEdit->font());
+        } else if (event->type() == QEvent::KeyPress) {
+            auto *keyEvent = static_cast<QKeyEvent *>(event);
+            const Qt::KeyboardModifiers modifiers = keyEvent->modifiers();
+            const bool controlShortcut = modifiers.testFlag(Qt::ControlModifier)
+                && !modifiers.testFlag(Qt::AltModifier)
+                && !modifiers.testFlag(Qt::MetaModifier);
+            const bool decrease = keyEvent->key() == Qt::Key_Minus;
+            const bool increase = keyEvent->key() == Qt::Key_Equal || keyEvent->key() == Qt::Key_Plus;
+            if (controlShortcut && (decrease || increase)) {
+                adjustOutputFontSize(decrease ? -1 : 1);
+                keyEvent->accept();
+                return true;
+            }
+        }
     }
     return QDockWidget::eventFilter(object, event);
+}
+
+void LogPanel::adjustOutputFontSize(int delta) {
+    QFont font = outputEdit->font();
+    int currentSize = font.pixelSize();
+    if (currentSize <= 0)
+        currentSize = 14;
+    const int nextSize = qBound(8, currentSize + delta, 32);
+    if (nextSize == currentSize)
+        return;
+
+    font.setPixelSize(nextSize);
+    outputEdit->setFont(font);
+    // FontChange normally updates these documents through eventFilter. Keep
+    // this explicit as well so a document switched during the key event is
+    // never left with the previous size.
+    for (const auto &run : runs) run->document->setDefaultFont(font);
 }
 
 int LogPanel::runningCount() const {

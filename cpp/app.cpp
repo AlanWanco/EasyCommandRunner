@@ -636,15 +636,6 @@ void AppWindow::closeEvent(QCloseEvent *event) {
     }
 }
 
-void AppWindow::changeEvent(QEvent *event) {
-    if (event->type() == QEvent::WindowStateChange) {
-        if (windowState() & Qt::WindowMinimized) {
-            onMinimizeToTray();
-        }
-    }
-    QMainWindow::changeEvent(event);
-}
-
 // ============================================================================
 // Slots Implementation
 // ============================================================================
@@ -806,8 +797,9 @@ void AppWindow::onFontWeightChanged(int weight) {
 void AppWindow::onAboutClicked() {
     QMessageBox about(this);
     about.setWindowTitle("关于");
-    about.setText("EasyCommandRunner v1.0.0\n\n现代化的跨平台命令运行器\n\n"
-        "© 2024 SleepyKanata\n\n内置字体：Sarasa Mono SC 1.0.41（SIL OFL 1.1）");
+    about.setText(QStringLiteral("EasyCommandRunner v%1\n\n现代化的跨平台命令运行器\n\n"
+        "© 2024 SleepyKanata\n\n内置字体：Sarasa Mono SC 1.0.41（SIL OFL 1.1）")
+        .arg(QStringLiteral(ECR_APPLICATION_VERSION)));
     QFile license(":/res/fonts/OFL-Sarasa.txt");
     if (license.open(QIODevice::ReadOnly))
         about.setDetailedText(QString::fromUtf8(license.readAll()));

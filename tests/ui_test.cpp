@@ -752,6 +752,31 @@ class UiTest : public QObject {
         QCOMPARE(output->toPlainText(), firstLog);
     }
 
+    void logFontShortcuts() {
+        LogPanel log;
+        log.show();
+        auto *history = log.findChild<QComboBox *>("runHistoryCombo");
+        auto *output = log.findChild<QPlainTextEdit *>("runLogOutput");
+        QVERIFY(history && output);
+        log.startCommand("font", childCommand("--short-log"), data->path());
+        QTRY_COMPARE(log.runningCount(), 0);
+
+        const int initialSize = output->font().pixelSize();
+        QVERIFY(initialSize >= 8 && initialSize < 32);
+        output->setFocus(Qt::OtherFocusReason);
+        QTest::keyClick(output, Qt::Key_Equal, Qt::ControlModifier);
+        QCOMPARE(output->font().pixelSize(), initialSize + 1);
+        QCOMPARE(output->document()->defaultFont().pixelSize(), initialSize + 1);
+        QTest::keyClick(output, Qt::Key_Minus, Qt::ControlModifier);
+        QCOMPARE(output->font().pixelSize(), initialSize);
+
+        // The shortcut is local to the log editor and must not react when
+        // focus is on the history selector.
+        history->setFocus();
+        QTest::keyClick(history, Qt::Key_Equal, Qt::ControlModifier);
+        QCOMPARE(output->font().pixelSize(), initialSize);
+    }
+
     void concurrentRunsStopOnlySelected() {
         LogPanel log;
         log.startCommand("long", childCommand("--long-log"), data->path());
