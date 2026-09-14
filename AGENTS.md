@@ -100,12 +100,16 @@
 - macOS `.app` 的运行时 PNG 图标不会自动成为 Finder 的 bundle 图标；必须把原生 `app_icon.icns` 放进 `Contents/Resources`，并设置 `MACOSX_BUNDLE_ICON_FILE`。
 - `macdeployqt build/EasyCommandRunner.app -dmg` 的快捷方式不会可靠地创建拖拽安装所需的 `/Applications` 链接。当前流程先运行 `macdeployqt` 部署依赖，再用 `hdiutil` 从 staging 目录生成 DMG，并显式创建 `ln -s /Applications Applications`。
 - macOS ARM64 使用上述手动 staging 流程生成 DMG。
-- 非 tag 构建可以上传原始 CI 二进制；只有 `refs/tags/v*` 才执行正式 Linux AppImage、Windows ZIP、macOS DMG 打包。
+- 普通提交/PR 的 `build.yml` 只构建和测试；`package_artifacts` 默认为 false，因此不会生成正式平台安装包。需要时可以上传 CI 原始二进制。
 
 ## Release 配置
 
-- release job 必须 `needs` 所有平台打包 job，避免某个平台失败时仍发布不完整 Release。
-- 全局权限可以是 `contents: read`；release job 单独声明 `permissions: contents: write`，否则 `softprops/action-gh-release` 无法创建发布。
+- 构建和发布必须分开：`.github/workflows/build.yml` 负责 push/PR 的构建测试，同时作为可复用 workflow；`.github/workflows/release.yml` 只允许 `workflow_dispatch` 手动发布。
+- 手动发布时输入 `tag`（例如 `v0.9.0`）。`release.yml` 会把该 tag 作为源码 ref 调用完整平台构建，所有平台成功后才执行发布。
+- `source_ref` 可选，默认等于 `tag`。如果为了修复打包脚本而不改变 tag，需要明确填写要构建的分支或 commit；否则从旧 tag 构建，不会包含后续代码修改。
+- 发布 job 必须等待可复用构建 job 完成，避免某个平台失败时仍发布不完整 Release。
+- 全局权限可以是 `contents: read`；发布 workflow/job 单独声明 `permissions: contents: write`，否则 `softprops/action-gh-release` 无法创建或更新发布。
+- `softprops/action-gh-release` 设置 `overwrite_files: true`，同一 tag 手动再次运行会覆盖旧 Release 文件；不要依赖 artifact 的旧版本。
 - Release 文件列表必须和各平台实际产物名称完全一致：Linux x86_64/ARM64 AppImage、Windows x86_64/ARM64 ZIP、macOS ARM64 DMG。
 - 修改 workflow 后先执行 `git diff --check`，再检查 YAML 语法；提交后确认每个架构 job 的配置、构建、测试、打包和 artifact 步骤都实际运行。
 

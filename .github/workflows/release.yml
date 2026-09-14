@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (for example: v0.9.0)"
+        required: true
+        default: v0.9.0
+        type: string
+      source_ref:
+        description: "Optional branch, tag, or commit to build; defaults to tag"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build release artifacts
+    uses: ./.github/workflows/build.yml
+    with:
+      source_ref: ${{ inputs.source_ref || inputs.tag }}
+      package_artifacts: true
+    permissions:
+      contents: read
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Validate release tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          case "$RELEASE_TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "Release tag must look like v0.9.0" >&2; exit 1 ;;
+          esac
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ecr-*
+          path: dist
+          merge-multiple: true
+
+      - name: Check release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          find dist -maxdepth 2 -type f -print
+          test -f dist/EasyCommandRunner-linux-x86_64.AppImage
+          test -f dist/EasyCommandRunner-linux-arm64.AppImage
+          test -f dist/EasyCommandRunner-windows-x86_64.zip
+          test -f dist/EasyCommandRunner-windows-arm64.zip
+          test -f dist/EasyCommandRunner-macos-arm64.dmg
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: EasyCommandRunner ${{ inputs.tag }}
+          generate_release_notes: true
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/EasyCommandRunner-linux-x86_64.AppImage
+            dist/EasyCommandRunner-linux-arm64.AppImage
+            dist/EasyCommandRunner-windows-x86_64.zip
+            dist/EasyCommandRunner-windows-arm64.zip
+            dist/EasyCommandRunner-macos-arm64.dmg

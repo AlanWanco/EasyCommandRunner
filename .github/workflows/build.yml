@@ -1,15 +1,28 @@
-name: Build, test and release
+name: Build and test
 
 on:
   push: {}
   pull_request: {}
   workflow_dispatch: {}
+  workflow_call:
+    inputs:
+      source_ref:
+        description: "Source branch, tag, or commit to build"
+        required: false
+        type: string
+        default: ""
+      package_artifacts:
+        description: "Build distributable platform packages"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Keep a manually requested release build separate from a normal branch run.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.source_ref || 'default' }}-${{ inputs.package_artifacts || false }}
   cancel-in-progress: true
 
 env:
@@ -22,6 +35,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -44,6 +59,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
 
       - name: Install native tools
         run: |
@@ -90,7 +107,7 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
       - name: Package Linux AppImage
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: ${{ inputs.package_artifacts }}
         shell: bash
         run: |
           set -euo pipefail
@@ -133,7 +150,7 @@ jobs:
           mv "$appimage" dist/EasyCommandRunner-linux-x86_64.AppImage
 
       - name: Collect CI binary
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ !inputs.package_artifacts }}
         shell: bash
         run: |
           mkdir -p dist
@@ -156,6 +173,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
 
       - name: Install native tools
         run: |
@@ -201,7 +220,7 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
       - name: Package Linux ARM64 AppImage
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: ${{ inputs.package_artifacts }}
         shell: bash
         run: |
           set -euo pipefail
@@ -244,7 +263,7 @@ jobs:
           mv "$appimage" dist/EasyCommandRunner-linux-arm64.AppImage
 
       - name: Collect CI binary
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ !inputs.package_artifacts }}
         shell: bash
         run: |
           mkdir -p dist
@@ -269,6 +288,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -325,6 +346,7 @@ jobs:
           }
 
       - name: Package Windows application
+        if: ${{ inputs.package_artifacts }}
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
@@ -350,6 +372,7 @@ jobs:
           Compress-Archive -Path dist\* -DestinationPath EasyCommandRunner-windows-x86_64.zip -Force
 
       - name: Upload Windows artifact
+        if: ${{ inputs.package_artifacts }}
         uses: actions/upload-artifact@v4
         with:
           name: ecr-windows-x86_64
@@ -368,6 +391,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -424,6 +449,7 @@ jobs:
           }
 
       - name: Package Windows ARM64 application
+        if: ${{ inputs.package_artifacts }}
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
@@ -449,6 +475,7 @@ jobs:
           Compress-Archive -Path dist\* -DestinationPath EasyCommandRunner-windows-arm64.zip -Force
 
       - name: Upload Windows ARM64 artifact
+        if: ${{ inputs.package_artifacts }}
         uses: actions/upload-artifact@v4
         with:
           name: ecr-windows-arm64
@@ -465,6 +492,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -505,6 +534,7 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
       - name: Package macOS application
+        if: ${{ inputs.package_artifacts }}
         shell: bash
         run: |
           set -euo pipefail
@@ -529,43 +559,10 @@ jobs:
           test -f dist/EasyCommandRunner-macos-arm64.dmg
 
       - name: Upload macOS artifact
+        if: ${{ inputs.package_artifacts }}
         uses: actions/upload-artifact@v4
         with:
           name: ecr-macos-arm64
           path: dist/EasyCommandRunner-macos-arm64.dmg
           if-no-files-found: error
           retention-days: 14
-
-  release:
-    name: Create GitHub release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs:
-      - linux-x86_64
-      - linux-arm64
-      - windows-x86_64
-      - windows-arm64
-      - macos-arm64
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - name: Download release artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: ecr-*
-          path: dist
-          merge-multiple: true
-
-      - name: Publish release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: EasyCommandRunner ${{ github.ref_name }}
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          files: |
-            dist/EasyCommandRunner-linux-x86_64.AppImage
-            dist/EasyCommandRunner-linux-arm64.AppImage
-            dist/EasyCommandRunner-windows-x86_64.zip
-            dist/EasyCommandRunner-windows-arm64.zip
-            dist/EasyCommandRunner-macos-arm64.dmg
