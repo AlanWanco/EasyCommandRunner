@@ -9,7 +9,7 @@ on:
         default: v0.9.1
         type: string
       source_ref:
-        description: "Optional branch, tag, or commit to build; defaults to tag"
+        description: "Optional branch, tag, or commit to build; defaults to the selected workflow ref"
         required: false
         default: ""
         type: string
@@ -26,7 +26,11 @@ jobs:
     name: Build release artifacts
     uses: ./.github/workflows/build.yml
     with:
-      source_ref: ${{ inputs.source_ref || inputs.tag }}
+      # Build the selected branch by default so a new tag can be released
+      # without first creating an otherwise empty tag. Existing tags can be
+      # refreshed with the same setting; set source_ref explicitly for a
+      # reproducible tag checkout.
+      source_ref: ${{ inputs.source_ref || github.ref }}
       package_artifacts: true
     permissions:
       contents: read
@@ -45,7 +49,7 @@ jobs:
         run: |
           case "$RELEASE_TAG" in
             v[0-9]*.[0-9]*.[0-9]*) ;;
-            *) echo "Release tag must look like v0.9.1" >&2; exit 1 ;;
+            *) echo "Release tag must look like vX.Y.Z (for example, v0.9.1)" >&2; exit 1 ;;
           esac
 
       - name: Download release artifacts

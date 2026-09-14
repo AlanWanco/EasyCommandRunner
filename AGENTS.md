@@ -105,8 +105,8 @@
 ## Release 配置
 
 - 构建和发布必须分开：`.github/workflows/build.yml` 负责 push/PR 的构建测试，同时作为可复用 workflow；`.github/workflows/release.yml` 只允许 `workflow_dispatch` 手动发布。
-- 手动发布时输入 `tag`（例如 `v0.9.0`）。`release.yml` 会把该 tag 作为源码 ref 调用完整平台构建，所有平台成功后才执行发布。
-- `source_ref` 可选，默认等于 `tag`。如果为了修复打包脚本而不改变 tag，需要明确填写要构建的分支或 commit；否则从旧 tag 构建，不会包含后续代码修改。
+- 手动发布时输入 `tag`（例如 `v0.9.0`）。`release.yml` 会调用完整平台构建，所有平台成功后才执行发布；源码 ref 默认是手动运行时选择的分支。
+- `source_ref` 可选，默认等于手动运行时选中的 workflow ref（通常是默认分支 `rust`），这样新 tag 不需要预先存在；如果要从已有 tag 做可复现构建，应明确填写该 tag。更新旧 tag 时也可保持 `source_ref` 为空，让当前分支重新打包并覆盖旧文件。
 - 发布 job 必须等待可复用构建 job 完成，避免某个平台失败时仍发布不完整 Release。
 - 全局权限可以是 `contents: read`；发布 workflow/job 单独声明 `permissions: contents: write`，否则 `softprops/action-gh-release` 无法创建或更新发布。
 - `softprops/action-gh-release` 设置 `overwrite_files: true`，同一 tag 手动再次运行会覆盖旧 Release 文件；不要依赖 artifact 的旧版本。
