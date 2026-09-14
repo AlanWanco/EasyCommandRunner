@@ -72,12 +72,29 @@ set(HEADERS
 set(RESOURCES
     resources/resources.qrc
 )
+if(WIN32)
+    # Qt's setWindowIcon() only affects the running window.  Embed an icon
+    # resource as well so Explorer and shortcuts use the same application icon.
+    set(PLATFORM_RESOURCES
+        resources/app_icon.rc
+    )
+elseif(APPLE)
+    # Put the native icon into the .app bundle; the PNG in the Qt resource
+    # file is only used at runtime and does not set the bundle icon.
+    set(PLATFORM_RESOURCES
+        resources/app_icon.icns
+    )
+    set_source_files_properties(${PLATFORM_RESOURCES} PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources
+    )
+endif()
 
 # Create executable
 add_executable(${PROJECT_NAME}
     ${SOURCES}
     ${HEADERS}
     ${RESOURCES}
+    ${PLATFORM_RESOURCES}
 )
 
 # Link libraries
@@ -145,6 +162,7 @@ elseif(APPLE)
         MACOSX_BUNDLE_BUNDLE_NAME "EasyCommandRunner"
         MACOSX_BUNDLE_BUNDLE_VERSION "1.0.0"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0"
+        MACOSX_BUNDLE_ICON_FILE "app_icon.icns"
     )
 endif()
 

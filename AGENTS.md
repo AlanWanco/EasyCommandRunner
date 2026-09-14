@@ -85,14 +85,20 @@
   `Cannot find Visual Studio installation directory, VCINSTALLDIR is not set.`
   这不是 windeployqt 的必然失败原因，但必须检查 ZIP 是否包含所需的 MSVC runtime（如 `vcruntime140.dll`、`vcruntime140_1.dll`、`msvcp140.dll`）。若目标 runner 没有自动提供，应通过 Visual Studio 安装路径或显式复制运行库解决。
 - Qt SVG 依赖不能只看 CMake 的直接链接列表。当前程序使用 SVG 图标，Portable 目录需要确认存在 `Qt6Svg.dll`、`imageformats/qsvg.dll` 以及 `iconengines/qsvgicon.dll`；工作流保留了相应的 windeployqt/手动补齐逻辑。
-- 打包前应检查主程序、Qt DLL、`platforms/qwindows.dll`、SVG 插件和 MSVC runtime 都在 ZIP 中，而不是只检查 ZIP 文件是否生成。
+- Qt 的 `setWindowIcon()` 只影响运行中的窗口，不会把图标嵌入 Windows PE 文件；Windows 目标必须额外编译 `resources/app_icon.rc` 和 `.ico`，否则 Explorer 中的 exe 可能显示默认图标。
+- 打包前应检查主程序、Qt DLL、`platforms/qwindows.dll`、SVG 插件、嵌入式 exe 图标和 MSVC runtime 都在 ZIP 中，而不是只检查 ZIP 文件是否生成。
 - x86_64 和 ARM64 必须分别使用对应 runner、Qt 包、ZIP 文件名和 artifact 名称，不能在 ARM job 中复用 x86_64 的 Qt 下载地址。
 
 ## Linux/macOS 打包
 
+- Linux ELF 可执行文件本身通常不携带桌面图标；图标必须通过 `.desktop` 文件和 AppImage 的 icon theme 目录提供。`Icon=EasyCommandRunner` 必须和部署后的图标文件名一致。
+- `linuxdeploy --icon-file resources/app_icon.png` 默认按输入文件名部署，不能只写 `app_icon.png` 再让 desktop 文件使用 `Icon=EasyCommandRunner`；当前工作流使用 `--icon-filename EasyCommandRunner`，并检查 `AppDir/usr/share/icons/hicolor/*/apps/EasyCommandRunner.png` 是否存在。
+- linuxdeploy 会校验 PNG 的像素尺寸。当前 `app_icon.png` 为 `480x480`，属于当前 linuxdeploy 支持的尺寸；换图标时必须使用支持的正方形尺寸（例如 `256x256`），不能使用任意尺寸。
 - Linux AppImage 使用与 runner 架构匹配的 linuxdeploy：x86_64 使用 `linuxdeploy-x86_64.AppImage`，ARM64 使用 `linuxdeploy-aarch64.AppImage`；不能混用。
 - AppImage 打包需要 linuxdeploy Qt plugin，并设置 `APPIMAGE_EXTRACT_AND_RUN=1`；SVG 模块通过 `EXTRA_QT_MODULES="svg;"` 保留。
-- macOS ARM64 使用 `macdeployqt build/EasyCommandRunner.app -dmg`，产物是 DMG。
+- macOS `.app` 的运行时 PNG 图标不会自动成为 Finder 的 bundle 图标；必须把原生 `app_icon.icns` 放进 `Contents/Resources`，并设置 `MACOSX_BUNDLE_ICON_FILE`。
+- `macdeployqt build/EasyCommandRunner.app -dmg` 的快捷方式不会可靠地创建拖拽安装所需的 `/Applications` 链接。当前流程先运行 `macdeployqt` 部署依赖，再用 `hdiutil` 从 staging 目录生成 DMG，并显式创建 `ln -s /Applications Applications`。
+- macOS ARM64 使用上述手动 staging 流程生成 DMG。
 - 非 tag 构建可以上传原始 CI 二进制；只有 `refs/tags/v*` 才执行正式 Linux AppImage、Windows ZIP、macOS DMG 打包。
 
 ## Release 配置

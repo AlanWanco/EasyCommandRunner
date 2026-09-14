@@ -122,7 +122,10 @@ jobs:
             --appdir AppDir \
             --executable build/EasyCommandRunner \
             --desktop-file packaging/EasyCommandRunner.desktop \
-            --icon-file resources/app_icon.png
+            --icon-file resources/app_icon.png \
+            --icon-filename EasyCommandRunner
+          test -f AppDir/usr/share/applications/EasyCommandRunner.desktop
+          test -n "$(find AppDir/usr/share/icons/hicolor -type f -name 'EasyCommandRunner.png' -print -quit)"
           packaging/linuxdeploy --appdir AppDir --plugin qt --output appimage
 
           appimage="$(find . -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
@@ -230,7 +233,10 @@ jobs:
             --appdir AppDir \
             --executable build/EasyCommandRunner \
             --desktop-file packaging/EasyCommandRunner.desktop \
-            --icon-file resources/app_icon.png
+            --icon-file resources/app_icon.png \
+            --icon-filename EasyCommandRunner
+          test -f AppDir/usr/share/applications/EasyCommandRunner.desktop
+          test -n "$(find AppDir/usr/share/icons/hicolor -type f -name 'EasyCommandRunner.png' -print -quit)"
           packaging/linuxdeploy --appdir AppDir --plugin qt --output appimage
 
           appimage="$(find . -maxdepth 2 -type f -name '*.AppImage' -print -quit)"
@@ -502,11 +508,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p dist
-          macdeployqt build/EasyCommandRunner.app -dmg
-          dmg="$(find . -maxdepth 2 -type f -name 'EasyCommandRunner.dmg' -print -quit)"
-          test -n "$dmg"
-          mv "$dmg" dist/EasyCommandRunner-macos-arm64.dmg
+          mkdir -p dist packaging/dmg-root
+          # Deploy Qt libraries into the bundle first.  macdeployqt's -dmg
+          # shortcut creates a disk image without the Applications link.
+          macdeployqt build/EasyCommandRunner.app
+          test -d build/EasyCommandRunner.app/Contents/Resources
+          test -f build/EasyCommandRunner.app/Contents/Resources/app_icon.icns
+
+          rm -rf packaging/dmg-root
+          mkdir -p packaging/dmg-root
+          cp -R build/EasyCommandRunner.app packaging/dmg-root/
+          ln -s /Applications packaging/dmg-root/Applications
+          test -L packaging/dmg-root/Applications
+          hdiutil create \
+            -volname "EasyCommandRunner" \
+            -srcfolder packaging/dmg-root \
+            -ov \
+            -format UDZO \
+            dist/EasyCommandRunner-macos-arm64.dmg
+          test -f dist/EasyCommandRunner-macos-arm64.dmg
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
