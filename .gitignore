@@ -167,3 +167,4 @@ AGENT.md
 # Rust / Qt development outputs
 /build/
 /target/
+/gpui-prototype/target
