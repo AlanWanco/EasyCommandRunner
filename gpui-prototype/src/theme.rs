@@ -355,6 +355,8 @@ pub fn apply(mode: Theme, cx: &mut App) {
     t.tokens.button_primary_foreground = gpui::Hsla::from(rgb(p.on_primary)).into();
     t.tokens.button_primary_hover = gpui::Hsla::from(rgb(p.primary_hover)).into();
     t.tokens.button_primary_active = gpui::Hsla::from(rgb(p.primary_border)).into();
+    // Pill tabs read ThemeToken::secondary on hover, not the legacy secondary_hover field.
+    t.tokens.secondary = gpui::Hsla::from(rgb(p.hover)).into();
     t.tokens.button_secondary = gpui::Hsla::from(rgb(p.button)).into();
     t.tokens.button_secondary_foreground = gpui::Hsla::from(rgb(p.text)).into();
     t.tokens.button_secondary_hover = gpui::Hsla::from(rgb(p.hover)).into();

@@ -168,7 +168,7 @@ pub fn can_close_without_tray(window: &mut Window, cx: &mut App) -> bool {
     let Ok(workspace) = root.read(cx).view().clone().downcast::<CommandWorkspace>() else {
         return true;
     };
-    if workspace.read(cx).has_unsaved_edits() || workspace.read(cx).has_running_commands() {
+    if workspace.read(cx).has_unsaved_edits_now(cx) || workspace.read(cx).has_running_commands() {
         workspace.update(cx, |workspace, cx| workspace.request_exit(window, cx));
         false
     } else {
@@ -337,7 +337,7 @@ impl TrayRuntime {
     pub fn request_exit(&self, cx: &mut App) -> bool {
         let needs_confirmation = {
             let workspace = self.workspace.read(cx);
-            workspace.has_unsaved_edits() || workspace.has_running_commands()
+            workspace.has_unsaved_edits_now(cx) || workspace.has_running_commands()
         };
         if needs_confirmation {
             // Both confirmation paths must be visible and focused, even when

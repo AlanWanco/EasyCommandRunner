@@ -2850,6 +2850,18 @@ mod tests {
     }
 
     #[gpui::test]
+    fn dark_pill_tab_hover_uses_the_application_hover_color(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        cx.update(|cx| {
+            let secondary = gpui::component::Theme::global(cx).tokens.secondary.color;
+            assert_eq!(secondary, gpui::Hsla::from(gpui::rgb(0x2b2f2f)));
+        });
+    }
+
+    #[gpui::test]
     fn sidebar_hover_tracks_scrolled_configuration_rows(cx: &mut TestAppContext) {
         use crate::state::{CommandTab, TabData};
         use gpui::{PlatformInput, ScrollDelta, ScrollWheelEvent};
@@ -2894,21 +2906,27 @@ mod tests {
             for id in [25usize, 26usize] {
                 w.hover(("sidebar-tab", id), cx);
                 let row = w.find(("sidebar-tab", id)).bounds();
-                let indicator = w.find("sidebar-hover-indicator").bounds();
+                let indicator = w.find(("sidebar-hover-row-indicator", id)).bounds();
                 assert!(
                     row.top() >= viewport.top() && row.bottom() <= viewport.bottom(),
                     "测试行须在滚动视口内：{row:?} / {viewport:?}"
                 );
                 assert_eq!(
-                    indicator.top(),
-                    row.top(),
-                    "长列表滚动后 hover 高亮不得错位：配置 {id}"
+                    indicator, row,
+                    "长列表 hover 背景必须绑定到实际行：配置 {id}"
                 );
             }
+            let selected_row = w.find(("sidebar-tab", 26usize)).bounds();
+            assert_eq!(
+                w.find(("sidebar-selection-row-indicator", 26usize))
+                    .bounds(),
+                selected_row,
+                "长列表选中背景必须绑定到实际行"
+            );
 
             // Wheel scrolling moves rows under a stationary pointer but may not
-            // produce a MouseMove. The previous hovered ID must not leave its
-            // decoration attached to the wrong screen row.
+            // produce a MouseMove. The old row marker must disappear instead of
+            // remaining attached to its newly displaced screen position.
             w.hover(("sidebar-tab", 25usize), cx);
             let pointer = w.find(("sidebar-tab", 25usize)).bounds().center();
             w.dispatch_event(
@@ -2920,12 +2938,16 @@ mod tests {
                 cx,
             );
             w.render_frame(cx);
-            let selected = w.find(("sidebar-tab", 26usize)).bounds();
-            let indicator = w.find("sidebar-hover-indicator").bounds();
+            assert!(
+                w.try_find(("sidebar-hover-row-indicator", 25usize))
+                    .is_none(),
+                "滚动必须清除指针静止时过期的 hover 行"
+            );
+            w.hover(("sidebar-tab", 24usize), cx);
             assert_eq!(
-                indicator.top(),
-                selected.top(),
-                "滚动时必须清除过期 hover，避免高亮留在旧行"
+                w.find(("sidebar-hover-row-indicator", 24usize)).bounds(),
+                w.find(("sidebar-tab", 24usize)).bounds(),
+                "滚动后重新 hover 应精确贴合当前行"
             );
             w.remove_window();
         })
@@ -3373,10 +3395,22 @@ mod tests {
         let view = view.unwrap();
         cx.update_window(handle.into(), |_, w, cx| {
             assert!(!view.read(cx).has_unsaved_edits());
-            w.click("add-tab-title", cx);
-            assert!(view.read(cx).has_unsaved_edits());
-            w.click("application-menu", cx);
-            w.click("退出…", cx);
+            w.click("program", cx);
+            w.press(
+                if cfg!(target_os = "macos") {
+                    "cmd-a"
+                } else {
+                    "ctrl-a"
+                },
+                cx,
+            );
+            w.input("unsaved-command", cx);
+            assert_eq!(w.find("program").value(), Some("unsaved-command"));
+            assert!(
+                view.read(cx).has_unsaved_edits_now(cx),
+                "退出判定必须检查最新输入值，不依赖延迟送达的 Change 订阅"
+            );
+            view.update(cx, |v, cx| v.request_exit(w, cx));
             w.render_frame(cx);
             assert!(w.try_find("cancel-exit").is_some());
             assert!(w.try_find("confirm-exit").is_some());
@@ -3403,7 +3437,7 @@ mod tests {
             assert!(w.has_active_dialog(cx), "取消后应允许重新请求退出");
             w.press("escape", cx);
             assert!(!w.has_active_dialog(cx));
-            assert_eq!(view.read(cx).tabs.len(), 2);
+            assert_eq!(view.read(cx).tabs.len(), 1);
             w.remove_window();
         })
         .unwrap();

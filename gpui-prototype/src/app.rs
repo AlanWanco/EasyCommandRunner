@@ -70,6 +70,7 @@ pub struct CommandWorkspace {
     /// Runtime ID -> last saved disk index (unchanged by unsaved sidebar sorting).
     saved_slots: std::collections::HashMap<usize, usize>,
     saved_digest: Option<u64>,
+    saved_tab_data: std::collections::HashMap<usize, serde_json::Value>,
     pub(crate) sidebar_collapsed: bool,
     /// Preferred expanded width; never overwrite it when the window temporarily shrinks.
     sidebar_expanded_width: Option<f32>,
@@ -280,12 +281,14 @@ impl CommandWorkspace {
                     this.select_log(*id, window, cx);
                 }
             });
+        let saved_tab_data = Self::tab_data_snapshot(&tabs, cx);
         Self {
             tabs,
             open_tab_ids,
             active,
             saved_slots,
             saved_digest: store.as_ref().and_then(ConfigStore::config_digest),
+            saved_tab_data,
             sidebar_collapsed: settings
                 .and_then(|s| s["sidebar_collapsed"].as_bool())
                 .unwrap_or(false),
@@ -360,8 +363,34 @@ impl CommandWorkspace {
         self.close_to_tray = Some(active);
     }
 
+    fn tab_data_snapshot(
+        tabs: &[CommandTab],
+        cx: &App,
+    ) -> std::collections::HashMap<usize, serde_json::Value> {
+        tabs.iter()
+            .map(|tab| {
+                (
+                    tab.id,
+                    serde_json::to_value(tab.data(cx)).expect("tab data serializes"),
+                )
+            })
+            .collect()
+    }
+
     pub fn has_unsaved_edits(&self) -> bool {
         self.config_dirty || self.tabs.iter().any(|tab| tab.dirty)
+    }
+
+    /// Include live input values as well as asynchronously delivered Change events.
+    /// This keeps exit confirmation reliable if a tray command races the last edit.
+    pub fn has_unsaved_edits_now(&self, cx: &App) -> bool {
+        self.has_unsaved_edits()
+            || self.tabs.len() != self.saved_tab_data.len()
+            || self.tabs.iter().any(|tab| {
+                serde_json::to_value(tab.data(cx))
+                    .map(|current| self.saved_tab_data.get(&tab.id) != Some(&current))
+                    .unwrap_or(true)
+            })
     }
 
     pub(crate) fn has_running_commands(&self) -> bool {
@@ -438,6 +467,7 @@ impl CommandWorkspace {
             .clone()
             .ok_or_else(|| "配置存储尚未初始化。".to_string())?;
         store.save(&self.configuration(cx))?;
+        self.saved_tab_data = Self::tab_data_snapshot(&self.tabs, cx);
         self.saved_slots = self
             .tabs
             .iter()
@@ -501,7 +531,7 @@ impl CommandWorkspace {
     }
 
     fn request_reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let has_changes = self.has_unsaved_edits();
+        let has_changes = self.has_unsaved_edits_now(cx);
         let has_running = self.has_running_commands();
         if !has_changes && !has_running {
             if let Err(error) = self.reload_configuration(window, cx) {
@@ -843,7 +873,7 @@ impl CommandWorkspace {
         if self.exit_dialog_open.get() {
             return;
         }
-        let has_changes = self.has_unsaved_edits();
+        let has_changes = self.has_unsaved_edits_now(cx);
         let has_running = self.has_running_commands();
         if !has_changes && !has_running {
             // Let the main-window closed callback own GPUI shutdown. This also
@@ -2131,7 +2161,11 @@ impl CommandWorkspace {
         );
         let hover_opacity = gpui::base::transition(
             "sidebar-hover-opacity",
-            if hovered_index.is_some() { 1_f32 } else { 0. },
+            if hovered_index.is_some() && !overflowing {
+                1_f32
+            } else {
+                0.
+            },
             gpui::base::Transition::new(std::time::Duration::from_millis(
                 if self.reduced_motion || overflowing {
                     0
@@ -2150,6 +2184,13 @@ impl CommandWorkspace {
             .flex_1()
             .min_h_0()
             .pr(px(10.))
+            .on_scroll_wheel(cx.listener(|v, _, _, cx| {
+                // A wheel event scrolls rows beneath a stationary pointer without a MouseMove.
+                // Clear the old row before the next frame can paint it at a stale screen position.
+                if v.sidebar_hovered.take().is_some() {
+                    cx.notify();
+                }
+            }))
             .overflow_y_scroll()
             .track_scroll(&self.sidebar_scroll);
         for (index, tab) in self.tabs.iter().enumerate() {
@@ -2159,7 +2200,7 @@ impl CommandWorkspace {
             // During travel keep the destination legible until the pill reaches it.
             let selected_visible = !self.open_tab_ids.is_empty()
                 && index == self.active
-                && (selected_y - index as f32 * 44.).abs() < 20.;
+                && (overflowing || (selected_y - index as f32 * 44.).abs() < 20.);
             let foreground = if selected_visible {
                 p.on_primary
             } else {
@@ -2209,9 +2250,10 @@ impl CommandWorkspace {
                         }
                         cx.notify();
                     }))
-                    // Like the top tab bar, anchor decorations inside the first row so
-                    // scroll_to_top_of_item still indexes real tabs, not decorative children.
-                    .when(index == 0, |d| {
+                    // Animate short lists with one indicator anchored inside row zero.
+                    // In a scrollable list, paint each highlight inside its own row instead:
+                    // an absolute index-based marker can drift as rows move under a stationary pointer.
+                    .when(index == 0 && !overflowing, |d| {
                         d.child(
                             frame("sidebar-hover-indicator")
                                 .absolute()
@@ -2233,6 +2275,30 @@ impl CommandWorkspace {
                                 .rounded(px(RADIUS))
                                 .bg(rgb(p.selected_tab))
                                 .opacity(if self.open_tab_ids.is_empty() { 0. } else { 1. }),
+                        )
+                    })
+                    .when(overflowing && hovered_index == Some(index), |d| {
+                        d.child(
+                            frame(("sidebar-hover-row-indicator", id))
+                                .absolute()
+                                .left_0()
+                                .top_0()
+                                .w_full()
+                                .h_full()
+                                .rounded(px(RADIUS))
+                                .bg(rgb(p.hover)),
+                        )
+                    })
+                    .when(overflowing && selected_visible, |d| {
+                        d.child(
+                            frame(("sidebar-selection-row-indicator", id))
+                                .absolute()
+                                .left_0()
+                                .top_0()
+                                .w_full()
+                                .h_full()
+                                .rounded(px(RADIUS))
+                                .bg(rgb(p.selected_tab)),
                         )
                     })
                     .tooltip({
@@ -2482,13 +2548,6 @@ impl CommandWorkspace {
                     .flex_col()
                     .flex_1()
                     .min_h_0()
-                    .on_scroll_wheel(cx.listener(|v, _, _, cx| {
-                        // Scrolling moves rows under a stationary pointer without a mouse-move
-                        // event. Drop the old row target rather than leaving its marker behind.
-                        if v.sidebar_hovered.take().is_some() {
-                            cx.notify();
-                        }
-                    }))
                     .child(items.child(div().h(px(16.)).flex_shrink_0()))
                     .child(
                         frame("sidebar-scrollbar-lane")
