@@ -525,6 +525,47 @@ pub fn start_shell(
     Ok((RunHandle { child, stopped }, receiver))
 }
 
+/// Preserve incomplete UTF-8 code points between pipe reads without retaining completed output.
+#[derive(Default)]
+struct Utf8StreamDecoder {
+    pending: Vec<u8>,
+}
+
+impl Utf8StreamDecoder {
+    fn push(&mut self, bytes: &[u8]) -> String {
+        self.pending.extend_from_slice(bytes);
+        let mut text = String::new();
+        let mut consumed = 0;
+        while consumed < self.pending.len() {
+            match std::str::from_utf8(&self.pending[consumed..]) {
+                Ok(valid) => {
+                    text.push_str(valid);
+                    consumed = self.pending.len();
+                }
+                Err(error) => {
+                    let valid_end = consumed + error.valid_up_to();
+                    text.push_str(std::str::from_utf8(&self.pending[consumed..valid_end]).unwrap());
+                    consumed = valid_end;
+                    if let Some(invalid_len) = error.error_len() {
+                        text.push('\u{fffd}');
+                        consumed += invalid_len;
+                    } else {
+                        break; // The next read may complete this multi-byte code point.
+                    }
+                }
+            }
+        }
+        self.pending.drain(..consumed);
+        text
+    }
+
+    fn finish(&mut self) -> String {
+        let remaining = String::from_utf8_lossy(&self.pending).into_owned();
+        self.pending.clear();
+        remaining
+    }
+}
+
 fn spawn_reader<R: Read + Send + 'static>(
     mut reader: R,
     stream: OutputStream,
@@ -540,18 +581,25 @@ fn spawn_reader<R: Read + Send + 'static>(
         )
         .spawn(move || {
             let mut buffer = [0u8; 8192];
+            let mut decoder = Utf8StreamDecoder::default();
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) => break,
                     Ok(count) => {
-                        let text = String::from_utf8_lossy(&buffer[..count]).into_owned();
-                        if sender.send(RunEvent::Output { stream, text }).is_err() {
-                            break;
+                        let text = decoder.push(&buffer[..count]);
+                        if !text.is_empty()
+                            && sender.send(RunEvent::Output { stream, text }).is_err()
+                        {
+                            return;
                         }
                     }
                     Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                     Err(_) => break,
                 }
+            }
+            let text = decoder.finish();
+            if !text.is_empty() {
+                let _ = sender.send(RunEvent::Output { stream, text });
             }
         })
 }
@@ -889,6 +937,50 @@ mod tests {
             2,
             "corrupt bytes are preserved as a safety backup"
         );
+    }
+
+    #[test]
+    fn shell_reader_preserves_multibyte_text_across_read_boundaries() {
+        struct OneByteAtATime(std::io::Cursor<Vec<u8>>);
+        impl Read for OneByteAtATime {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                let count = buffer.len().min(1);
+                self.0.read(&mut buffer[..count])
+            }
+        }
+
+        for (stream, bytes, expected) in [
+            (
+                OutputStream::Stdout,
+                "中文🙂\n".as_bytes().to_vec(),
+                "中文🙂\n",
+            ),
+            (
+                OutputStream::Stderr,
+                b"bad\xff\xe4\xb8\xad!".to_vec(),
+                "bad\u{fffd}中!",
+            ),
+            (OutputStream::Stdout, b"end\xe4".to_vec(), "end\u{fffd}"),
+        ] {
+            let (sender, receiver) = mpsc::channel();
+            let reader =
+                spawn_reader(OneByteAtATime(std::io::Cursor::new(bytes)), stream, sender).unwrap();
+            reader.join().unwrap();
+            let output = receiver
+                .try_iter()
+                .map(|event| match event {
+                    RunEvent::Output {
+                        stream: actual,
+                        text,
+                    } => {
+                        assert_eq!(actual, stream);
+                        text
+                    }
+                    RunEvent::Finished { .. } => panic!("reader must not finish the process"),
+                })
+                .collect::<String>();
+            assert_eq!(output, expected);
+        }
     }
 
     #[cfg(unix)]
