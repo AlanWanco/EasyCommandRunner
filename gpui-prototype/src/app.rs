@@ -17,6 +17,7 @@ use gpui::component::{
     button::{ButtonCustomVariant, ButtonVariants},
     input::TextareaState,
     menu::DropdownMenu,
+    scroll::{Scrollbar, ScrollbarMode},
     select::{Select, SelectEvent, SelectState},
     tab::{Tab, TabBar, TabVariant},
     Disableable, Icon, IndexPath, Root, Selectable, Sizable, Size, StyledExt, TitleBar, WindowExt,
@@ -2096,9 +2097,19 @@ impl CommandWorkspace {
         let folded = self.sidebar_collapsed;
         let progress = ((width - 56.) / (expanded_width - 56.)).clamp(0., 1.);
         let show_details = progress > 0.015 || !folded;
+        // Long lists scroll independently of the first-row decoration anchor.
+        // A spring travelling through offscreen rows leaves a misleading hover
+        // highlight far from the pointer, so snap while the list overflows.
+        let list_height = f32::from(window.viewport_size().height)
+            - TITLE_HEIGHT
+            - STATUS_HEIGHT
+            - CONTROL
+            - GAP * 3.
+            - 16.;
+        let overflowing = self.tabs.len() as f32 * 44. + 16. > list_height;
         let motion = gpui::base::Spring::new(std::time::Duration::from_millis(240))
             .with_epsilon(0.2)
-            .with_travel(!self.reduced_motion);
+            .with_travel(!self.reduced_motion && !overflowing);
         let selected_y = gpui::base::spring(
             "sidebar-selection-y",
             self.active as f32 * 44.,
@@ -2116,16 +2127,19 @@ impl CommandWorkspace {
             window,
             cx,
         );
-        let hover_opacity =
-            gpui::base::transition(
-                "sidebar-hover-opacity",
-                if hovered_index.is_some() { 1_f32 } else { 0. },
-                gpui::base::Transition::new(std::time::Duration::from_millis(
-                    if self.reduced_motion { 0 } else { 130 },
-                )),
-                window,
-                cx,
-            );
+        let hover_opacity = gpui::base::transition(
+            "sidebar-hover-opacity",
+            if hovered_index.is_some() { 1_f32 } else { 0. },
+            gpui::base::Transition::new(std::time::Duration::from_millis(
+                if self.reduced_motion || overflowing {
+                    0
+                } else {
+                    130
+                },
+            )),
+            window,
+            cx,
+        );
         let mut items = frame("sidebar-items")
             .flex()
             .flex_col()
@@ -2133,6 +2147,7 @@ impl CommandWorkspace {
             .w_full()
             .flex_1()
             .min_h_0()
+            .pr(px(10.))
             .overflow_y_scroll()
             .track_scroll(&self.sidebar_scroll);
         for (index, tab) in self.tabs.iter().enumerate() {
@@ -2458,7 +2473,30 @@ impl CommandWorkspace {
                         r.child(details.opacity(progress))
                     }),
             )
-            .child(items.child(div().h(px(16.)).flex_shrink_0()))
+            .child(
+                frame("sidebar-list-viewport")
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .child(items.child(div().h(px(16.)).flex_shrink_0()))
+                    .child(
+                        frame("sidebar-scrollbar-lane")
+                            .absolute()
+                            // Keep the full thumb outside the overlapping resize hit target.
+                            .right(px(2.))
+                            .top_0()
+                            .bottom_0()
+                            .w(px(10.))
+                            .child(
+                                Scrollbar::vertical(&self.sidebar_scroll)
+                                    .id("sidebar-scrollbar")
+                                    .mode(ScrollbarMode::Always)
+                                    .viewport_from_layout(),
+                            ),
+                    ),
+            )
             .when(folded && progress <= 0.015, |d| {
                 d.child(
                     icon_button("sidebar-add-tab", "新建标签", IconName::Plus, cx)
@@ -2508,7 +2546,7 @@ impl CommandWorkspace {
             )
     }
 
-    fn header(&self, width: f32, cx: &mut Context<Self>) -> impl IntoElement {
+    fn header(&self, width: f32, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
         let platform_controls = if cfg!(target_os = "macos") { 80. } else { 114. };
         let tabs_width =
@@ -2704,125 +2742,187 @@ impl CommandWorkspace {
                     ),
             );
         }
-        let close_to_tray = self.close_to_tray.clone();
-        TitleBar::new()
-            // Linux 客户端装饰的 X 按钮直接调用 remove_window，绕过窗口管理器的
-            // should_close 回调；显式接到同一条关闭路径，防止留下无窗口的托盘进程。
-            .on_close_window(move |_, window, cx| {
-                if close_to_tray.as_ref().is_some_and(|active| active.get()) {
-                    tray::hide_to_tray(window, cx);
-                } else if tray::can_close_without_tray(window, cx) {
-                    window.remove_window();
-                }
-            })
-            .h(px(TITLE_HEIGHT))
-            .bg(rgb(p.app))
+        let bar = row()
+            .when(!cfg!(target_os = "windows"), |bar| bar.w_full())
+            .when(cfg!(target_os = "windows"), |bar| bar.flex_1().min_w_0())
+            .h_full()
+            .gap(px(GAP))
+            .pr(px(GAP))
             .child(
-                row()
-                    .w_full()
-                    .h_full()
+                frame("app-brand")
+                    .w(px(56.))
+                    .h(px(CONTROL))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
                     .gap(px(GAP))
-                    .pr(px(GAP))
                     .child(
-                        frame("app-brand")
-                            .w(px(56.))
-                            .h(px(CONTROL))
-                            .flex_shrink_0()
-                            .flex()
-                            .items_center()
-                            .gap(px(GAP))
-                            .child(
-                                Icon::new(IconName::Terminal)
-                                    .size(px(ICON))
-                                    .text_color(rgb(p.focus)),
-                            )
-                            .child(div().text_size(px(SMALL)).font_semibold().child("ECR")),
+                        Icon::new(IconName::Terminal)
+                            .size(px(ICON))
+                            .text_color(rgb(p.focus)),
                     )
-                    .child(self.menu_button(cx))
-                    .child(
-                        icon_button("previous-tab", "上一个标签", IconName::ChevronLeft, cx)
-                            .rounded(px(RADIUS))
-                            .disabled(self.open_position().is_none_or(|position| position == 0))
-                            .on_click(cx.listener(|v, _, w, cx| {
-                                if let Some(position) = v
-                                    .open_position()
-                                    .and_then(|position| position.checked_sub(1))
-                                {
-                                    let id = v.open_tab_ids[position];
-                                    if let Some(index) = v.tabs.iter().position(|tab| tab.id == id)
-                                    {
-                                        v.select_tab(index, w, cx);
-                                    }
-                                }
-                            })),
-                    )
-                    .child(
-                        frame("tab-strip")
-                            .min_w_0()
-                            .max_w(px(tabs_width))
-                            .child(tabs),
-                    )
-                    .child(
-                        icon_button("add-tab-title", "新建标签", IconName::Plus, cx)
-                            .on_click(cx.listener(|v, _, w, cx| v.new_tab(false, w, cx))),
-                    )
-                    .child(
-                        icon_button("next-tab", "下一个标签", IconName::ChevronRight, cx)
-                            .rounded(px(RADIUS))
-                            .disabled(
-                                self.open_position()
-                                    .is_none_or(|position| position + 1 >= self.open_tab_ids.len()),
-                            )
-                            .on_click(cx.listener(|v, _, w, cx| {
-                                if let Some(position) = v
-                                    .open_position()
-                                    .filter(|position| position + 1 < v.open_tab_ids.len())
-                                {
-                                    let id = v.open_tab_ids[position + 1];
-                                    if let Some(index) = v.tabs.iter().position(|tab| tab.id == id)
-                                    {
-                                        v.select_tab(index, w, cx);
-                                    }
-                                }
-                            })),
-                    )
-                    .child(
-                        frame("title-drag-space")
-                            .flex_1()
-                            .min_w(px(40.))
-                            .h_full()
-                            .window_control_area(WindowControlArea::Drag),
-                    )
-                    .child(
-                        icon_button(
-                            "theme-toggle",
-                            "切换深色 / 浅色主题",
-                            if *cx.global::<Theme>() == Theme::Dark {
-                                IconName::Sun
-                            } else {
-                                IconName::Moon
-                            },
-                            cx,
-                        )
-                        .on_click(cx.listener(|v, _, window, cx| {
-                            v.set_appearance(cx.global::<Theme>().toggle(), window, cx);
-                        })),
-                    )
-                    .child(
-                        icon_button("save", "保存配置", IconName::Save, cx)
-                            .disabled(!self.config_writable || self.store.is_none())
-                            .on_click(cx.listener(|v, _, _, cx| {
-                                if let Err(error) = v.save_configuration(cx) {
-                                    v.status = error;
-                                    cx.notify();
-                                }
-                            })),
-                    )
-                    .child(
-                        icon_button("settings", "工作区设置", IconName::Settings2, cx)
-                            .on_click(cx.listener(|v, _, w, cx| v.open_settings(w, cx))),
-                    ),
+                    .child(div().text_size(px(SMALL)).font_semibold().child("ECR")),
             )
+            .child(self.menu_button(cx))
+            .child(
+                icon_button("previous-tab", "上一个标签", IconName::ChevronLeft, cx)
+                    .rounded(px(RADIUS))
+                    .disabled(self.open_position().is_none_or(|position| position == 0))
+                    .on_click(cx.listener(|v, _, w, cx| {
+                        if let Some(position) = v
+                            .open_position()
+                            .and_then(|position| position.checked_sub(1))
+                        {
+                            let id = v.open_tab_ids[position];
+                            if let Some(index) = v.tabs.iter().position(|tab| tab.id == id) {
+                                v.select_tab(index, w, cx);
+                            }
+                        }
+                    })),
+            )
+            .child(
+                frame("tab-strip")
+                    .min_w_0()
+                    .max_w(px(tabs_width))
+                    .rounded_full()
+                    .bg(rgb(p.button))
+                    .child(tabs),
+            )
+            .child(
+                icon_button("add-tab-title", "新建标签", IconName::Plus, cx)
+                    .on_click(cx.listener(|v, _, w, cx| v.new_tab(false, w, cx))),
+            )
+            .child(
+                icon_button("next-tab", "下一个标签", IconName::ChevronRight, cx)
+                    .rounded(px(RADIUS))
+                    .disabled(
+                        self.open_position()
+                            .is_none_or(|position| position + 1 >= self.open_tab_ids.len()),
+                    )
+                    .on_click(cx.listener(|v, _, w, cx| {
+                        if let Some(position) = v
+                            .open_position()
+                            .filter(|position| position + 1 < v.open_tab_ids.len())
+                        {
+                            let id = v.open_tab_ids[position + 1];
+                            if let Some(index) = v.tabs.iter().position(|tab| tab.id == id) {
+                                v.select_tab(index, w, cx);
+                            }
+                        }
+                    })),
+            )
+            .child(
+                frame("title-drag-space")
+                    .flex_1()
+                    .min_w(px(40.))
+                    .h_full()
+                    .window_control_area(WindowControlArea::Drag),
+            )
+            .child(
+                icon_button(
+                    "theme-toggle",
+                    "切换深色 / 浅色主题",
+                    if *cx.global::<Theme>() == Theme::Dark {
+                        IconName::Sun
+                    } else {
+                        IconName::Moon
+                    },
+                    cx,
+                )
+                .on_click(cx.listener(|v, _, window, cx| {
+                    v.set_appearance(cx.global::<Theme>().toggle(), window, cx);
+                })),
+            )
+            .child(
+                icon_button("save", "保存配置", IconName::Save, cx)
+                    .disabled(!self.config_writable || self.store.is_none())
+                    .on_click(cx.listener(|v, _, _, cx| {
+                        if let Err(error) = v.save_configuration(cx) {
+                            v.status = error;
+                            cx.notify();
+                        }
+                    })),
+            )
+            .child(
+                icon_button("settings", "工作区设置", IconName::Settings2, cx)
+                    .on_click(cx.listener(|v, _, w, cx| v.open_settings(w, cx))),
+            );
+        if cfg!(target_os = "windows") {
+            // Kit TitleBar marks its entire bar as HTCAPTION on Windows, including
+            // children. Native hit testing then swallows theme/save/settings clicks.
+            // Only our deliberately empty gap may drag the window.
+            let control = |id, icon, area, color| {
+                frame(id)
+                    .w(px(34.))
+                    .h_full()
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .justify_center()
+                    .window_control_area(area)
+                    .hover(|d| d.bg(rgb(color)))
+                    .child(Icon::new(icon).size(px(ICON)).text_color(rgb(p.text)))
+            };
+            let supported = window.window_controls();
+            frame("windows-title-bar")
+                .flex()
+                .items_center()
+                .h(px(TITLE_HEIGHT))
+                .pl(px(12.))
+                .bg(rgb(p.app))
+                .border_b_1()
+                .border_color(rgb(p.divider))
+                .child(bar)
+                .child(
+                    frame("windows-controls")
+                        .flex()
+                        .h_full()
+                        .flex_shrink_0()
+                        .when(supported.minimize, |d| {
+                            d.child(control(
+                                "windows-minimize",
+                                IconName::WindowMinimize,
+                                WindowControlArea::Min,
+                                p.hover,
+                            ))
+                        })
+                        .when(supported.maximize, |d| {
+                            d.child(control(
+                                "windows-maximize",
+                                if window.is_maximized() {
+                                    IconName::WindowRestore
+                                } else {
+                                    IconName::WindowMaximize
+                                },
+                                WindowControlArea::Max,
+                                p.hover,
+                            ))
+                        })
+                        .child(control(
+                            "windows-close",
+                            IconName::WindowClose,
+                            WindowControlArea::Close,
+                            p.danger_hover,
+                        )),
+                )
+                .into_any_element()
+        } else {
+            let close_to_tray = self.close_to_tray.clone();
+            TitleBar::new()
+                // Linux 客户端装饰的 X 按钮直接调用 remove_window，绕过窗口管理器的
+                // should_close 回调；显式接到同一条关闭路径，防止留下无窗口的托盘进程。
+                .on_close_window(move |_, window, cx| {
+                    if close_to_tray.as_ref().is_some_and(|active| active.get()) {
+                        tray::hide_to_tray(window, cx);
+                    } else if tray::can_close_without_tray(window, cx) {
+                        window.remove_window();
+                    }
+                })
+                .h(px(TITLE_HEIGHT))
+                .bg(rgb(p.app))
+                .child(bar)
+                .into_any_element()
+        }
     }
 
     fn resize_grip(
@@ -3896,6 +3996,25 @@ impl Render for CommandWorkspace {
         frame("workspace")
             .relative()
             .size_full()
+            .capture_key_down(cx.listener(|v, event: &gpui::KeyDownEvent, _, cx| {
+                let modifiers = event.keystroke.modifiers;
+                let save_modifier = if cfg!(target_os = "macos") {
+                    modifiers.platform && !modifiers.control
+                } else {
+                    modifiers.control && !modifiers.platform
+                };
+                if save_modifier
+                    && !modifiers.alt
+                    && !modifiers.shift
+                    && event.keystroke.key.eq_ignore_ascii_case("s")
+                {
+                    if let Err(error) = v.save_configuration(cx) {
+                        v.status = error;
+                        cx.notify();
+                    }
+                    cx.stop_propagation();
+                }
+            }))
             .on_mouse_move(cx.listener(|v, event: &gpui::MouseMoveEvent, w, cx| {
                 let Some(drag) = v.resizing else {
                     return;
@@ -4001,7 +4120,7 @@ impl Render for CommandWorkspace {
             .text_size(px(theme::font_size(cx)))
             .font_weight(theme::font_weight(cx))
             .line_height(px(LINE.max(theme::font_size(cx) * 1.15)))
-            .child(self.header(width, cx))
+            .child(self.header(width, window, cx))
             .child(
                 frame("workspace-body")
                     .flex()

@@ -334,8 +334,12 @@ impl TrayRuntime {
     }
 
     pub fn request_exit(&self, cx: &mut App) {
-        if self.workspace.read(cx).has_unsaved_edits() {
-            restore(self.window, cx); // 窗口隐藏时也能看到退出确认。
+        if self.workspace.read(cx).has_unsaved_edits()
+            || self.workspace.read(cx).has_running_commands()
+        {
+            // Both confirmation paths must be visible and focused, even when
+            // the main window was hidden in the tray before Exit was chosen.
+            restore(self.window, cx);
         }
         if let Err(error) = self.window.update(cx, |_, window, cx| {
             self.workspace

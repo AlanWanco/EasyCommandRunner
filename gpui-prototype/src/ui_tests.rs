@@ -2137,6 +2137,65 @@ mod tests {
     }
 
     #[gpui::test]
+    fn save_shortcut_persists_focused_editor_without_losing_focus(cx: &mut TestAppContext) {
+        use gpui::Focusable;
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let dir = std::env::temp_dir().join(format!(
+            "ecr-gpui-save-shortcut-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = crate::backend::ConfigStore::at(dir.join("config.json"), dir.join("backup"));
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let handle = cx.open_window(size(px(850.), px(800.)), |window, cx| {
+            let view = cx.new(|cx| {
+                CommandWorkspace::new_with_backend(window, cx, Some(store.clone()), None, None)
+            });
+            workspace = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let view = workspace.unwrap();
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.click("program", cx);
+            view.update(cx, |workspace, cx| {
+                let tab_id = workspace.tabs[0].id;
+                workspace.tabs[0].program.update(cx, |state, cx| {
+                    state.set_value("echo shortcut", window, cx);
+                });
+                workspace.changed(tab_id, window, cx);
+            });
+            assert!(view.read(cx).has_unsaved_edits());
+            window.press(
+                if cfg!(target_os = "macos") {
+                    "cmd-s"
+                } else {
+                    "ctrl-s"
+                },
+                cx,
+            );
+            assert!(!view.read(cx).has_unsaved_edits());
+            assert_eq!(
+                store.load().unwrap().unwrap()["tabs"][0]["program"],
+                view.read(cx).tabs[0].program.read(cx).value().to_string()
+            );
+            assert!(view.read(cx).tabs[0]
+                .program
+                .focus_handle(cx)
+                .is_focused(window));
+            window.remove_window();
+        })
+        .unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[gpui::test]
     fn editing_tabs_and_parameters(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui::init(cx);
@@ -2785,6 +2844,66 @@ mod tests {
             let restored: crate::state::TabData =
                 serde_json::from_value(serde_json::to_value(&data).unwrap()).unwrap();
             assert_eq!(restored.icon_source, data.icon_source);
+            w.remove_window();
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    fn sidebar_hover_tracks_scrolled_configuration_rows(cx: &mut TestAppContext) {
+        use crate::state::{CommandTab, TabData};
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let handle = cx.open_window(size(px(760.), px(700.)), |w, cx| {
+            let view = cx.new(|cx| {
+                let mut view = CommandWorkspace::new(w, cx);
+                view.reduced_motion = true;
+                for id in 1..28 {
+                    view.tabs.push(CommandTab::new(
+                        id,
+                        TabData {
+                            name: format!("Tab {id}"),
+                            ..TabData::example()
+                        },
+                        w,
+                        cx,
+                    ));
+                }
+                view
+            });
+            workspace = Some(view.clone());
+            Root::new(view, w, cx)
+        });
+        let view = workspace.unwrap();
+        cx.update_window(handle.into(), |_, w, cx| {
+            view.update(cx, |v, cx| v.select_tab(26, w, cx));
+            w.render_frame(cx);
+            let viewport = w.find("sidebar-items").bounds();
+            let lane = w.find("sidebar-scrollbar-lane").bounds();
+            let resize_handle = w.find("sidebar-resize-handle").bounds();
+            assert!(lane.left() >= viewport.right() - px(12.));
+            assert_eq!(lane.size.height, viewport.size.height);
+            assert!(
+                lane.right() <= resize_handle.left(),
+                "滚动条不能与侧栏宽度拖动区重叠：{lane:?} / {resize_handle:?}"
+            );
+            for id in [25usize, 26usize] {
+                w.hover(("sidebar-tab", id), cx);
+                let row = w.find(("sidebar-tab", id)).bounds();
+                let indicator = w.find("sidebar-hover-indicator").bounds();
+                assert!(
+                    row.top() >= viewport.top() && row.bottom() <= viewport.bottom(),
+                    "测试行须在滚动视口内：{row:?} / {viewport:?}"
+                );
+                assert_eq!(
+                    indicator.top(),
+                    row.top(),
+                    "长列表滚动后 hover 高亮不得错位：配置 {id}"
+                );
+            }
             w.remove_window();
         })
         .unwrap();
