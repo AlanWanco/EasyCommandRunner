@@ -221,6 +221,19 @@ jobs:
             if ($exitCode -ne 0) { exit $exitCode }
           }
 
+      # Tests use GPUI's headless Windows platform. Exercise the real windowed
+      # application too: a valid PE may still exit at DirectX/window creation.
+      - name: Smoke-test Windows debug and release GUI startup
+        shell: pwsh
+        run: |
+          foreach ($profile in @('debug', 'release')) {
+            & pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/check-windows-startup.ps1 `
+              -Path "target/$profile/easy-command-runner-gpui-prototype.exe" `
+              -Profile $profile
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -ne 0) { exit $exitCode }
+          }
+
       - name: Upload CI-only binary (not a portable package)
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
