@@ -1,6 +1,8 @@
 # EasyCommandRunner
 ![icon](./pic/SleepyKanata.jpg)
 
+> **Legacy / 停止维护**：此分支保留 Rust + Qt6 版本的历史代码；后续开发在 [`gpui`](https://github.com/AlanWanco/EasyCommandRunner/tree/gpui) 分支。下方 `v0.9.0` 为既有 Qt 发布包，不代表 GPUI 已正式发布。
+
 # 介绍
 
 EasyCommandRunner 是一个用于保存、编辑和运行命令行配置的 GUI 应用，理论上支持所有命令行工具。
@@ -112,6 +114,7 @@ Windows 版本为免安装 Portable ZIP，解压后直接运行；Linux 首次�
 * 命令解析 增量命令解析
 * 单行命令备注
 * 关闭窗口时默认缩小到托盘；直接最小化不会自动隐藏，可通过托盘菜单手动隐藏
+* Qt legacy 托盘使用独立的 `resources/tray_icon.svg`：系统深色模式呈白色、浅色模式呈黑色；macOS 使用系统模板图标自动适配菜单栏，窗口/安装包图标保持原样。GPUI 原型在独立分支实现托盘。
 * 所有输入框都支持拖入文件清除原输入框内容并生成文件路径，但有略微不同，只有描述框是插入文件路径，其余都是文件路径替换所有框内内容。
 * ~~由于使用了`subprocess.list2cmdline`方法，**如果文件路径内有空格不需要前后加上双引号**。~~ 已修复，现在双引号会被保留了
 * 当点击保存的时候标签页标题才会更改，如果清空标题，当重新加载配置文件时，标题才会变回默认标题。

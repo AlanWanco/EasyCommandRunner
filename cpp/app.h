@@ -11,6 +11,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QSystemTrayIcon>
+#include <QIcon>
 #include <QMenu>
 #include <QString>
 #include <QMap>
@@ -50,6 +51,8 @@ public:
     QString getCurrentTheme() const { return currentTheme; }
     int getFontSize() const { return uiFontSize; }
     int getFontWeight() const { return uiFontWeight; }
+    // 桌面系统外观决定托盘色彩，独立于应用窗口内的主题。
+    static QIcon trayIconForSystemScheme(Qt::ColorScheme scheme);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -94,6 +97,7 @@ private:
     void setupUI();
     void setupMenu();
     void setupTrayIcon();
+    void updateTrayIcon();
     void setupConnections();
     void loadStylesheet(const QString &theme);
     void syncTabHeaderHeight();

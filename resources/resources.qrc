@@ -2,6 +2,7 @@
 <RCC version="1.0">
     <qresource prefix="/res">
         <file>app_icon.png</file>
+        <file>tray_icon.svg</file>
         <file>fonts/SarasaMonoSC-Regular.ttf</file>
         <file>fonts/OFL-Sarasa.txt</file>
         <file>stylesheet_dark.qss</file>

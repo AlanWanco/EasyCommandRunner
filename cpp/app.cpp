@@ -10,6 +10,10 @@
 #include <algorithm>
 #include <QApplication>
 #include <QGuiApplication>
+#include <QStyleHints>
+#include <QPalette>
+#include <QSvgRenderer>
+#include <QImage>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QScrollArea>
@@ -359,8 +363,46 @@ private:
 };
 
 static QIcon makeAppIcon() {
-    // 统一使用带透明圆角的应用图标，避免窗口和托盘显示方形灰底。
-    QIcon icon(":/res/app_icon.png");
+    // 窗口、Explorer / Finder 继续使用彩色应用图标；托盘使用独立的单色 SVG。
+    return QIcon(":/res/app_icon.png");
+}
+
+static Qt::ColorScheme systemTrayScheme() {
+    const auto scheme = QGuiApplication::styleHints()->colorScheme();
+    if (scheme != Qt::ColorScheme::Unknown) return scheme;
+    // 部分 Linux 桌面/离屏平台不报告系统色彩方案；取平台默认调色板，
+    // 不读取应用窗口的自定义深浅样式表。
+    return QGuiApplication::palette().color(QPalette::Window).lightness() < 128
+        ? Qt::ColorScheme::Dark : Qt::ColorScheme::Light;
+}
+
+QIcon AppWindow::trayIconForSystemScheme(Qt::ColorScheme scheme) {
+    QSvgRenderer renderer(QStringLiteral(":/res/tray_icon.svg"));
+    if (!renderer.isValid()) {
+        qWarning() << "Tray SVG resource unavailable; falling back to application icon";
+        return makeAppIcon();
+    }
+
+    // SVG 原图透明、宽高比约 1.6。保持其比例，提供多种物理像素尺寸给
+    // Windows DPI、Linux 状态区与 macOS Retina，避免把应用图标缩进托盘。
+    const QColor color = scheme == Qt::ColorScheme::Dark ? Qt::white : Qt::black;
+    QIcon icon;
+    for (const int pixels : {16, 20, 24, 32, 40, 48, 64}) {
+        QImage image(pixels, pixels, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::transparent);
+        QPainter painter(&image);
+        painter.setRenderHint(QPainter::Antialiasing);
+        renderer.render(&painter, QRectF(0, 0, pixels, pixels));
+        painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+        painter.fillRect(image.rect(), color);
+        painter.end();
+        icon.addPixmap(QPixmap::fromImage(image));
+    }
+#ifdef Q_OS_MACOS
+    // 菜单栏图标必须标记为模板：macOS 会随菜单栏自身外观自动切换明暗，
+    // 即使菜单栏与应用/桌面主题不一致也不会出现同色不可见。
+    icon.setIsMask(true);
+#endif
     return icon;
 }
 // AppWindow Implementation
@@ -583,7 +625,14 @@ void AppWindow::setupMenu() {
 
 void AppWindow::setupTrayIcon() {
     trayIcon = new QSystemTrayIcon(this);
-    trayIcon->setIcon(makeAppIcon());
+    updateTrayIcon();
+    connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged,
+        this, [this](Qt::ColorScheme scheme) {
+            if (trayIcon) trayIcon->setIcon(trayIconForSystemScheme(
+                scheme == Qt::ColorScheme::Unknown ? systemTrayScheme() : scheme));
+        });
+    // 未报告 colorScheme 的桌面，系统调色板变化时也刷新托盘。
+    qApp->installEventFilter(this);
     trayIcon->setToolTip("EasyCommandRunner");
 
     trayMenu = new QMenu(this);
@@ -608,6 +657,10 @@ void AppWindow::setupTrayIcon() {
     trayIcon->show();
 
     connect(trayIcon, &QSystemTrayIcon::activated, this, &AppWindow::onTrayIconActivated);
+}
+
+void AppWindow::updateTrayIcon() {
+    if (trayIcon) trayIcon->setIcon(trayIconForSystemScheme(systemTrayScheme()));
 }
 
 void AppWindow::setupConnections() {
@@ -903,6 +956,9 @@ void AppWindow::scheduleTabHeaderSync() {
 }
 
 bool AppWindow::eventFilter(QObject *object, QEvent *event) {
+    if (object == qApp && event->type() == QEvent::ApplicationPaletteChange) {
+        updateTrayIcon();
+    }
     if (object == tabCombo && (event->type() == QEvent::FontChange
         || event->type() == QEvent::StyleChange || event->type() == QEvent::LayoutRequest
         || event->type() == QEvent::Resize)) {

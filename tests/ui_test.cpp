@@ -11,6 +11,7 @@
 #include <QFontMetricsF>
 #include <QRawFont>
 #include <QScrollBar>
+#include <QStyleHints>
 #include <QStandardPaths>
 #include <QTabBar>
 #include <QToolButton>
@@ -72,6 +73,79 @@ class UiTest : public QObject {
         data = std::make_unique<QTemporaryDir>();
         QVERIFY(data->isValid());
         qputenv("ECR_DATA_DIR", data->path().toUtf8());
+    }
+
+    void traySvgTracksDesktopSchemeNotWindowTheme() {
+        const QIcon dark = AppWindow::trayIconForSystemScheme(Qt::ColorScheme::Dark);
+        const QIcon light = AppWindow::trayIconForSystemScheme(Qt::ColorScheme::Light);
+        QVERIFY(!dark.isNull() && !light.isNull());
+#ifdef Q_OS_MACOS
+        QVERIFY(dark.isMask() && light.isMask()); // 菜单栏由系统实时着色
+#endif
+        for (int size : {16, 20, 32, 48}) {
+            const QImage white = dark.pixmap(QSize(size, size)).toImage();
+            const QImage black = light.pixmap(QSize(size, size)).toImage();
+            QCOMPARE(white.size(), QSize(size, size));
+            QCOMPARE(black.size(), white.size());
+            bool hasVisiblePixel = false;
+            bool hasTransparency = false;
+            for (int y = 0; y < size; ++y) {
+                for (int x = 0; x < size; ++x) {
+                    const QColor a = white.pixelColor(x, y);
+                    const QColor b = black.pixelColor(x, y);
+                    QCOMPARE(a.alpha(), b.alpha()); // 同一张 SVG，只切换颜色，不改变形状
+                    hasTransparency |= a.alpha() == 0;
+                    if (a.alpha() >= 250) {
+                        hasVisiblePixel = true;
+                        QCOMPARE(a.red(), 255);
+                        QCOMPARE(a.green(), 255);
+                        QCOMPARE(a.blue(), 255);
+                        QCOMPARE(b.red(), 0);
+                        QCOMPARE(b.green(), 0);
+                        QCOMPARE(b.blue(), 0);
+                    }
+                }
+            }
+            QVERIFY(hasVisiblePixel && hasTransparency);
+        }
+        AppWindow window;
+        auto *tray = window.findChild<QSystemTrayIcon *>();
+        QVERIFY(tray && !tray->icon().isNull());
+        auto *hints = QGuiApplication::styleHints();
+#ifndef Q_OS_MACOS
+        auto trayRed = [tray]() {
+            const QImage image = tray->icon().pixmap(QSize(32, 32)).toImage();
+            for (int y = 0; y < image.height(); ++y)
+                for (int x = 0; x < image.width(); ++x)
+                    if (image.pixelColor(x, y).alpha() >= 250)
+                        return image.pixelColor(x, y).red();
+            return -1;
+        };
+#endif
+        const auto originalIcon = tray->icon().cacheKey();
+        QVERIFY(QMetaObject::invokeMethod(hints, "colorSchemeChanged", Qt::DirectConnection,
+            Q_ARG(Qt::ColorScheme, Qt::ColorScheme::Dark)));
+        QVERIFY(tray->icon().cacheKey() != originalIcon);
+#ifndef Q_OS_MACOS
+        QTRY_COMPARE(trayRed(), 255);
+#endif
+        const auto darkIcon = tray->icon().cacheKey();
+        QVERIFY(QMetaObject::invokeMethod(hints, "colorSchemeChanged", Qt::DirectConnection,
+            Q_ARG(Qt::ColorScheme, Qt::ColorScheme::Light)));
+        QVERIFY(tray->icon().cacheKey() != darkIcon);
+#ifdef Q_OS_MACOS
+        QVERIFY(tray->icon().isMask());
+#else
+        QTRY_COMPARE(trayRed(), 0);
+#endif
+        // 窗口内主题不是桌面外观；切换界面主题不能覆盖托盘系统配色。
+        window.onThemeChanged("light");
+        window.onThemeChanged("dark");
+#ifdef Q_OS_MACOS
+        QVERIFY(tray->icon().isMask());
+#else
+        QTRY_COMPARE(trayRed(), 0);
+#endif
     }
 
     void darkLayoutAndAssets() {
