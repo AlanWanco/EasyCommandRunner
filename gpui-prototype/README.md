@@ -19,7 +19,7 @@ cargo run --features ui-test -- /tmp/ecr-gpui-visual
 
 `.github/workflows/gpui.yml` 在 `gpui` 分支的相关文件变更、相关 PR 或手动运行时构建 GPUI；所有 Cargo 命令都在本目录执行并使用 Rust 1.95.0 与 `Cargo.lock`。macOS ARM64 运行完整后端/UI 测试、构建并做离屏视觉检查；Linux x86_64/ARM64 与 Windows x86_64/ARM64 原生 runner 分别运行非截图测试与构建。Linux/Windows 当前没有 GPUI Kit 的 PNG 离屏渲染器，CI 的通过不等同于这些平台的窗口、托盘和 IME 实机验收。
 
-`gpui-ci-*` artifact 仅是原始 CI 二进制和 macOS 检查截图，不是可分发安装包；不进入 Qt 的 `build.yml`/`release.yml`，也不创建 GitHub Release。现有 Qt 工作流仍会响应仓库 push，它的状态与独立 GPUI CI 应分别查看。
+`gpui-ci-*` artifact 仅是原始 CI 调试二进制和 macOS 检查截图，不是可分发安装包；不进入 Qt 的 `build.yml`/`release.yml`，也不创建 GitHub Release。工作流还配置了五架构 release 二进制的打包前审计（需原生 runner 验证）：macOS 检查架构和非系统动态库，Linux 输出实际 ELF 依赖/glibc 版本，Windows 检查 debug/release EXE 的架构、GUI 子系统及内嵌图标组。普通 Windows 程序双击不弹控制台；`cargo test` 和 `ui-test` 仍保留控制台诊断。检查通过不等于干净机器可运行，也不是已签名/已发布的安装包。现有 Qt 工作流仍会响应仓库 push，它的状态与独立 GPUI CI 应分别查看。
 
 ## 已实现
 

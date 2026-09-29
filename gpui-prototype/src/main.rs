@@ -1,3 +1,10 @@
+// Real Windows application builds must not open a console window on double-click.
+// Keep test/visual harness builds on the console subsystem for useful diagnostics.
+#![cfg_attr(
+    all(windows, not(test), not(feature = "ui-test")),
+    windows_subsystem = "windows"
+)]
+
 extern crate gpui_kit as gpui;
 
 mod app;

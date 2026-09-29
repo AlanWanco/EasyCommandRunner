@@ -13,6 +13,9 @@ resvg = "=0.46.0"
 futures = "=0.3.34"
 url = "=2.5.8"
 
+[build-dependencies]
+embed-resource = "=3.0.11"
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
