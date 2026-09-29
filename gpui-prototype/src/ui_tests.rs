@@ -2152,9 +2152,14 @@ mod tests {
         cx.update_window(handle.into(), |_, window, cx| {
             window.render_frame(cx);
             let preview = view.read(cx).preview.read(cx).value().to_string();
+            let expected = if cfg!(windows) {
+                "ffmpeg -i \"input file.mp4\" -c:v libx264 output.mp4"
+            } else {
+                "ffmpeg -i 'input file.mp4' -c:v libx264 output.mp4"
+            };
             assert_eq!(
-                preview, "ffmpeg -i 'input file.mp4' -c:v libx264 output.mp4",
-                "预览文本必须使用 Rust 命令构建逻辑并保留正确的参数分隔",
+                preview, expected,
+                "预览文本必须按目标 Shell 的引用规则构建命令并保留参数分隔",
             );
             window.click("command-name", cx);
             window.press(
