@@ -1,8 +1,12 @@
 name: Build and test
 
 on:
-  push: {}
-  pull_request: {}
+  # GPUI has its own Cargo workflow. This Qt-only CI must not fail GPUI pushes
+  # because a legacy Windows ARM runner no longer has the VS 2022 generator.
+  push:
+    branches-ignore: [gpui]
+  pull_request:
+    branches-ignore: [gpui]
   workflow_dispatch: {}
   workflow_call:
     inputs:
