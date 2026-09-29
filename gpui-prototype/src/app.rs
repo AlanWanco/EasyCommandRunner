@@ -846,7 +846,9 @@ impl CommandWorkspace {
         let has_changes = self.has_unsaved_edits();
         let has_running = self.has_running_commands();
         if !has_changes && !has_running {
-            cx.quit();
+            // Let the main-window closed callback own GPUI shutdown. This also
+            // closes the actual HWND before the Windows message loop quits.
+            window.remove_window();
             return;
         }
         self.exit_dialog_open.set(true);
@@ -900,7 +902,7 @@ impl CommandWorkspace {
                                             Ok(Ok(()))
                                         ) {
                                             w.close_dialog(cx);
-                                            cx.quit();
+                                            w.remove_window();
                                         }
                                     }),
                             )
@@ -919,7 +921,7 @@ impl CommandWorkspace {
                             .on_click(move |_, w, cx| {
                                 on_confirm.set(false);
                                 w.close_dialog(cx);
-                                cx.quit();
+                                w.remove_window();
                             }),
                         ),
                 )
@@ -2480,6 +2482,13 @@ impl CommandWorkspace {
                     .flex_col()
                     .flex_1()
                     .min_h_0()
+                    .on_scroll_wheel(cx.listener(|v, _, _, cx| {
+                        // Scrolling moves rows under a stationary pointer without a mouse-move
+                        // event. Drop the old row target rather than leaving its marker behind.
+                        if v.sidebar_hovered.take().is_some() {
+                            cx.notify();
+                        }
+                    }))
                     .child(items.child(div().h(px(16.)).flex_shrink_0()))
                     .child(
                         frame("sidebar-scrollbar-lane")
@@ -2489,6 +2498,15 @@ impl CommandWorkspace {
                             .top_0()
                             .bottom_0()
                             .w(px(10.))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|v, _, _, cx| {
+                                    // Dragging the thumb also scrolls beneath a stationary pointer.
+                                    if v.sidebar_hovered.take().is_some() {
+                                        cx.notify();
+                                    }
+                                }),
+                            )
                             .child(
                                 Scrollbar::vertical(&self.sidebar_scroll)
                                     .id("sidebar-scrollbar")

@@ -139,8 +139,11 @@ fn main() {
                             break;
                         }
                     }
-                    if cx.update(|app| tray.poll(app, tick)) {
-                        cx.update(|app| tray.request_exit(app));
+                    if cx.update(|app| tray.poll(app, tick))
+                        && cx.update(|app| tray.request_exit(app))
+                    {
+                        // Drop the Windows tray icon before GPUI shuts down its message loop.
+                        break;
                     }
                     tick = tick.wrapping_add(1);
                     cx.background_executor()

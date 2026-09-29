@@ -333,20 +333,27 @@ impl TrayRuntime {
         Ok(true)
     }
 
-    pub fn request_exit(&self, cx: &mut App) {
-        if self.workspace.read(cx).has_unsaved_edits()
-            || self.workspace.read(cx).has_running_commands()
-        {
+    /// 返回 true 表示已进入立即退出路径，调用方应结束托盘轮询并释放图标。
+    pub fn request_exit(&self, cx: &mut App) -> bool {
+        let needs_confirmation = {
+            let workspace = self.workspace.read(cx);
+            workspace.has_unsaved_edits() || workspace.has_running_commands()
+        };
+        if needs_confirmation {
             // Both confirmation paths must be visible and focused, even when
             // the main window was hidden in the tray before Exit was chosen.
             restore(self.window, cx);
         }
-        if let Err(error) = self.window.update(cx, |_, window, cx| {
+        match self.window.update(cx, |_, window, cx| {
             self.workspace
                 .update(cx, |workspace, cx| workspace.request_exit(window, cx));
         }) {
-            eprintln!("退出前无法访问主窗口：{error}");
-            cx.quit();
+            Ok(()) => !needs_confirmation,
+            Err(error) => {
+                eprintln!("退出前无法访问主窗口：{error}");
+                cx.quit();
+                true
+            }
         }
     }
 

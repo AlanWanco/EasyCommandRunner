@@ -2852,6 +2852,7 @@ mod tests {
     #[gpui::test]
     fn sidebar_hover_tracks_scrolled_configuration_rows(cx: &mut TestAppContext) {
         use crate::state::{CommandTab, TabData};
+        use gpui::{PlatformInput, ScrollDelta, ScrollWheelEvent};
         cx.update(|cx| {
             gpui::init(cx);
             theme::apply(Theme::Dark, cx);
@@ -2904,6 +2905,28 @@ mod tests {
                     "长列表滚动后 hover 高亮不得错位：配置 {id}"
                 );
             }
+
+            // Wheel scrolling moves rows under a stationary pointer but may not
+            // produce a MouseMove. The previous hovered ID must not leave its
+            // decoration attached to the wrong screen row.
+            w.hover(("sidebar-tab", 25usize), cx);
+            let pointer = w.find(("sidebar-tab", 25usize)).bounds().center();
+            w.dispatch_event(
+                PlatformInput::ScrollWheel(ScrollWheelEvent {
+                    position: pointer,
+                    delta: ScrollDelta::Pixels(gpui::point(px(0.), px(44.))),
+                    ..Default::default()
+                }),
+                cx,
+            );
+            w.render_frame(cx);
+            let selected = w.find(("sidebar-tab", 26usize)).bounds();
+            let indicator = w.find("sidebar-hover-indicator").bounds();
+            assert_eq!(
+                indicator.top(),
+                selected.top(),
+                "滚动时必须清除过期 hover，避免高亮留在旧行"
+            );
             w.remove_window();
         })
         .unwrap();
@@ -3311,6 +3334,28 @@ mod tests {
             w.remove_window();
         })
         .unwrap();
+    }
+
+    #[gpui::test]
+    fn clean_exit_removes_the_main_window_without_a_confirmation(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut view = None;
+        let handle = cx.open_window(size(px(850.), px(800.)), |w, cx| {
+            let entity = cx.new(|cx| CommandWorkspace::new(w, cx));
+            view = Some(entity.clone());
+            Root::new(entity, w, cx)
+        });
+        let view = view.unwrap();
+        cx.update_window(handle.into(), |_, w, cx| {
+            assert!(!view.read(cx).has_unsaved_edits());
+            assert!(!view.read(cx).has_running_commands());
+            view.update(cx, |v, cx| v.request_exit(w, cx));
+        })
+        .unwrap();
+        assert!(cx.update(|cx| cx.windows().is_empty()));
     }
 
     #[gpui::test]
