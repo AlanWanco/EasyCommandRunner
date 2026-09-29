@@ -32,6 +32,10 @@ $subsystem = [BitConverter]::ToUInt16($bytes, $optional + 68)
 if ($subsystem -ne 2) {
     throw "Expected Windows GUI subsystem (2), got $subsystem (console = 3)"
 }
+$stackReserve = [BitConverter]::ToUInt64($bytes, $optional + 72)
+if ($stackReserve -lt 8MB) {
+    throw "Windows main-thread stack reserve is $stackReserve bytes; at least 8 MiB is required"
+}
 
 # Data directory 2 contains the resource tree. Verify an RT_GROUP_ICON
 # entry (type 14), not just a generic .rsrc section or default manifest.
@@ -132,4 +136,4 @@ $imageEntries = Read-ResourceDirectoryEntries ([int]($icon[1] -band 0x7fffffff))
 if (-not @($imageEntries | Where-Object { $_[0] -eq $firstImageId }).Count) {
     throw "Icon group references missing RT_ICON image ID $firstImageId"
 }
-Write-Host "Verified Windows GUI PE: $Arch, $count embedded icon image(s), RT_ICON image $firstImageId"
+Write-Host "Verified Windows GUI PE: $Arch, $count embedded icon image(s), RT_ICON image $firstImageId, stack reserve $stackReserve bytes"
