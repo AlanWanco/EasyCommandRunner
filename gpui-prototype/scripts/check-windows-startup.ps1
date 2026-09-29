@@ -7,9 +7,14 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$exe = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+$source = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
 $root = Join-Path $env:RUNNER_TEMP "gpui-startup-$Profile"
-New-Item -ItemType Directory -Path $root -Force | Out-Null
+$isolated = Join-Path $root 'isolated-executable'
+New-Item -ItemType Directory -Path $isolated -Force | Out-Null
+# Test the one-file artifact away from the repository/target directory. The
+# release binary must not rely on adjacent shaders or other build-tree files.
+$exe = Join-Path $isolated 'easy-command-runner-gpui-prototype.exe'
+Copy-Item -LiteralPath $source -Destination $exe -Force
 $stderr = Join-Path $root 'stderr.txt'
 $stdout = Join-Path $root 'stdout.txt'
 $previousDataDir = [Environment]::GetEnvironmentVariable('ECR_DATA_DIR', 'Process')

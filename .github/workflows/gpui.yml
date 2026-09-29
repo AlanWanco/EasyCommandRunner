@@ -236,11 +236,12 @@ jobs:
           }
           if ($failures -ne 0) { exit 1 }
 
-      - name: Upload CI-only binary (not a portable package)
-        if: ${{ always() }}
+      # Debug GPUI dynamically compiles shaders from the runner's Cargo cache;
+      # it starts on that runner but fails on other machines. Never ship it.
+      - name: Upload standalone release EXE (not an installer)
         uses: actions/upload-artifact@v4
         with:
-          name: gpui-ci-windows-${{ matrix.arch }}-binary
-          path: gpui-prototype/target/debug/easy-command-runner-gpui-prototype.exe
+          name: gpui-ci-windows-${{ matrix.arch }}-release-exe
+          path: gpui-prototype/target/release/easy-command-runner-gpui-prototype.exe
           if-no-files-found: warn
           retention-days: 7
