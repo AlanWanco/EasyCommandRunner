@@ -329,6 +329,7 @@ impl TrayRuntime {
                 Err(std::sync::mpsc::TryRecvError::Empty) => return Ok(false),
             }
         }
+        #[cfg(not(target_os = "windows"))]
         Ok(true)
     }
 

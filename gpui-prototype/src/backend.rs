@@ -378,6 +378,8 @@ impl RunHandle {
             .child
             .lock()
             .map_err(|_| "进程控制锁损坏".to_string())?;
+        #[cfg(windows)]
+        let mut child = child; // Child::kill needs &mut self only on the Windows fallback.
         #[cfg(unix)]
         {
             // 启动时为 Shell 建立独立进程组；停止管道/脚本时连同 Shell 子进程一起结束。
@@ -743,6 +745,7 @@ fn normalize_qt_configuration(mut config: serde_json::Value) -> Result<serde_jso
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(any(unix, windows))]
     use std::time::Instant;
 
     struct TestDir(PathBuf);
@@ -1014,6 +1017,57 @@ mod tests {
         assert!(stderr.contains("problem"));
         assert_eq!(exit, Some((7, false)));
         drop(handle);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_shell_streams_output_and_stops_process_tree() {
+        let (_handle, events) =
+            start_shell("echo backend-out & echo backend-err 1>&2 & exit /b 7", "").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit = None;
+        while Instant::now() < deadline {
+            if let Ok(event) = events.recv_timeout(Duration::from_millis(100)) {
+                match event {
+                    RunEvent::Output {
+                        stream: OutputStream::Stdout,
+                        text,
+                    } => stdout.push_str(&text),
+                    RunEvent::Output {
+                        stream: OutputStream::Stderr,
+                        text,
+                    } => stderr.push_str(&text),
+                    RunEvent::Finished { exit_code, stopped } => {
+                        exit = Some((exit_code, stopped));
+                        break;
+                    }
+                }
+            }
+        }
+        assert!(stdout.contains("backend-out"), "Windows stdout: {stdout}");
+        assert!(stderr.contains("backend-err"), "Windows stderr: {stderr}");
+        assert_eq!(exit, Some((7, false)));
+
+        let (handle, events) = start_shell("ping -n 30 127.0.0.1 >NUL", "").unwrap();
+        thread::sleep(Duration::from_millis(100));
+        handle.stop().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let mut stopped = false;
+        while Instant::now() < deadline {
+            if let Ok(RunEvent::Finished {
+                stopped: result, ..
+            }) = events.recv_timeout(Duration::from_millis(100))
+            {
+                stopped = result;
+                break;
+            }
+        }
+        assert!(
+            stopped,
+            "Windows taskkill must finish the running shell and its child"
+        );
     }
 
     #[cfg(unix)]
