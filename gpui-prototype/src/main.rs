@@ -15,6 +15,7 @@ mod core;
 mod i18n;
 mod icon_picker;
 mod log_window;
+mod notifications;
 mod settings;
 mod state;
 mod tab_icons;
@@ -50,6 +51,7 @@ fn main() {
         .with_assets(app_assets::AppAssets)
         .run(move |cx: &mut App| {
             gpui::init(cx);
+            notifications::init(cx);
             theme::apply(theme::Theme::Dark, cx);
             let bounds = Bounds::centered(None, size(px(850.), px(800.)), cx);
             let mut titlebar = TitleBar::title_bar_options();

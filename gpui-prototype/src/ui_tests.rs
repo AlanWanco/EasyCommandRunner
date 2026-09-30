@@ -2819,6 +2819,12 @@ mod tests {
         let view = workspace.unwrap();
         cx.update_window(handle.into(), |_, w, cx| {
             w.click(("sidebar-icon", 0usize), cx);
+        })
+        .unwrap();
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_millis(350));
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, w, cx| {
             w.render_frame(cx);
             let grid = w.find("icon-grid").bounds();
             let first = w.find("icon-choice-python").bounds();
@@ -2831,6 +2837,7 @@ mod tests {
             assert_eq!(second.left() - first.left(), px(44.));
             for id in [
                 "icon-search",
+                "icon-choice-random",
                 "icon-choice-default",
                 "icon-source",
                 "icon-source-apply",
@@ -2874,6 +2881,13 @@ mod tests {
         cx.update_window(handle.into(), |_, w, cx| {
             w.render_frame(cx);
             assert!(w.try_find("icon-choice-python").is_none());
+            let previous_icon = view.read(cx).tabs[0].icon_source.clone();
+            let previously_dirty = view.read(cx).tabs[0].dirty;
+            w.click("icon-choice-random", cx);
+            assert!(w.has_active_dialog(cx), "空结果时随机选择不能关闭选择器");
+            assert_eq!(view.read(cx).tabs[0].icon_source, previous_icon);
+            assert_eq!(view.read(cx).tabs[0].dirty, previously_dirty);
+            w.click("icon-search", cx);
             w.press(
                 if cfg!(target_os = "macos") {
                     "cmd-a"
@@ -2901,6 +2915,60 @@ mod tests {
             let restored: crate::state::TabData =
                 serde_json::from_value(serde_json::to_value(&data).unwrap()).unwrap();
             assert_eq!(restored.icon_source, data.icon_source);
+            w.remove_window();
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    fn random_svg_choice_respects_the_current_search(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let handle = cx.open_window(size(px(760.), px(700.)), |w, cx| {
+            let view = cx.new(|cx| CommandWorkspace::new(w, cx));
+            workspace = Some(view.clone());
+            Root::new(view, w, cx)
+        });
+        let view = workspace.unwrap();
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.click(("sidebar-icon", 0usize), cx);
+        })
+        .unwrap();
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_millis(350));
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.render_frame(cx);
+            w.click("icon-search", cx);
+            w.input("python", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.render_frame(cx);
+            assert_eq!(w.find("icon-search").value(), Some("python"));
+            assert!(w.find("icon-choice-python").visible());
+            let allowed = tab_icons::search("python", tab_icons::Category::All)
+                .into_iter()
+                .map(|index| tab_icons::CATALOG[index].key.as_str())
+                .collect::<Vec<_>>();
+            w.click("icon-choice-random", cx);
+            let selected = view.read(cx).tabs[0].icon_source.clone().unwrap();
+            assert!(
+                allowed
+                    .iter()
+                    .any(|key| format!("builtin:{key}") == selected),
+                "随机 SVG 必须从当前过滤结果中选择：{selected} / {allowed:?}"
+            );
+            assert!(view.read(cx).tabs[0].dirty);
+            assert!(!w.has_active_dialog(cx));
+            let data = view.read(cx).tabs[0].data(cx);
+            let restored: crate::state::TabData =
+                serde_json::from_value(serde_json::to_value(data).unwrap()).unwrap();
+            assert_eq!(restored.icon_source.as_deref(), Some(selected.as_str()));
             w.remove_window();
         })
         .unwrap();
@@ -2967,7 +3035,7 @@ mod tests {
             let viewport = w.find("sidebar-items").bounds();
             let lane = w.find("sidebar-scrollbar-lane").bounds();
             let resize_handle = w.find("sidebar-resize-handle").bounds();
-            assert!(lane.left() >= viewport.right() - px(12.));
+            assert_eq!(lane.right(), viewport.right() - px(2.));
             assert_eq!(lane.size.height, viewport.size.height);
             assert!(
                 lane.right() <= resize_handle.left(),
@@ -3172,6 +3240,14 @@ mod tests {
                 "编辑背景配置的图标不应切换页面"
             );
             assert!(w.has_active_dialog(cx));
+        })
+        .unwrap();
+        // Wait for the dialog's entry animation before testing its clickable grid.
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_millis(350));
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.render_frame(cx);
             w.click("icon-choice-rust", cx);
             assert_eq!(
                 view.read(cx).tabs[0].icon_source.as_deref(),
@@ -5420,6 +5496,41 @@ mod tests {
                 theme::Accent::Violet,
                 "keyboard selects accent from dropdown"
             );
+            w.remove_window();
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    fn browse_directory_uses_native_directory_picker_and_updates_field(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut view = None;
+        let handle = cx.open_window(size(px(850.), px(800.)), |w, cx| {
+            let entity = cx.new(|cx| CommandWorkspace::new(w, cx));
+            view = Some(entity.clone());
+            Root::new(entity, w, cx)
+        });
+        let view = view.unwrap();
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.click("browse-directory", cx);
+        })
+        .unwrap();
+        assert!(cx.did_prompt_for_paths());
+        let selected = std::env::temp_dir().join("ECR directory with spaces");
+        cx.simulate_path_prompt_response(|options| {
+            assert!(!options.files && options.directories && !options.multiple);
+            Some(vec![selected.clone()])
+        });
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, w, cx| {
+            assert_eq!(
+                w.find("working-directory").value(),
+                Some(selected.to_string_lossy().as_ref())
+            );
+            assert!(view.read(cx).has_unsaved_edits_now(cx));
             w.remove_window();
         })
         .unwrap();

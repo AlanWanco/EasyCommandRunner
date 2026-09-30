@@ -10,7 +10,7 @@ use crate::{
 use gpui::component::{
     input::{InputEvent, InputState},
     tooltip::Tooltip,
-    WindowExt,
+    Disableable, WindowExt,
 };
 use gpui::{
     prelude::*, px, rgb, uniform_list, AppContext, Context, Entity, FocusHandle, Render,
@@ -20,6 +20,25 @@ use std::rc::Rc;
 
 const COLUMNS: usize = 10;
 const CELL: f32 = 44.;
+
+fn random_catalog_index(results: &[usize], current: &str, draw: u64) -> Option<usize> {
+    if results.is_empty() {
+        return None;
+    }
+    let excluded = if results.len() > 1 {
+        current.strip_prefix("builtin:").and_then(|key| {
+            results
+                .iter()
+                .position(|index| tab_icons::CATALOG[*index].key == key)
+        })
+    } else {
+        None
+    };
+    let count = results.len() - usize::from(excluded.is_some());
+    let position = (draw % count as u64) as usize;
+    let position = position + usize::from(excluded.is_some_and(|excluded| position >= excluded));
+    Some(results[position])
+}
 
 pub struct IconPicker {
     owner: WeakEntity<CommandWorkspace>,
@@ -98,6 +117,27 @@ impl IconPicker {
                 )
             })
             .is_ok()
+    }
+
+    fn choose_random(&self, w: &mut Window, cx: &mut Context<Self>) {
+        // Recompute from the live query so a fast click cannot sample stale results
+        // between the search input's Change event and its next render.
+        let results = tab_icons::search(self.search.read(cx).value().as_ref(), self.category);
+        if results.is_empty() {
+            return;
+        }
+        use std::hash::{BuildHasher, RandomState};
+        let time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let Some(index) =
+            random_catalog_index(&results, &self.current, RandomState::new().hash_one(time))
+        else {
+            return;
+        };
+        let icon = &tab_icons::CATALOG[index];
+        self.choose(format!("builtin:{}", icon.key), w, cx);
     }
 
     fn choose(&self, source: String, w: &mut Window, cx: &mut Context<Self>) {
@@ -246,6 +286,16 @@ impl Render for IconPicker {
                     )))
                     .child(
                         icon_button(
+                            "icon-choice-random",
+                            "随机 SVG",
+                            gpui::assets::IconName::Shuffle,
+                            cx,
+                        )
+                        .when(self.results.is_empty(), |button| button.disabled(true))
+                        .on_click(cx.listener(|v, _, w, cx| v.choose_random(w, cx))),
+                    )
+                    .child(
+                        icon_button(
                             "icon-choice-default",
                             "默认图标",
                             gpui::assets::IconName::RotateCcw,
@@ -297,5 +347,26 @@ impl Render for IconPicker {
                         })),
                     ),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn random_draw_covers_candidates_and_excludes_current_when_possible() {
+        let results = [0, 1, 2];
+        let current = format!("builtin:{}", tab_icons::CATALOG[1].key);
+        assert_eq!(random_catalog_index(&results, &current, 0), Some(0));
+        assert_eq!(random_catalog_index(&results, &current, 1), Some(2));
+        for draw in [2, 17, u64::MAX] {
+            let index = random_catalog_index(&results, &current, draw).unwrap();
+            assert!(index == 0 || index == 2);
+        }
+        assert_eq!(random_catalog_index(&[1], &current, 0), Some(1));
+        assert_eq!(random_catalog_index(&[], &current, 0), None);
+        assert_eq!(random_catalog_index(&results, "", 1), Some(1));
+        assert_eq!(random_catalog_index(&results, "custom.svg", 2), Some(2));
     }
 }

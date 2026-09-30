@@ -4,6 +4,7 @@ use crate::{
     core::parser::CommandParser,
     i18n::{self, tr, Language},
     log_window::DetachedLogWindow,
+    notifications,
     settings::{Preferences, SettingsPanel},
     state::{CommandTab, LogItem, LogItems, Parameter, RowData, TabData},
     tab_icons,
@@ -32,6 +33,7 @@ use std::{cell::Cell, rc::Rc};
 
 struct SessionLog {
     id: usize,
+    command_name: String,
     caption: String,
     output: String,
     finished: bool,
@@ -686,6 +688,43 @@ impl CommandWorkspace {
         });
     }
 
+    fn prompt_working_directory(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let tab_id = self.current().id;
+        let prompt = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some(tr(cx, "选择工作目录").into()),
+        });
+        cx.spawn_in(window, async move |view, cx| {
+            let result = prompt.await;
+            let _ = view.update_in(cx, |workspace, window, cx| {
+                let path = match result {
+                    Ok(Ok(Some(paths))) => match paths.into_iter().next() {
+                        Some(path) => path,
+                        None => return,
+                    },
+                    Ok(Ok(None)) => return,
+                    _ => {
+                        workspace.status = tr(cx, "无法打开目录选择器");
+                        cx.notify();
+                        return;
+                    }
+                };
+                let Some(tab) = workspace.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
+                    return;
+                };
+                tab.directory.update(cx, |state, cx| {
+                    state.set_value(path.to_string_lossy().into_owned(), window, cx)
+                });
+                workspace.changed(tab_id, window, cx);
+                workspace.status = tr(cx, "已选择工作目录");
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     pub(crate) fn prompt_import(
         &mut self,
         backup_only: bool,
@@ -1098,6 +1137,7 @@ impl CommandWorkspace {
                 }
                 self.logs.push(SessionLog {
                     id,
+                    command_name: tab_name.clone(),
                     caption: i18n::format(cx, "{} · 运行 #{}", &[&tab_name, &(id + 1).to_string()]),
                     output: String::new(),
                     finished: false,
@@ -1186,16 +1226,25 @@ impl CommandWorkspace {
                     }
                 }
                 RunEvent::Finished { exit_code, stopped } => {
-                    if let Some(log) = self.logs.iter_mut().find(|log| log.id == id) {
-                        log.finished = true;
-                        log.exit_code = Some(exit_code);
-                        log.stopped = stopped;
-                        let result = if stopped {
-                            tr(cx, "已停止")
-                        } else {
-                            i18n::format(cx, "退出 {}", &[&exit_code.to_string()])
-                        };
-                        log.caption = format!("{} · {result}", log.caption);
+                    let Some(log) = self.logs.iter_mut().find(|log| log.id == id) else {
+                        continue;
+                    };
+                    if log.finished {
+                        continue; // A repeated completion must not duplicate the caption or notification.
+                    }
+                    log.finished = true;
+                    log.exit_code = Some(exit_code);
+                    log.stopped = stopped;
+                    let result = if stopped {
+                        tr(cx, "已停止")
+                    } else {
+                        i18n::format(cx, "退出 {}", &[&exit_code.to_string()])
+                    };
+                    log.caption = format!("{} · {result}", log.caption);
+                    if let Some(notification) =
+                        notifications::run_completion(id, &log.command_name, exit_code, stopped, cx)
+                    {
+                        cx.show_system_notification(notification);
                     }
                     self.run_handles.remove(&id);
                     self.status = if stopped {
@@ -1411,6 +1460,7 @@ impl CommandWorkspace {
         self.next_run_id += 1;
         self.logs.push(SessionLog {
             id,
+            command_name: caption.into(),
             caption: caption.into(),
             output: output.into(),
             finished: true,
@@ -2613,7 +2663,15 @@ impl CommandWorkspace {
                             .child(
                                 Scrollbar::vertical(&self.sidebar_scroll)
                                     .id("sidebar-scrollbar")
-                                    .mode(ScrollbarMode::Always)
+                                    .mode(ScrollbarMode::Hover)
+                                    // Shift only the painted/clickable thumb 3px right while
+                                    // keeping its lane clear of the resize hit target.
+                                    .styles(|styles| {
+                                        styles
+                                            .thumb(|thumb| thumb.inset(px(1.)))
+                                            .thumb_hover(|thumb| thumb.inset(px(1.)))
+                                            .thumb_active(|thumb| thumb.inset(px(1.)))
+                                    })
                                     .viewport_from_layout(),
                             ),
                     ),
@@ -3629,11 +3687,13 @@ impl Render for CommandWorkspace {
                             .child(
                                 icon_button(
                                     "browse-directory",
-                                    "目录选择尚未接入，可直接输入路径",
+                                    "选择工作目录",
                                     IconName::FolderOpen,
                                     cx,
                                 )
-                                .disabled(true),
+                                .on_click(cx.listener(
+                                    |v, _, window, cx| v.prompt_working_directory(window, cx),
+                                )),
                             ),
                         cx,
                     ))
@@ -4392,6 +4452,90 @@ impl Drop for CommandWorkspace {
         for handle in self.run_handles.values() {
             let _ = handle.stop();
         }
+    }
+}
+
+#[cfg(all(test, feature = "ui-test"))]
+mod completion_notification_tests {
+    use super::*;
+    use gpui::{size, TestAppContext};
+
+    #[gpui::test]
+    fn finished_events_notify_once_and_ignore_output_stop_and_unknown_runs(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui::init(cx);
+            notifications::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let handle = cx.open_window(size(px(850.), px(800.)), |window, cx| {
+            let view = cx.new(|cx| {
+                let mut view = CommandWorkspace::new(window, cx);
+                view.logs = ["成功任务", "失败任务", "主动停止"]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(id, name)| SessionLog {
+                        id,
+                        command_name: name.into(),
+                        caption: format!("运行 #{}", id + 1),
+                        output: String::new(),
+                        finished: false,
+                        exit_code: None,
+                        stopped: false,
+                    })
+                    .collect();
+                view
+            });
+            workspace = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let view = workspace.unwrap();
+        cx.update_window(handle.into(), |_, window, cx| {
+            view.update(cx, |view, cx| {
+                view.receive_run_events(
+                    0,
+                    vec![RunEvent::Output {
+                        stream: OutputStream::Stderr,
+                        text: "仍在运行的日志".into(),
+                    }],
+                    window,
+                    cx,
+                );
+            });
+        })
+        .unwrap();
+        assert!(cx.shown_system_notifications().is_empty());
+        cx.update_window(handle.into(), |_, window, cx| {
+            view.update(cx, |view, cx| {
+                for (id, exit_code, stopped) in [
+                    (0, 0, false),
+                    (0, 0, false),
+                    (1, 1, false),
+                    (2, 1, true),
+                    (99, 1, false),
+                ] {
+                    view.receive_run_events(
+                        id,
+                        vec![RunEvent::Finished { exit_code, stopped }],
+                        window,
+                        cx,
+                    );
+                }
+                assert_eq!(view.logs[0].caption, "运行 #1 · 退出 0");
+                assert_eq!(view.logs[1].exit_code, Some(1));
+                assert!(view.logs[2].stopped);
+            });
+            window.remove_window();
+        })
+        .unwrap();
+        let shown = cx.shown_system_notifications();
+        assert_eq!(shown.len(), 2);
+        assert_eq!(shown[0].title.as_ref(), "正常结束");
+        assert_eq!(shown[0].body.as_ref(), "「成功任务」· 退出代码：0");
+        assert_eq!(shown[1].title.as_ref(), "运行报错");
+        assert_eq!(shown[1].body.as_ref(), "「失败任务」· 退出代码：1");
     }
 }
 

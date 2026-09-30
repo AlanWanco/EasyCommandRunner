@@ -45,6 +45,7 @@ mod tests {
             IconName::ExternalLink,
             IconName::ScanText,
             IconName::RefreshCw,
+            IconName::Shuffle,
             IconName::Play,
             IconName::Save,
         ];

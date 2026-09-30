@@ -259,8 +259,8 @@ pub fn heading_input(state: &Entity<InputState>, cx: &App) -> FocusTextField<Inp
     let mut title = input("command-name", state, "命令名称", false, cx);
     title.inner = title
         .inner
-        .text_size(px((theme::font_size(cx) + 8.).clamp(22., 30.)))
-        .font_weight(gpui::FontWeight(theme::font_weight(cx).0.max(600.)))
+        .text_size(px((theme::font_size(cx) + 12.).clamp(26., 32.)))
+        .font_weight(gpui::FontWeight(theme::font_weight(cx).0.max(700.)))
         .bg(gpui::transparent_black());
     title.inner.style().size.height = Some(px(COMMAND_NAME_HEIGHT).into());
     title.single_line_height = COMMAND_NAME_HEIGHT;
