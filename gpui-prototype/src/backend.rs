@@ -366,6 +366,21 @@ pub enum RunEvent {
     Finished { exit_code: i32, stopped: bool },
 }
 
+#[cfg(windows)]
+fn hide_windows_console(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+
+    // CREATE_NO_WINDOW: keep GUI applications and their helper processes silent.
+    command.creation_flags(0x0800_0000);
+}
+
+#[cfg(any(windows, test))]
+fn windows_shell_arguments(shell: &str, command: &str) -> String {
+    // Match Qt: set the console code page in an outer cmd, then let an inner cmd
+    // parse the user's command. This preserves quotes around paths with spaces.
+    format!(r#"/D /S /C "chcp 65001>nul & "{shell}" /D /S /C "{command}"""#)
+}
+
 #[derive(Clone)]
 pub struct RunHandle {
     child: Arc<Mutex<Child>>,
@@ -400,7 +415,9 @@ impl RunHandle {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
                 .join("System32/taskkill.exe");
-            match Command::new(taskkill)
+            let mut taskkill_command = Command::new(taskkill);
+            hide_windows_console(&mut taskkill_command);
+            match taskkill_command
                 .args(["/PID", &pid, "/T", "/F"])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
@@ -440,9 +457,19 @@ pub fn start_shell(
 
     #[cfg(windows)]
     let mut child = {
+        use std::os::windows::process::CommandExt;
+
         let shell = std::env::var_os("COMSPEC").unwrap_or_else(|| "cmd.exe".into());
-        Command::new(shell)
-            .args(["/D", "/S", "/C", command])
+        let shell_text = shell.to_string_lossy().into_owned();
+        let mut process = Command::new(shell);
+        hide_windows_console(&mut process);
+        // Use the same nested cmd/code-page wrapper as Qt; raw_arg is required so
+        // Rust's CRT argument quoting does not alter cmd's own quote semantics.
+        process
+            .raw_arg(windows_shell_arguments(&shell_text, command))
+            // Match Qt: Python tools write UTF-8 to the redirected stdout/stderr pipes.
+            .env("PYTHONIOENCODING", "utf-8")
+            .env("PYTHONUNBUFFERED", "1")
             .current_dir(current_dir)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -772,6 +799,24 @@ mod tests {
     }
 
     #[test]
+    fn windows_shell_wrapper_preserves_quoted_unicode_paths() {
+        let shell = r"C:\Windows\System32\cmd.exe";
+        let command = r#"python E:\code-repository\ass_translate.py "H:\虹虹\声优个人相关\Lumina Charis 1-147\Lumina Charis_9995_0110.ass" --gemini --no-confirm"#;
+        let arguments = windows_shell_arguments(shell, command);
+        let expected = [
+            "/D /S /C \"chcp 65001>nul & \"",
+            shell,
+            "\" /D /S /C \"",
+            command,
+            "\"\"",
+        ]
+        .concat();
+        assert_eq!(arguments, expected);
+        assert!(arguments
+            .contains(r#""H:\虹虹\声优个人相关\Lumina Charis 1-147\Lumina Charis_9995_0110.ass""#));
+    }
+
+    #[test]
     fn import_export_and_preferences_preserve_active_commands() {
         let dir = TestDir::new();
         let path = dir.0.join("config.json");
@@ -1049,6 +1094,44 @@ mod tests {
         assert!(stdout.contains("backend-out"), "Windows stdout: {stdout}");
         assert!(stderr.contains("backend-err"), "Windows stderr: {stderr}");
         assert_eq!(exit, Some((7, false)));
+
+        let (handle, events) = start_shell(
+            r#"python -c "import sys; print('中文标准输出'); print('中文错误输出', file=sys.stderr)""#,
+            "",
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit = None;
+        while Instant::now() < deadline {
+            if let Ok(event) = events.recv_timeout(Duration::from_millis(100)) {
+                match event {
+                    RunEvent::Output {
+                        stream: OutputStream::Stdout,
+                        text,
+                    } => stdout.push_str(&text),
+                    RunEvent::Output {
+                        stream: OutputStream::Stderr,
+                        text,
+                    } => stderr.push_str(&text),
+                    RunEvent::Finished { exit_code, stopped } => {
+                        exit = Some((exit_code, stopped));
+                        break;
+                    }
+                }
+            }
+        }
+        assert!(
+            stdout.contains("中文标准输出"),
+            "Windows UTF-8 stdout: {stdout}"
+        );
+        assert!(
+            stderr.contains("中文错误输出"),
+            "Windows UTF-8 stderr: {stderr}"
+        );
+        assert_eq!(exit, Some((0, false)));
+        drop(handle);
 
         let (handle, events) = start_shell("ping -n 30 127.0.0.1 >NUL", "").unwrap();
         thread::sleep(Duration::from_millis(100));
