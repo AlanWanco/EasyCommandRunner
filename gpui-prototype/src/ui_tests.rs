@@ -3374,10 +3374,39 @@ mod tests {
         cx.update_window(handle.into(), |_, w, cx| {
             assert!(!view.read(cx).has_unsaved_edits());
             assert!(!view.read(cx).has_running_commands());
-            view.update(cx, |v, cx| v.request_exit(w, cx));
+            assert!(view.update(cx, |v, cx| v.request_exit(w, cx)));
         })
         .unwrap();
         assert!(cx.update(|cx| cx.windows().is_empty()));
+    }
+
+    #[gpui::test]
+    fn adding_blank_parameters_requires_exit_confirmation(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut view = None;
+        let handle = cx.open_window(size(px(850.), px(800.)), |w, cx| {
+            let entity = cx.new(|cx| CommandWorkspace::new(w, cx));
+            view = Some(entity.clone());
+            Root::new(entity, w, cx)
+        });
+        let view = view.unwrap();
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.click("add-parameter", cx);
+            w.click("add-parameter", cx);
+            assert!(view.read(cx).tabs[0].dirty);
+            assert!(view.read(cx).has_unsaved_edits_now(cx));
+            let needs_confirmation = view.update(cx, |v, cx| !v.request_exit(w, cx));
+            assert!(needs_confirmation);
+            w.render_frame(cx);
+            assert!(w.has_active_dialog(cx));
+            assert!(w.try_find("cancel-exit").is_some());
+            assert!(w.try_find("confirm-exit").is_some());
+            w.remove_window();
+        })
+        .unwrap();
     }
 
     #[gpui::test]
@@ -3415,7 +3444,10 @@ mod tests {
             assert!(w.try_find("cancel-exit").is_some());
             assert!(w.try_find("confirm-exit").is_some());
             assert!(w.has_active_dialog(cx));
-            view.update(cx, |v, cx| v.request_exit(w, cx)); // 连续点击托盘退出不能叠加对话框。
+            assert!(
+                !view.update(cx, |v, cx| v.request_exit(w, cx)),
+                "已有确认框时退出请求不能转成立即退出"
+            ); // 连续点击托盘退出不能叠加对话框。
         })
         .unwrap();
         // GPUI Kit 的对话框入场动画在下一轮测试时钟后才完成，

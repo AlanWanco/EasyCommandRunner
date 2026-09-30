@@ -344,17 +344,23 @@ impl TrayRuntime {
             // the main window was hidden in the tray before Exit was chosen.
             restore(self.window, cx);
         }
-        match self.window.update(cx, |_, window, cx| {
+        let stop_polling = match self.window.update(cx, |_, window, cx| {
             self.workspace
-                .update(cx, |workspace, cx| workspace.request_exit(window, cx));
+                .update(cx, |workspace, cx| workspace.request_exit(window, cx))
         }) {
-            Ok(()) => !needs_confirmation,
+            Ok(stop_polling) => stop_polling,
             Err(error) => {
                 eprintln!("退出前无法访问主窗口：{error}");
                 cx.quit();
                 true
             }
+        };
+        if !stop_polling && !needs_confirmation {
+            // The live-state check inside request_exit is authoritative. If it
+            // discovered an edit after the preliminary check, reveal the dialog now.
+            restore(self.window, cx);
         }
+        stop_polling
     }
 
     #[cfg(target_os = "windows")]

@@ -869,9 +869,10 @@ impl CommandWorkspace {
         cx.notify();
     }
 
-    pub fn request_exit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Returns true when exit is immediate; false while a confirmation is pending.
+    pub fn request_exit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.exit_dialog_open.get() {
-            return;
+            return false;
         }
         let has_changes = self.has_unsaved_edits_now(cx);
         let has_running = self.has_running_commands();
@@ -879,7 +880,7 @@ impl CommandWorkspace {
             // Let the main-window closed callback own GPUI shutdown. This also
             // closes the actual HWND before the Windows message loop quits.
             window.remove_window();
-            return;
+            return true;
         }
         self.exit_dialog_open.set(true);
         let closed = self.exit_dialog_open.clone();
@@ -956,6 +957,7 @@ impl CommandWorkspace {
                         ),
                 )
         });
+        false
     }
 
     fn current(&self) -> &CommandTab {
