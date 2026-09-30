@@ -119,6 +119,7 @@ pub fn set_reduced_motion(reduced: bool, cx: &mut App) {
 pub struct Palette {
     pub app: u32,
     pub panel: u32,
+    pub sidebar: u32,
     pub subtle: u32,
     pub control: u32,
     pub button: u32,
@@ -179,6 +180,7 @@ impl Theme {
             Self::Dark => Palette {
                 app: 0x121414,
                 panel: 0x151717,
+                sidebar: 0x1d2122,
                 subtle: 0x111313,
                 control: 0x181818,
                 button: 0x202323,
@@ -201,6 +203,7 @@ impl Theme {
             Self::Light => Palette {
                 app: 0xf3f4f6,
                 panel: 0xffffff,
+                sidebar: 0xf1f3f5,
                 subtle: 0xf9fafb,
                 control: 0xffffff,
                 button: 0xffffff,

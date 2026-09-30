@@ -212,8 +212,11 @@ fn sidebar_resize_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
         cx.update_window(handle.into(), |_, w, cx| {
             w.render_frame(cx);
             assert!((w.find("tab-sidebar").bounds().size.width - px(288.)).abs() <= px(1.));
-            let edge = w.find("sidebar-motion-edge").bounds();
-            assert!((edge.right() - w.find("tab-sidebar").bounds().right()).abs() <= px(1.));
+            assert!(w.try_find("sidebar-motion-edge").is_none());
+            let grip = w.find("sidebar-resize-handle").bounds();
+            let sidebar = w.find("tab-sidebar").bounds();
+            assert!((grip.right() - sidebar.right()).abs() <= px(1.));
+            assert_eq!(grip.size.width, px(10.));
         })
         .unwrap();
         cx.capture_screenshot(handle.into())
@@ -1177,9 +1180,10 @@ pub fn snapshots(directory: &str) {
         cx.update_window(handle.into(), |_, w, cx| {
             w.render_frame(cx);
             let panel = w.find("tab-sidebar").bounds();
-            let edge = w.find("sidebar-motion-edge").bounds();
+            let grip = w.find("sidebar-resize-handle").bounds();
             assert!(panel.size.width > px(52.) && panel.size.width < px(208.));
-            assert!((edge.right() - panel.right()).abs() <= px(1.));
+            assert!((grip.right() - panel.right()).abs() <= px(1.));
+            assert_eq!(grip.size.width, px(10.));
         })
         .unwrap();
         cx.capture_screenshot(handle.into())
@@ -1204,9 +1208,10 @@ pub fn snapshots(directory: &str) {
         cx.update_window(handle.into(), |_, w, cx| {
             w.render_frame(cx);
             let panel = w.find("tab-sidebar").bounds();
-            let edge = w.find("sidebar-motion-edge").bounds();
+            let grip = w.find("sidebar-resize-handle").bounds();
             assert!(panel.size.width > px(52.) && panel.size.width < px(220.));
-            assert!((edge.right() - panel.right()).abs() <= px(1.));
+            assert!((grip.right() - panel.right()).abs() <= px(1.));
+            assert_eq!(grip.size.width, px(10.));
         })
         .unwrap();
         cx.capture_screenshot(handle.into())
@@ -1309,7 +1314,7 @@ pub fn snapshots(directory: &str) {
                 w.find(("sidebar-tab", 1usize)).bounds()
             })
             .unwrap();
-        let surface = cx.update(|cx| theme::palette(cx).panel);
+        let surface = cx.update(|cx| theme::palette(cx).sidebar);
         let expected = [(surface >> 16) as u8, (surface >> 8) as u8, surface as u8];
         for inset in [1.5, 2.5] {
             for y_offset in [12., 20., 28.] {
@@ -1327,8 +1332,8 @@ pub fn snapshots(directory: &str) {
             .save(format!("{directory}/sidebar-{mode:?}-python.png"))
             .unwrap();
         if mode == Theme::Light {
-            // Real Metal pixels: one selected Lucide glyph must be white on the selection,
-            // another must be dark on plain white with NO colored square under it.
+            // Real Metal pixels: the selected Lucide glyph must be white on selection;
+            // the unselected glyph must be dark directly on the sidebar surface.
             for accent in [
                 theme::Accent::Blue,
                 theme::Accent::Rose,
@@ -1371,6 +1376,12 @@ pub fn snapshots(directory: &str) {
                 };
                 let plain = sample(unselected);
                 let active = sample(selected);
+                let sidebar = cx.update(|cx| theme::palette(cx).sidebar);
+                let surface_rgb = [
+                    ((sidebar >> 16) & 255) as u8,
+                    ((sidebar >> 8) & 255) as u8,
+                    (sidebar & 255) as u8,
+                ];
                 assert!(
                     plain
                         .iter()
@@ -1382,10 +1393,15 @@ pub fn snapshots(directory: &str) {
                 assert!(
                     plain
                         .iter()
-                        .filter(|[r, g, b, _]| *r >= 245 && *g >= 245 && *b >= 245)
+                        .filter(|[r, g, b, _]| {
+                            [*r, *g, *b]
+                                .into_iter()
+                                .zip(surface_rgb)
+                                .all(|(actual, expected)| actual.abs_diff(expected) <= 2)
+                        })
                         .count()
                         >= 80,
-                    "{accent:?} 未选中图标不能垫主题色块"
+                    "{accent:?} 未选中图标应保持侧栏底色，不能垫主题色块"
                 );
                 assert!(
                     active
@@ -1398,8 +1414,11 @@ pub fn snapshots(directory: &str) {
                 let sample_width = (f32::from(unselected.size.width) * scale).round() as usize;
                 let corner = plain[2 * sample_width + 2];
                 assert!(
-                    corner[0] >= 245 && corner[1] >= 245 && corner[2] >= 245,
-                    "图标底应透明、露出白色侧栏"
+                    [corner[0], corner[1], corner[2]]
+                        .into_iter()
+                        .zip(surface_rgb)
+                        .all(|(actual, expected)| actual.abs_diff(expected) <= 2),
+                    "图标底应透明、露出侧栏底色"
                 );
                 image
                     .save(format!("{directory}/sidebar-Light-contrast-{accent:?}.png"))
@@ -2349,7 +2368,7 @@ mod tests {
                 assert_eq!(view.read(cx).tabs[0].program.entity_id(), input_id);
                 assert!(input_focus.is_focused(w), "拖动侧栏不能重建输入并丢失焦点");
                 assert!(w.find("append-command").bounds().size.width >= px(48.));
-                let grip = w.find("sidebar-motion-edge").bounds();
+                let grip = w.find("sidebar-resize-handle").bounds();
                 w.drag(
                     grip.center(),
                     point(grip.center().x + px(300.), grip.center().y),
@@ -2486,7 +2505,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn sidebar_edge_springs_and_reverses_without_changing_inputs(cx: &mut TestAppContext) {
+    fn sidebar_width_springs_and_reverses_without_changing_inputs(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui::init(cx);
             theme::apply(Theme::Dark, cx);
@@ -2518,16 +2537,16 @@ mod tests {
         cx.update_window(handle.into(), |_, w, cx| {
             w.render_frame(cx);
             let sidebar = w.find("tab-sidebar").bounds();
-            let edge = w.find("sidebar-motion-edge").bounds();
+            let grip = w.find("sidebar-resize-handle").bounds();
             assert!(
                 sidebar.size.width < px(208.) && sidebar.size.width > px(52.),
-                "边缘应在折叠途中: {sidebar:?}"
+                "侧栏应处于折叠途中: {sidebar:?}"
             );
             assert!(
-                (edge.right() - sidebar.right()).abs() <= px(1.),
-                "高亮边线始终跟随侧栏右边界"
+                (grip.right() - sidebar.right()).abs() <= px(1.),
+                "无装饰的拖动热区仍应跟随侧栏右边界"
             );
-            assert_eq!(edge.size.width, px(2.), "移动时边线应更明显");
+            assert_eq!(grip.size.width, px(10.));
             w.click("collapse-sidebar", cx);
             assert!(!view.read(cx).sidebar_collapsed, "途中反向不应等旧动画完成");
         })
@@ -2847,6 +2866,19 @@ mod tests {
             w.remove_window();
         })
         .unwrap();
+    }
+
+    #[gpui::test]
+    fn sidebar_surface_is_distinct_from_editor_in_both_themes(cx: &mut TestAppContext) {
+        cx.update(|cx| gpui::init(cx));
+        for mode in [Theme::Dark, Theme::Light] {
+            cx.update(|cx| theme::apply(mode, cx));
+            let (sidebar, content) = cx.update(|cx| {
+                let palette = theme::palette(cx);
+                (palette.sidebar, palette.panel)
+            });
+            assert_ne!(sidebar, content, "{mode:?} 侧栏背景必须区别于编辑区");
+        }
     }
 
     #[gpui::test]

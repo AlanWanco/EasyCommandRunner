@@ -2501,7 +2501,7 @@ impl CommandWorkspace {
             .flex_shrink_0()
             .h_full()
             .min_h_0()
-            .bg(rgb(p.panel))
+            .bg(rgb(p.sidebar))
             .border_r_1()
             .border_color(rgb(p.divider))
             .flex()
@@ -2606,21 +2606,6 @@ impl CommandWorkspace {
                             });
                             cx.stop_propagation();
                         }),
-                    )
-                    .child(
-                        frame("sidebar-motion-edge")
-                            .absolute()
-                            .right_0()
-                            .top_0()
-                            .bottom_0()
-                            .w(px(
-                                if (width - if folded { 56. } else { expanded_width }).abs() > 1. {
-                                    2.
-                                } else {
-                                    1.
-                                },
-                            ))
-                            .bg(rgb(p.focus)),
                     ),
             )
     }
