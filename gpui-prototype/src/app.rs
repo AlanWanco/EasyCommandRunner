@@ -15,7 +15,7 @@ use futures::io::AsyncReadExt as _;
 use gpui::assets::IconName;
 use gpui::component::{
     button::{ButtonCustomVariant, ButtonVariants},
-    input::TextareaState,
+    input::{Paste, TextareaState},
     menu::DropdownMenu,
     scroll::{Scrollbar, ScrollbarMode},
     select::{Select, SelectEvent, SelectState},
@@ -23,9 +23,10 @@ use gpui::component::{
     Disableable, Icon, IndexPath, Root, Selectable, Sizable, Size, StyledExt, TitleBar, WindowExt,
 };
 use gpui::{
-    div, prelude::*, px, rgb, Animation, AnimationExt, App, AppContext, ClipboardItem, Context,
-    Entity, Focusable, IntoElement, MouseButton, Render, ScrollHandle, Subscription, Window,
-    WindowBounds, WindowControlArea, WindowDecorations, WindowHandle, WindowOptions,
+    div, prelude::*, px, rgb, Animation, AnimationExt, App, AppContext, ClipboardEntry,
+    ClipboardItem, Context, Entity, Focusable, IntoElement, MouseButton, Render, ScrollHandle,
+    Subscription, Window, WindowBounds, WindowControlArea, WindowDecorations, WindowHandle,
+    WindowOptions,
 };
 use std::{cell::Cell, rc::Rc};
 
@@ -970,6 +971,47 @@ impl CommandWorkspace {
         self.config_dirty = true;
         self.refresh(window, cx);
     }
+    fn paste_external_file_path(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(path) = cx.read_from_clipboard().and_then(|clipboard| {
+            clipboard.entries.into_iter().find_map(|entry| match entry {
+                ClipboardEntry::ExternalPaths(paths) => paths
+                    .paths()
+                    .first()
+                    .map(|path| path.to_string_lossy().into_owned()),
+                _ => None,
+            })
+        }) else {
+            return false;
+        };
+
+        let focused = self.tabs.iter().find_map(|tab| {
+            for input in [
+                &tab.name,
+                &tab.directory,
+                &tab.program,
+                &tab.other,
+                &tab.append,
+            ] {
+                if input.focus_handle(cx).is_focused(window) {
+                    return Some((tab.id, input.clone()));
+                }
+            }
+            tab.rows
+                .iter()
+                .flat_map(|row| [&row.option, &row.value, &row.note])
+                .find(|input| input.focus_handle(cx).is_focused(window))
+                .map(|input| (tab.id, input.clone()))
+        });
+        let Some((tab_id, input)) = focused else {
+            return false;
+        };
+
+        // Match Qt PathLineEdit: a file clipboard replaces the whole single-line value.
+        input.update(cx, |state, cx| state.set_value(path, window, cx));
+        self.changed(tab_id, window, cx);
+        true
+    }
+
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let command = self.current().command(cx);
         if self.preview.read(cx).value().as_ref() != command {
@@ -4060,6 +4102,11 @@ impl Render for CommandWorkspace {
         frame("workspace")
             .relative()
             .size_full()
+            .capture_action(cx.listener(|v, _: &Paste, window, cx| {
+                if v.paste_external_file_path(window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
             .capture_key_down(cx.listener(|v, event: &gpui::KeyDownEvent, _, cx| {
                 let modifiers = event.keystroke.modifiers;
                 let save_modifier = if cfg!(target_os = "macos") {

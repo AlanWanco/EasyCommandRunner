@@ -2156,6 +2156,44 @@ mod tests {
     }
 
     #[gpui::test]
+    fn pasting_a_file_into_single_line_input_replaces_old_value(cx: &mut TestAppContext) {
+        use gpui::{ClipboardEntry, ClipboardItem, ExternalPaths};
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let handle = cx.open_window(size(px(850.), px(800.)), |window, cx| {
+            let view = cx.new(|cx| CommandWorkspace::new(window, cx));
+            workspace = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let view = workspace.unwrap();
+        let path = r"C:\media\Lumina Charis 1-147\episode.ass";
+        cx.update_window(handle.into(), |_, window, cx| {
+            assert_eq!(window.find("program").value(), Some("ffmpeg"));
+            window.click("program", cx);
+            let mut paths = ExternalPaths::default();
+            paths.0.push(std::path::PathBuf::from(path));
+            cx.write_to_clipboard(ClipboardItem {
+                entries: vec![ClipboardEntry::ExternalPaths(paths)],
+            });
+            window.press(
+                if cfg!(target_os = "macos") {
+                    "cmd-v"
+                } else {
+                    "ctrl-v"
+                },
+                cx,
+            );
+            assert_eq!(window.find("program").value(), Some(path));
+            assert!(view.read(cx).has_unsaved_edits_now(cx));
+            window.remove_window();
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
     fn save_shortcut_persists_focused_editor_without_losing_focus(cx: &mut TestAppContext) {
         use gpui::Focusable;
         use std::time::{SystemTime, UNIX_EPOCH};
