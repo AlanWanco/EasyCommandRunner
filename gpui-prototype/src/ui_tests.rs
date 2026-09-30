@@ -3398,8 +3398,21 @@ mod tests {
             w.click("add-parameter", cx);
             assert!(view.read(cx).tabs[0].dirty);
             assert!(view.read(cx).has_unsaved_edits_now(cx));
-            let needs_confirmation = view.update(cx, |v, cx| !v.request_exit(w, cx));
-            assert!(needs_confirmation);
+        })
+        .unwrap();
+
+        // Match the tray path: update the window without leasing Root, then
+        // update the workspace; request_exit opens its modal through WindowExt.
+        let window: gpui::AnyWindowHandle = handle.into();
+        let stop_polling = cx.update(|cx| {
+            window
+                .update(cx, |_, w, cx| {
+                    view.update(cx, |v, cx| v.request_exit(w, cx))
+                })
+                .unwrap()
+        });
+        assert!(!stop_polling, "unsaved rows must keep the tray loop alive");
+        cx.update_window(handle.into(), |_, w, cx| {
             w.render_frame(cx);
             assert!(w.has_active_dialog(cx));
             assert!(w.try_find("cancel-exit").is_some());

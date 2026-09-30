@@ -344,7 +344,11 @@ impl TrayRuntime {
             // the main window was hidden in the tray before Exit was chosen.
             restore(self.window, cx);
         }
-        let stop_polling = match self.window.update(cx, |_, window, cx| {
+        // Use the untyped handle: WindowHandle<Root>::update leases Root first,
+        // then request_exit -> window.open_dialog would try to lease Root again.
+        // That re-entrant Root update is why tray-triggered modals were not shown.
+        let window: gpui::AnyWindowHandle = self.window.into();
+        let stop_polling = match window.update(cx, |_, window, cx| {
             self.workspace
                 .update(cx, |workspace, cx| workspace.request_exit(window, cx))
         }) {
