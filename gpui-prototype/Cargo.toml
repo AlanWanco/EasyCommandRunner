@@ -1,7 +1,9 @@
 [package]
 name = "easy-command-runner-gpui-prototype"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
+license = "MIT"
+repository = "https://github.com/AlanWanco/EasyCommandRunner"
 publish = false
 
 [dependencies]

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+APPDIR="${APPDIR:-$(cd "$(dirname "$0")" && pwd)}"
+export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export XDG_DATA_DIRS="$APPDIR/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+if [[ -f "$APPDIR/usr/share/glib-2.0/schemas/gschemas.compiled" ]]; then
+  export GSETTINGS_SCHEMA_DIR="$APPDIR/usr/share/glib-2.0/schemas"
+fi
+# Loader caches contain absolute paths. Regenerate for this mount point, never
+# reuse /usr/lib paths or the CI AppDir path stored by the build host.
+if [[ -x "$APPDIR/usr/bin/gdk-pixbuf-query-loaders" ]]; then
+  cache="$(mktemp "${TMPDIR:-/tmp}/ecr-gdk-loaders.XXXXXX")"
+  trap 'rm -f "$cache"' EXIT
+  export GDK_PIXBUF_MODULEDIR="$APPDIR/usr/lib/gdk-pixbuf-loaders"
+  "$APPDIR/usr/bin/gdk-pixbuf-query-loaders" "$GDK_PIXBUF_MODULEDIR/"*.so > "$cache"
+  export GDK_PIXBUF_MODULE_FILE="$cache"
+  "$APPDIR/usr/bin/EasyCommandRunner" "$@"
+else
+  exec "$APPDIR/usr/bin/EasyCommandRunner" "$@"
+fi

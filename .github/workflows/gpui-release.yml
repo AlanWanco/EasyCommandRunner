@@ -1,0 +1,149 @@
+name: GPUI Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "New GPUI Release tag (must match Cargo version)"
+        required: true
+        type: string
+        default: v1.0.0
+      source_ref:
+        description: "Optional source ref; defaults to selected workflow branch"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gpui-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Pin source commit and validate new GPUI version
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      version: ${{ steps.source.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - id: source
+        working-directory: gpui-prototype
+        env:
+          TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python3 scripts/release_support.py version)"
+          test "$TAG" = "v$version" || { echo 'Tag/Cargo version mismatch' >&2; exit 1; }
+          sha="$(git rev-parse HEAD)"
+          if git rev-parse --verify "refs/tags/$TAG" >/dev/null 2>&1; then
+            test "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$sha" || {
+              echo 'Existing tag points at another commit; refusing to retag' >&2; exit 1;
+            }
+          fi
+          # Only permit a same-commit draft left by an interrupted upload. Never
+          # overwrite a published GPUI or legacy Qt Release.
+          if gh release view "$TAG" --repo "$REPOSITORY" --json isDraft,targetCommitish > "$RUNNER_TEMP/existing.json" 2> "$RUNNER_TEMP/release-error.txt"; then
+            python3 - "$RUNNER_TEMP/existing.json" "$sha" <<'PY'
+          import json, sys
+          release = json.load(open(sys.argv[1]))
+          if not release['isDraft'] or release['targetCommitish'] != sys.argv[2]:
+              raise SystemExit('Only a same-commit draft can be resumed; published releases are immutable')
+          PY
+          else
+            grep -qiE 'not found|HTTP 404' "$RUNNER_TEMP/release-error.txt" || { cat "$RUNNER_TEMP/release-error.txt"; exit 1; }
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build and verify every GPUI package
+    needs: resolve
+    uses: ./.github/workflows/gpui.yml
+    with:
+      source_ref: ${{ needs.resolve.outputs.sha }}
+      version: ${{ needs.resolve.outputs.version }}
+      package_artifacts: true
+    permissions:
+      contents: read
+
+  publish:
+    name: Publish only the complete verified package set
+    needs: [resolve, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ecr-gpui-*
+          path: dist
+          merge-multiple: true
+      - name: Verify versions, source commits and all five package hashes
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          SOURCE_SHA: ${{ needs.resolve.outputs.sha }}
+        run: python3 gpui-prototype/scripts/release_support.py verify --version "$VERSION" --source-sha "$SOURCE_SHA" --directory dist
+      - name: Create or resume draft, upload, then publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+          SOURCE_SHA: ${{ needs.resolve.outputs.sha }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Recheck volatile release/tag state immediately before mutation.
+          verify_source_tag() {
+            set +e
+            git ls-remote --exit-code --tags origin "refs/tags/$TAG" > "$RUNNER_TEMP/tag-ref.txt"
+            tag_status=$?
+            set -e
+            if [ "$tag_status" -eq 0 ]; then
+              git fetch origin "refs/tags/$TAG:refs/tags/$TAG"
+              test "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$SOURCE_SHA" || { echo 'Tag source changed' >&2; exit 1; }
+            elif [ "$tag_status" -ne 2 ]; then
+              echo 'Cannot verify remote tag state' >&2; exit 1
+            fi
+          }
+          verify_source_tag
+          if gh release view "$TAG" --repo "$REPOSITORY" --json isDraft,targetCommitish > "$RUNNER_TEMP/existing.json" 2> "$RUNNER_TEMP/release-error.txt"; then
+            python3 - "$RUNNER_TEMP/existing.json" "$SOURCE_SHA" <<'PY'
+          import json, sys
+          release = json.load(open(sys.argv[1]))
+          if not release['isDraft'] or release['targetCommitish'] != sys.argv[2]:
+              raise SystemExit('Refusing to modify a published release or another source draft')
+          PY
+            # Draft tags may not exist until publication; targetCommitish pins the
+            # source in that case. Existing remote tags were checked above.
+          else
+            grep -qiE 'not found|HTTP 404' "$RUNNER_TEMP/release-error.txt" || { cat "$RUNNER_TEMP/release-error.txt"; exit 1; }
+            gh release create "$TAG" --repo "$REPOSITORY" --target "$SOURCE_SHA" --draft \
+              --title "EasyCommandRunner GPUI $TAG" --notes-file gpui-prototype/packaging/RELEASE-NOTES.md
+          fi
+          gh release upload "$TAG" --repo "$REPOSITORY" --clobber dist/*
+          gh release view "$TAG" --repo "$REPOSITORY" --json assets,isDraft,targetCommitish > "$RUNNER_TEMP/uploaded.json"
+          python3 gpui-prototype/scripts/release_support.py verify-upload \
+            --version "$VERSION" --source-sha "$SOURCE_SHA" --directory dist --release-json "$RUNNER_TEMP/uploaded.json"
+          # Upload errors or unexpected stale assets leave a draft, not a visible
+          # partial/mixed release. Never remove unknown assets automatically.
+          verify_source_tag
+          gh release edit "$TAG" --repo "$REPOSITORY" --draft=false --latest
