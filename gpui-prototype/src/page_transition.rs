@@ -25,6 +25,11 @@ pub struct PageTransition {
 pub enum PageVisual {
     Empty,
     Page(Rc<PageSnapshot>),
+    Limited {
+        incoming: Rc<PageSnapshot>,
+        opacity: f32,
+        offset: f32,
+    },
     Composite {
         outgoing: Rc<PageVisual>,
         incoming: Rc<PageSnapshot>,
@@ -40,11 +45,20 @@ impl PageTransition {
             return self.outgoing.clone(); // A target not painted yet never needs an outgoing copy.
         };
         let depth = match self.outgoing.as_ref() {
-            PageVisual::Empty | PageVisual::Page(_) => 0,
+            PageVisual::Empty | PageVisual::Page(_) | PageVisual::Limited { .. } => 0,
             PageVisual::Composite { depth, .. } => *depth,
         };
-        if progress >= 1. || depth >= 8 {
+        if progress >= 1. {
             return Rc::new(PageVisual::Page(incoming.clone()));
+        }
+        if depth >= 8 {
+            // Drop old nested visuals under extreme repeat clicks, without restoring
+            // a fully bright destination before the fade-in has reached it.
+            return Rc::new(PageVisual::Limited {
+                incoming: incoming.clone(),
+                opacity: opacities(progress).1,
+                offset: offsets(1., direction, progress).1,
+            });
         }
         Rc::new(PageVisual::Composite {
             outgoing: self.outgoing.clone(),
@@ -73,6 +87,27 @@ impl PageVisual {
                 .size_full()
                 .child(page.render(width, compact, compact_actions, cx))
                 .into_any_element(),
+            Self::Limited {
+                incoming,
+                opacity,
+                offset,
+            } => div()
+                .relative()
+                .size_full()
+                .overflow_hidden()
+                .bg(rgb(palette(cx).panel))
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .left(px(offset * width))
+                        .w(px(width))
+                        .opacity(*opacity)
+                        .overflow_hidden()
+                        .child(incoming.render(width, compact, compact_actions, cx)),
+                )
+                .into_any_element(),
             Self::Composite {
                 outgoing,
                 incoming,
@@ -81,6 +116,7 @@ impl PageVisual {
                 ..
             } => {
                 let (old_x, new_x) = offsets(width, *direction, *progress);
+                let (old_alpha, new_alpha) = opacities(*progress);
                 div()
                     .relative()
                     .size_full()
@@ -93,6 +129,7 @@ impl PageVisual {
                             .bottom_0()
                             .left(px(old_x))
                             .w(px(width))
+                            .opacity(old_alpha)
                             .overflow_hidden()
                             .child(outgoing.render(width, compact, compact_actions, cx)),
                     )
@@ -103,6 +140,7 @@ impl PageVisual {
                             .bottom_0()
                             .left(px(new_x))
                             .w(px(width))
+                            .opacity(new_alpha)
                             .overflow_hidden()
                             .child(incoming.render(width, compact, compact_actions, cx)),
                     )
@@ -129,6 +167,18 @@ pub fn offsets(width: f32, direction: i8, progress: f32) -> (f32, f32) {
     let eased = 1. - (1. - progress).powi(3);
     let direction = if direction < 0 { -1. } else { 1. };
     (-direction * width * eased, direction * width * (1. - eased))
+}
+
+/// Fade through the editor background, rather than keeping both sheets opaque.
+/// Smoothstep flattens the opacity velocity at the start, midpoint, and end.
+pub fn opacities(progress: f32) -> (f32, f32) {
+    let progress = progress.clamp(0., 1.);
+    let smooth = |t: f32| t * t * (3. - 2. * t);
+    if progress <= 0.5 {
+        (1. - smooth(progress * 2.), 0.)
+    } else {
+        (0., smooth((progress - 0.5) * 2.))
+    }
 }
 
 fn symbol(icon: IconName, cx: &App) -> Div {
@@ -643,6 +693,17 @@ mod tests {
         };
         assert!(Rc::ptr_eq(&transition.freeze(1, 0.), &transition.outgoing));
         transition.incoming = Some(incoming.clone());
+        match transition.freeze(-1, 0.25).as_ref() {
+            PageVisual::Composite {
+                progress,
+                direction,
+                ..
+            } => {
+                assert_eq!(*direction, -1);
+                assert_eq!(opacities(*progress), (0.5, 0.));
+            }
+            _ => panic!("快速反向时须冻结当前渐隐画面"),
+        }
         for _ in 0..8 {
             transition.outgoing = transition.freeze(1, 0.5);
         }
@@ -650,14 +711,39 @@ mod tests {
             transition.outgoing.as_ref(),
             PageVisual::Composite { depth: 8, .. }
         ));
-        assert!(matches!(
-            transition.freeze(1, 0.5).as_ref(),
-            PageVisual::Page(_)
-        ));
+        match transition.freeze(1, 0.5).as_ref() {
+            PageVisual::Limited { opacity, .. } => assert_eq!(*opacity, 0.),
+            _ => panic!("缓存限额不能把中点还原成全亮页面"),
+        }
+        match transition.freeze(1, 0.75).as_ref() {
+            PageVisual::Limited { opacity, .. } => assert_eq!(*opacity, 0.5),
+            _ => panic!("缓存限额仍须保留淡入透明度"),
+        }
         assert!(matches!(
             transition.freeze(1, 1.).as_ref(),
             PageVisual::Page(_)
         ));
+    }
+
+    #[test]
+    fn sheets_fade_out_then_in_with_the_midpoint_transparent() {
+        assert_eq!(opacities(-1.), (1., 0.));
+        assert_eq!(opacities(0.), (1., 0.));
+        assert_eq!(opacities(0.25), (0.5, 0.));
+        assert_eq!(opacities(0.5), (0., 0.));
+        assert_eq!(opacities(0.75), (0., 0.5));
+        assert_eq!(opacities(1.), (0., 1.));
+        assert_eq!(opacities(2.), (0., 1.));
+        let mut previous = (1., 0.);
+        for step in 0..=100 {
+            let alpha = opacities(step as f32 / 100.);
+            assert!(alpha.0 <= previous.0 && alpha.1 >= previous.1);
+            assert!(
+                alpha.0 == 0. || alpha.1 == 0.,
+                "两页不能同时不透明地交叉覆盖"
+            );
+            previous = alpha;
+        }
     }
 
     #[test]

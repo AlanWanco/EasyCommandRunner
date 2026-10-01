@@ -4122,6 +4122,7 @@ impl Render for CommandWorkspace {
                 .into_any_element()
         } else if let Some((outgoing, incoming, progress, direction)) = slide_layers {
             let (old_x, new_x) = page_transition::offsets(content_width, direction, progress);
+            let (old_alpha, new_alpha) = page_transition::opacities(progress);
             editor
                 .child(
                     frame("page-slide-outgoing")
@@ -4130,6 +4131,7 @@ impl Render for CommandWorkspace {
                         .bottom_0()
                         .left(px(old_x))
                         .w(px(content_width))
+                        .opacity(old_alpha)
                         .overflow_hidden()
                         .bg(rgb(p.panel))
                         .child(outgoing.render(content_width, compact, compact_actions, cx)),
@@ -4141,6 +4143,7 @@ impl Render for CommandWorkspace {
                         .bottom_0()
                         .left(px(new_x))
                         .w(px(content_width))
+                        .opacity(new_alpha)
                         .overflow_hidden()
                         .bg(rgb(p.panel))
                         .child(incoming.render(content_width, compact, compact_actions, cx)),

@@ -865,14 +865,37 @@ fn page_switch_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
             .save(format!("{directory}/page-{mode:?}-enter.png"))
             .unwrap();
         cx.background_executor()
-            .advance_clock(Duration::from_millis(100));
+            .advance_clock(Duration::from_millis(130));
         cx.run_until_parked();
         cx.update_window(handle.into(), |_, window, cx| window.render_frame(cx))
             .unwrap();
-        cx.capture_screenshot(handle.into())
-            .unwrap()
+        let middle = cx.capture_screenshot(handle.into()).unwrap();
+        middle
             .save(format!("{directory}/page-{mode:?}-middle.png"))
             .unwrap();
+        let panel = cx.update(|cx| theme::palette(cx).panel);
+        let background = [
+            ((panel >> 16) & 255) as u8,
+            ((panel >> 8) & 255) as u8,
+            (panel & 255) as u8,
+        ];
+        let scale = middle.width() as f32 / 850.;
+        for y in ((f32::from(editor.top()) + 16.) * scale) as u32
+            ..((f32::from(editor.top()) + 260.) * scale) as u32
+        {
+            for x in ((f32::from(editor.left()) + 24.) * scale) as u32
+                ..((f32::from(editor.left()) + 520.) * scale) as u32
+            {
+                let pixel = middle.get_pixel(x, y).0;
+                assert!(
+                    pixel[..3]
+                        .iter()
+                        .zip(background)
+                        .all(|(actual, expected)| actual.abs_diff(expected) <= 2),
+                    "{mode:?} 过渡中点应只露出编辑区底色，不可仍有全亮页面：{x},{y}={pixel:?}"
+                );
+            }
+        }
         cx.background_executor()
             .advance_clock(Duration::from_millis(300));
         cx.run_until_parked();
