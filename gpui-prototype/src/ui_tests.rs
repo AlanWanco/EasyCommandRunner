@@ -983,17 +983,51 @@ fn detached_log_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
             view.update(cx, |v, cx| {
                 v.show_log = true;
                 v.log_height_override = Some(180.);
-                v.add_finished_log_for_test("生成示例", "第一行输出\n第二行输出", w, cx);
+                let output = (0..90)
+                    .map(|i| format!("历史输出 {i}\n"))
+                    .collect::<String>()
+                    + "最新输出 · END 🌟";
+                v.add_finished_log_for_test("生成示例", &output, w, cx);
             });
-            w.click("detach-log", cx);
+            for _ in 0..3 {
+                w.render_frame(cx);
+            }
+            let output = view.read(cx).log_output.read(cx);
+            assert_eq!(
+                output.selected_range(),
+                output.value().len()..output.value().len()
+            );
+            assert!(output.visible_row_range().unwrap().contains(&90));
         })
         .unwrap();
+        cx.capture_screenshot(main.into())
+            .expect("离屏停靠日志置底截图失败")
+            .save(format!("{directory}/log-docked-{mode:?}-tail.png"))
+            .unwrap();
+        cx.update_window(main.into(), |_, w, cx| w.click("detach-log", cx))
+            .unwrap();
         cx.run_until_parked();
         let detached = cx
             .update(|cx| view.read(cx).detached_log)
             .expect("离屏独立日志窗口");
-        cx.update_window(detached.into(), |_, w, cx| {
-            w.render_frame(cx);
+        cx.update_window(detached.into(), |root, w, cx| {
+            for _ in 0..3 {
+                w.render_frame(cx);
+            }
+            let pane = root
+                .downcast::<Root>()
+                .unwrap()
+                .read(cx)
+                .view()
+                .clone()
+                .downcast::<crate::log_window::DetachedLogWindow>()
+                .unwrap();
+            let state = pane.read(cx).output.read(cx);
+            assert_eq!(
+                state.selected_range(),
+                state.value().len()..state.value().len()
+            );
+            assert!(state.visible_row_range().unwrap().contains(&90));
             let panel = w.find("detached-log-window").bounds();
             let output = w.find("detached-log-output").bounds();
             assert!(output.top() >= panel.top() && output.bottom() <= panel.bottom());
@@ -1010,10 +1044,25 @@ fn detached_log_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
         cx.run_until_parked();
         cx.update_window(main.into(), |_, w, cx| {
             w.render_frame(cx);
+            for _ in 0..3 {
+                w.render_frame(cx);
+            }
             assert!(w.try_find("log-dock").is_some());
-            w.remove_window();
+            assert!(view
+                .read(cx)
+                .log_output
+                .read(cx)
+                .visible_row_range()
+                .unwrap()
+                .contains(&90));
         })
         .unwrap();
+        cx.capture_screenshot(main.into())
+            .expect("离屏重新停靠日志置底截图失败")
+            .save(format!("{directory}/log-docked-{mode:?}-reattached.png"))
+            .unwrap();
+        cx.update_window(main.into(), |_, w, _| w.remove_window())
+            .unwrap();
         println!("PASS log-detached-{mode:?}");
     }
 }

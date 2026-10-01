@@ -14,6 +14,7 @@ mod components;
 mod core;
 mod i18n;
 mod icon_picker;
+mod log_output;
 mod log_window;
 mod notifications;
 mod page_transition;

@@ -3,6 +3,7 @@ use crate::{
     app::{log_zoom_delta, CommandWorkspace},
     components::{button, column, frame, icon_button, row, textarea},
     i18n::{tr, Language},
+    log_output::LogAutoScroll,
     state::LogItems,
     theme::{self, palette, Fonts},
     tokens::{CONTROL, GAP, LINE, SECTION},
@@ -21,6 +22,7 @@ pub(crate) struct DetachedLogWindow {
     workspace: Entity<CommandWorkspace>,
     selector: Entity<SelectState<LogItems>>,
     pub(crate) output: Entity<TextareaState>,
+    auto_scroll: LogAutoScroll,
     last_items: Vec<(usize, String)>,
     last_selected: Option<usize>,
     language: Language,
@@ -68,6 +70,7 @@ impl DetachedLogWindow {
             workspace,
             selector,
             output,
+            auto_scroll: LogAutoScroll::default(),
             last_items,
             last_selected: snapshot.selected_id,
             language: *cx.global::<Language>(),
@@ -99,13 +102,13 @@ impl DetachedLogWindow {
                 selector.set_selected_index(selected.map(IndexPath::new), window, cx);
             });
             self.last_items = items;
+            if self.last_selected != snapshot.selected_id {
+                self.auto_scroll.request_tail();
+            }
             self.last_selected = snapshot.selected_id;
         }
-        if self.output.read(cx).value().as_ref() != snapshot.output {
-            self.output.update(cx, |output, cx| {
-                output.set_value(snapshot.output, window, cx)
-            });
-        }
+        self.auto_scroll
+            .set_value(&self.output, snapshot.output, window, cx);
         cx.notify();
     }
 }
@@ -185,6 +188,7 @@ impl Render for DetachedLogWindow {
                     )
                     .child(
                         frame("detached-log-output")
+                            .relative()
                             .flex_1()
                             .min_h_0()
                             .capture_key_down(cx.listener(
@@ -206,7 +210,8 @@ impl Render for DetachedLogWindow {
                                     .line_height(px((snapshot.font_size as f32 * 1.4).max(LINE)))
                                     .readonly(true)
                                     .bg(rgb(p.subtle)),
-                            ),
+                            )
+                            .child(self.auto_scroll.after_layout(&self.output)),
                     ),
             )
     }

@@ -3,6 +3,7 @@ use crate::{
     components::*,
     core::parser::CommandParser,
     i18n::{self, tr, Language},
+    log_output::LogAutoScroll,
     log_window::DetachedLogWindow,
     notifications,
     page_transition::{self, PageSnapshot, PageTransition, PageVisual},
@@ -91,6 +92,7 @@ pub struct CommandWorkspace {
     next_run_id: usize,
     log_selector: Entity<SelectState<LogItems>>,
     pub(crate) log_output: Entity<TextareaState>,
+    log_auto_scroll: LogAutoScroll,
     // Only the non-interactive sheets move. Live input entities and IME geometry stay stable.
     page_switch_epoch: usize,
     page_switch: Option<(usize, i8)>,
@@ -314,6 +316,7 @@ impl CommandWorkspace {
             next_run_id: 0,
             log_selector,
             log_output,
+            log_auto_scroll: LogAutoScroll::default(),
             page_switch_epoch: 0,
             page_switch: None,
             page_transition: None,
@@ -1302,6 +1305,7 @@ impl CommandWorkspace {
         cx: &mut Context<Self>,
     ) {
         let mut completed = false;
+        let mut output_changed = false;
         for event in events {
             match event {
                 RunEvent::Output { stream, text } => {
@@ -1320,11 +1324,7 @@ impl CommandWorkspace {
                             log.output
                                 .insert_str(0, &tr(cx, "[前序输出已截断，保留最近 1 MB]\n"));
                         }
-                        if self.selected_log_id == Some(id) {
-                            let output = log.output.clone();
-                            self.log_output
-                                .update(cx, |state, cx| state.set_value(output, window, cx));
-                        }
+                        output_changed = true;
                     }
                 }
                 RunEvent::Finished { exit_code, stopped } => {
@@ -1360,6 +1360,11 @@ impl CommandWorkspace {
         }
         if completed {
             self.sync_log_list(window, cx);
+        } else if output_changed && self.selected_log_id == Some(id) {
+            if let Some(log) = self.logs.iter().find(|log| log.id == id) {
+                self.log_auto_scroll
+                    .set_value(&self.log_output, log.output.clone(), window, cx);
+            }
         }
         cx.notify();
     }
@@ -1384,8 +1389,9 @@ impl CommandWorkspace {
         };
         self.selected_log_id = Some(id);
         let output = log.output.clone();
-        self.log_output
-            .update(cx, |state, cx| state.set_value(output, window, cx));
+        self.log_auto_scroll.request_tail();
+        self.log_auto_scroll
+            .set_value(&self.log_output, output, window, cx);
         cx.notify();
     }
 
@@ -1411,8 +1417,8 @@ impl CommandWorkspace {
             .and_then(|id| self.logs.iter().find(|log| log.id == id))
             .map(|log| log.output.clone())
             .unwrap_or_default();
-        self.log_output
-            .update(cx, |state, cx| state.set_value(output, window, cx));
+        self.log_auto_scroll
+            .set_value(&self.log_output, output, window, cx);
         cx.notify();
     }
 
@@ -4248,6 +4254,7 @@ impl Render for CommandWorkspace {
             .when(log_height >= 76., |d| {
                 d.child(
                     frame("log-output")
+                        .relative()
                         .flex_1()
                         .min_h_0()
                         .capture_key_down(cx.listener(|v, event: &gpui::KeyDownEvent, w, cx| {
@@ -4265,7 +4272,8 @@ impl Render for CommandWorkspace {
                                 .line_height(px((self.log_font_size as f32 * 1.4).max(LINE)))
                                 .readonly(true)
                                 .bg(rgb(p.subtle)),
-                        ),
+                        )
+                        .child(self.log_auto_scroll.after_layout(&self.log_output)),
                 )
             });
         frame("workspace")
@@ -4565,6 +4573,381 @@ impl Drop for CommandWorkspace {
         for handle in self.run_handles.values() {
             let _ = handle.stop();
         }
+    }
+}
+
+#[cfg(all(test, feature = "ui-test"))]
+mod log_scroll_tests {
+    use super::*;
+    use gpui::test::TestWindowExt;
+    use gpui::{size, EntityInputHandler, TestAppContext};
+
+    fn assert_tail(output: &Entity<TextareaState>, cx: &App) {
+        let state = output.read(cx);
+        let value = state.value();
+        assert_eq!(state.selected_range(), value.len()..value.len());
+        let rows = state.visible_row_range().expect("日志已布局");
+        assert!(
+            rows.contains(&value.matches('\n').count()),
+            "最新一行必须可见：{rows:?}"
+        );
+        let (mut caret, _) = state.cursor_layout().expect("末尾光标已布局");
+        caret.origin += state.scroll_offset();
+        let viewport = state.input_bounds();
+        assert!(
+            caret.top() >= viewport.top() - px(1.) && caret.bottom() <= viewport.bottom() + px(1.),
+            "末尾必须真正处于可视区，而非仅改变选区：{caret:?}/{viewport:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn docked_output_follows_batches_and_wrapped_tail_without_stealing_focus(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui::init(cx);
+            notifications::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let handle = cx.open_window(size(px(850.), px(800.)), |window, cx| {
+            let view = cx.new(|cx| {
+                let mut view = CommandWorkspace::new(window, cx);
+                view.show_log = true;
+                view.log_height_override = Some(180.);
+                view.logs.push(SessionLog {
+                    id: 0,
+                    command_name: "连续输出".into(),
+                    caption: "连续输出 · 运行 #1".into(),
+                    output: String::new(),
+                    finished: false,
+                    exit_code: None,
+                    stopped: false,
+                });
+                view.selected_log_id = Some(0);
+                view
+            });
+            workspace = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let view = workspace.unwrap();
+        cx.update_window(handle.into(), |_, window, cx| {
+            let program = view.read(cx).tabs[0].program.clone();
+            window.focus(&program.focus_handle(cx), cx);
+            let draft = program.update(cx, |state, cx| {
+                state.set_value("", window, cx);
+                state.replace_and_mark_text_in_range(None, "正在组字", Some(1..2), window, cx);
+                (
+                    state.value(),
+                    state.selected_range(),
+                    state.marked_text_range(window, cx),
+                )
+            });
+            for batch in [
+                (0..100)
+                    .map(|i| format!("中文输出 🌟 第 {i} 行\n"))
+                    .collect::<String>(),
+                format!("{}最新的长行末尾", "中文自动换行🌟".repeat(120)),
+                "\n最后一批输出".into(),
+            ] {
+                view.update(cx, |view, cx| {
+                    view.receive_run_events(
+                        0,
+                        vec![RunEvent::Output {
+                            stream: OutputStream::Stdout,
+                            text: batch,
+                        }],
+                        window,
+                        cx,
+                    );
+                });
+                for _ in 0..3 {
+                    window.render_frame(cx);
+                }
+                assert_tail(&view.read(cx).log_output, cx);
+                assert!(
+                    program.focus_handle(cx).is_focused(window),
+                    "日志更新不能抢焦点"
+                );
+                let actual = program.update(cx, |state, cx| {
+                    (
+                        state.value(),
+                        state.selected_range(),
+                        state.marked_text_range(window, cx),
+                    )
+                });
+                assert_eq!(actual, draft, "日志置底不能影响命令草稿、选区或 IME");
+            }
+            view.update(cx, |view, cx| {
+                view.receive_run_events(
+                    0,
+                    vec![
+                        RunEvent::Output {
+                            stream: OutputStream::Stderr,
+                            text: "\n完成前的最后一批标准错误".into(),
+                        },
+                        RunEvent::Finished {
+                            exit_code: 0,
+                            stopped: false,
+                        },
+                    ],
+                    window,
+                    cx,
+                );
+            });
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            assert_tail(&view.read(cx).log_output, cx);
+            window.remove_window();
+        })
+        .unwrap();
+    }
+
+    fn long_output_workspace(
+        window: &mut Window,
+        cx: &mut Context<CommandWorkspace>,
+    ) -> CommandWorkspace {
+        let mut view = CommandWorkspace::new(window, cx);
+        view.show_log = true;
+        view.log_height_override = Some(180.);
+        let output = (0..90)
+            .map(|i| format!("历史输出 {i}\n"))
+            .collect::<String>();
+        view.logs = (0..2)
+            .map(|id| SessionLog {
+                id,
+                command_name: format!("任务 {id}"),
+                caption: format!("运行 #{}", id + 1),
+                output: output.clone(),
+                finished: false,
+                exit_code: None,
+                stopped: false,
+            })
+            .collect();
+        view.selected_log_id = Some(0);
+        view.select_log(0, window, cx);
+        view
+    }
+
+    #[gpui::test]
+    fn docked_log_follows_reopen_resize_and_truncation_but_not_other_runs(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui::init(cx);
+            notifications::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let handle = cx.open_window(size(px(850.), px(800.)), |window, cx| {
+            let view = cx.new(|cx| long_output_workspace(window, cx));
+            workspace = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let view = workspace.unwrap();
+        cx.update_window(handle.into(), |_, window, cx| {
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            let output = view.read(cx).log_output.clone();
+            assert_tail(&output, cx);
+            let original = output.read(cx).value();
+            output.update(cx, |state, cx| {
+                state.set_scroll_offset(gpui::point(px(0.), px(-80.)), cx)
+            });
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            let browsed = output.read(cx).scroll_offset();
+            assert_eq!(browsed.y, px(-80.), "可以手动上翻历史输出");
+            view.update(cx, |view, cx| {
+                view.receive_run_events(
+                    1,
+                    vec![
+                        RunEvent::Output {
+                            stream: OutputStream::Stdout,
+                            text: "后台任务的新输出".into(),
+                        },
+                        RunEvent::Finished {
+                            exit_code: 0,
+                            stopped: false,
+                        },
+                    ],
+                    window,
+                    cx,
+                );
+            });
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            assert_eq!(
+                output.read(cx).value(),
+                original,
+                "别的任务不可覆盖当前日志"
+            );
+            assert_eq!(
+                output.read(cx).scroll_offset(),
+                browsed,
+                "状态更新不可把历史视口重置到顶或底"
+            );
+
+            view.update(cx, |view, cx| {
+                view.show_log = false;
+                cx.notify();
+            });
+            window.render_frame(cx);
+            view.update(cx, |view, cx| {
+                view.receive_run_events(
+                    0,
+                    vec![RunEvent::Output {
+                        stream: OutputStream::Stdout,
+                        text: (90..180).map(|i| format!("收起时输出 {i}\n")).collect(),
+                    }],
+                    window,
+                    cx,
+                );
+            });
+            window.render_frame(cx);
+            view.update(cx, |view, cx| {
+                view.show_log = true;
+                cx.notify();
+            });
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            assert_tail(&output, cx);
+            view.update(cx, |view, cx| {
+                view.log_height_override = Some(140.);
+                view.zoom_log(8, cx);
+            });
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            assert_tail(&output, cx);
+
+            view.update(cx, |view, cx| {
+                view.receive_run_events(
+                    0,
+                    vec![RunEvent::Output {
+                        stream: OutputStream::Stdout,
+                        text: format!("{}\n", "中文输出🌟".repeat(24)).repeat(5200),
+                    }],
+                    window,
+                    cx,
+                );
+            });
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            assert!(output.read(cx).value().starts_with("[前序输出已截断"));
+            assert_tail(&output, cx);
+            view.update(cx, |view, cx| {
+                view.select_log(1, window, cx);
+            });
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            assert_tail(&output, cx);
+            window.remove_window();
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    fn detached_log_follows_initial_selection_new_output_and_reattachment(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let main = cx.open_window(size(px(850.), px(800.)), |window, cx| {
+            let view = cx.new(|cx| long_output_workspace(window, cx));
+            workspace = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let view = workspace.unwrap();
+        cx.update_window(main.into(), |_, _, cx| {
+            view.update(cx, |view, cx| view.detach_log(cx));
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let detached = cx
+            .update(|cx| view.read(cx).detached_log)
+            .expect("日志窗口已分离");
+        let output = cx
+            .update_window(detached.into(), |root, window, cx| {
+                for _ in 0..3 {
+                    window.render_frame(cx);
+                }
+                let pane = root
+                    .downcast::<Root>()
+                    .unwrap()
+                    .read(cx)
+                    .view()
+                    .clone()
+                    .downcast::<DetachedLogWindow>()
+                    .unwrap();
+                let output = pane.read(cx).output.clone();
+                assert_tail(&output, cx);
+                output.update(cx, |state, cx| {
+                    state.set_scroll_offset(gpui::point(px(0.), px(-80.)), cx)
+                });
+                for _ in 0..3 {
+                    window.render_frame(cx);
+                }
+                assert_eq!(output.read(cx).scroll_offset().y, px(-80.));
+                output
+            })
+            .unwrap();
+        // Both records deliberately have identical text: selection changes must
+        // still reveal the tail, even without a set_value call.
+        cx.update_window(main.into(), |_, window, cx| {
+            view.update(cx, |view, cx| view.select_log(1, window, cx));
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(detached.into(), |_, window, cx| {
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            assert_tail(&output, cx);
+        })
+        .unwrap();
+        cx.update_window(main.into(), |_, window, cx| {
+            view.update(cx, |view, cx| {
+                view.receive_run_events(
+                    1,
+                    (90..160)
+                        .map(|i| RunEvent::Output {
+                            stream: OutputStream::Stdout,
+                            text: format!("分离窗口的新输出 {i}\n"),
+                        })
+                        .collect(),
+                    window,
+                    cx,
+                );
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(detached.into(), |_, window, cx| {
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            assert!(output.read(cx).value().contains("分离窗口的新输出 159"));
+            assert_tail(&output, cx);
+            window.remove_window();
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(main.into(), |_, window, cx| {
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            assert!(view.read(cx).detached_log.is_none());
+            assert_tail(&view.read(cx).log_output, cx);
+            window.remove_window();
+        })
+        .unwrap();
     }
 }
 
