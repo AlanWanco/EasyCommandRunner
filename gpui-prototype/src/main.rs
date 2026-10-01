@@ -16,6 +16,7 @@ mod i18n;
 mod icon_picker;
 mod log_window;
 mod notifications;
+mod page_transition;
 mod settings;
 mod state;
 mod tab_icons;

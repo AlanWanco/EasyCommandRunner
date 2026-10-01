@@ -844,12 +844,10 @@ fn page_switch_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
                 let start = std::time::Instant::now();
                 // Avoid multiple click-generated frames: the animation uses wall-clock time.
                 view.update(cx, |view, cx| {
-                    let next = crate::state::CommandTab::new(
-                        1,
-                        crate::state::TabData::example(),
-                        window,
-                        cx,
-                    );
+                    let mut data = crate::state::TabData::example();
+                    data.name = "手机式切页 · 新配置".into();
+                    data.program = "echo mobile_page".into();
+                    let next = crate::state::CommandTab::new(1, data, window, cx);
                     view.tabs.push(next);
                     view.select_tab(1, window, cx);
                 });
@@ -866,9 +864,22 @@ fn page_switch_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
         first
             .save(format!("{directory}/page-{mode:?}-enter.png"))
             .unwrap();
-        std::thread::sleep(Duration::from_millis(300));
+        cx.background_executor()
+            .advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, window, cx| window.render_frame(cx))
+            .unwrap();
+        cx.capture_screenshot(handle.into())
+            .unwrap()
+            .save(format!("{directory}/page-{mode:?}-middle.png"))
+            .unwrap();
+        cx.background_executor()
+            .advance_clock(Duration::from_millis(300));
+        cx.run_until_parked();
         cx.update_window(handle.into(), |_, window, cx| {
             window.render_frame(cx);
+            assert!(window.try_find("page-slide-outgoing").is_none());
+            assert!(window.try_find("page-slide-incoming").is_none());
             assert_eq!(window.find("command-editor").bounds(), editor);
             assert_eq!(window.find("status-bar").bounds(), status_bar);
         })
@@ -887,7 +898,8 @@ fn page_switch_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
                 view.select_tab(1, window, cx);
             });
             window.render_frame(cx);
-            assert!(window.try_find("page-switch-cue").is_none());
+            assert!(window.try_find("page-slide-outgoing").is_none());
+            assert!(window.try_find("page-slide-incoming").is_none());
             assert_eq!(window.find("command-editor").bounds(), editor);
             assert_eq!(window.find("status-bar").bounds(), status_bar);
         })
@@ -916,13 +928,13 @@ fn page_switch_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
                 }
             }
         }
-        // A saturated CI renderer can take longer than the 220ms animation to deliver
+        // A saturated CI renderer can take longer than the 260ms animation to deliver
         // the first screenshot. In that case the state tests above still verify the
         // animation is scheduled; do not interpret a settled frame as no animation.
         if first_frame_elapsed < Duration::from_millis(190) {
             assert!(
                 changed > 200,
-                "{mode:?} 切页入场必须真正改变内容透明度：{changed}"
+                "{mode:?} 整页滑动必须真正改变页面像素：{changed}"
             );
         }
         assert_eq!(reduced_difference, 0, "{mode:?} 减少动效应立即显示稳定内容");

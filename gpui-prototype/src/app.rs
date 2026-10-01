@@ -5,6 +5,7 @@ use crate::{
     i18n::{self, tr, Language},
     log_window::DetachedLogWindow,
     notifications,
+    page_transition::{self, PageSnapshot, PageTransition, PageVisual},
     settings::{Preferences, SettingsPanel},
     state::{CommandTab, LogItem, LogItems, Parameter, RowData, TabData},
     tab_icons,
@@ -90,9 +91,10 @@ pub struct CommandWorkspace {
     next_run_id: usize,
     log_selector: Entity<SelectState<LogItems>>,
     pub(crate) log_output: Entity<TextareaState>,
-    // 只控制当前页内容的入场效果；不参与保存，也不移动输入控件的几何尺寸。
+    // Only the non-interactive sheets move. Live input entities and IME geometry stay stable.
     page_switch_epoch: usize,
     page_switch: Option<(usize, i8)>,
+    page_transition: Option<PageTransition>,
     pub preview: Entity<TextareaState>,
     tab_scroll: ScrollHandle,
     sidebar_scroll: ScrollHandle,
@@ -314,6 +316,7 @@ impl CommandWorkspace {
             log_output,
             page_switch_epoch: 0,
             page_switch: None,
+            page_transition: None,
             preview,
             tab_scroll: ScrollHandle::new(),
             sidebar_scroll: {
@@ -1008,6 +1011,7 @@ impl CommandWorkspace {
             tab.dirty = true;
         }
         self.config_dirty = true;
+        self.finish_page_switch(); // Never hide fresh text edits behind a frozen animation sheet.
         self.refresh(window, cx);
     }
     fn paste_external_file_path(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
@@ -1059,13 +1063,110 @@ impl CommandWorkspace {
         }
         cx.notify();
     }
-    fn start_page_switch(&mut self, direction: i8, cx: &App) {
+    fn page_snapshot(&self, window: &Window, cx: &App) -> Rc<PageSnapshot> {
+        let tab = self.current();
+        let layout = WorkspaceLayout::with_overrides(
+            f32::from(window.viewport_size().height),
+            tab.rows.len(),
+            self.show_log,
+            tab.row_height_override,
+            self.log_height_override,
+        );
+        Rc::new(PageSnapshot {
+            tab_id: tab.id,
+            data: tab.data(cx),
+            command: tab.command(cx),
+            append: tab.append.read(cx).value().to_string(),
+            rows_height: layout.rows_height,
+            rows_offset: f32::from(self.row_scroll.offset().y),
+            description_width: self.description_width_override,
+            enabled_first: self.enabled_first,
+        })
+    }
+
+    fn page_visual(&self, window: &Window, cx: &App) -> Rc<PageVisual> {
+        if let (Some((_, direction)), Some(transition)) = (self.page_switch, &self.page_transition)
+        {
+            let progress = cx
+                .background_executor()
+                .now()
+                .saturating_duration_since(transition.started_at)
+                .as_secs_f32()
+                / page_transition::DURATION.as_secs_f32();
+            return transition.freeze(direction, progress);
+        }
+        if self.open_position().is_none() {
+            Rc::new(PageVisual::Empty)
+        } else {
+            Rc::new(PageVisual::Page(self.page_snapshot(window, cx)))
+        }
+    }
+
+    fn finish_page_switch(&mut self) {
+        self.page_switch = None;
+        self.page_transition = None;
+    }
+
+    fn start_page_switch_from(&mut self, direction: i8, outgoing: Rc<PageVisual>, cx: &App) {
         if self.reduced_motion || cx.reduce_motion() {
-            self.page_switch = None;
+            self.finish_page_switch();
         } else {
             self.page_switch_epoch = self.page_switch_epoch.wrapping_add(1);
             self.page_switch = Some((self.page_switch_epoch, direction));
+            self.page_transition = Some(PageTransition {
+                started_at: cx.background_executor().now(),
+                outgoing,
+                incoming: None,
+            });
         }
+    }
+
+    fn start_page_switch(&mut self, direction: i8, window: &Window, cx: &App) {
+        if self.reduced_motion || cx.reduce_motion() {
+            self.finish_page_switch();
+            return;
+        }
+        let outgoing = self.page_visual(window, cx);
+        self.start_page_switch_from(direction, outgoing, cx);
+    }
+
+    fn page_slide_layers(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<(Rc<PageVisual>, Rc<PageSnapshot>, f32, i8)> {
+        if self.reduced_motion || cx.reduce_motion() || self.open_tab_ids.is_empty() {
+            self.finish_page_switch();
+            return None;
+        }
+        let (_, direction) = self.page_switch?;
+        let progress = cx
+            .background_executor()
+            .now()
+            .saturating_duration_since(self.page_transition.as_ref()?.started_at)
+            .as_secs_f32()
+            / page_transition::DURATION.as_secs_f32();
+        if progress >= 1. {
+            self.finish_page_switch();
+            return None;
+        }
+        if self.page_transition.as_ref()?.incoming.is_none() {
+            let incoming = self.page_snapshot(window, cx);
+            self.page_transition.as_mut()?.incoming = Some(incoming);
+        }
+        let transition = self.page_transition.as_ref()?;
+        let layers = (
+            transition.outgoing.clone(),
+            transition.incoming.as_ref()?.clone(),
+            progress,
+            direction,
+        );
+        cx.on_next_frame(window, |view, _, cx| {
+            if view.page_switch.is_some() {
+                cx.notify();
+            }
+        });
+        Some(layers)
     }
 
     pub fn select_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -1093,6 +1194,7 @@ impl CommandWorkspace {
             } else {
                 -1
             },
+            window,
             cx,
         );
         self.active = index;
@@ -1503,6 +1605,7 @@ impl CommandWorkspace {
         let Some(position) = self.open_tab_ids.iter().position(|open| *open == id) else {
             return;
         };
+        let outgoing = (self.active == index).then(|| self.page_visual(window, cx));
         self.open_tab_ids.remove(position);
         self.tab_menu = None;
         if self.active == index {
@@ -1511,20 +1614,21 @@ impl CommandWorkspace {
                 .get(position.min(self.open_tab_ids.len().saturating_sub(1)))
                 .copied()
             {
-                self.active = self.tabs.iter().position(|tab| tab.id == next_id).unwrap();
-                self.start_page_switch(
+                self.start_page_switch_from(
                     if position < self.open_tab_ids.len() {
                         1
                     } else {
                         -1
                     },
+                    outgoing.expect("the active editor has an outgoing visual"),
                     cx,
                 );
+                self.active = self.tabs.iter().position(|tab| tab.id == next_id).unwrap();
                 self.row_scroll = ScrollHandle::new();
                 self.sidebar_scroll.scroll_to_item(self.active);
                 self.refresh(window, cx);
             } else {
-                self.page_switch = None;
+                self.finish_page_switch();
                 cx.notify();
             }
         } else {
@@ -1578,6 +1682,7 @@ impl CommandWorkspace {
     }
     fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let previous_id = self.current().id;
+        let outgoing = self.page_visual(window, cx);
         self.config_dirty = true;
         self.resizing = None;
         self.tab_menu = None;
@@ -1605,7 +1710,7 @@ impl CommandWorkspace {
         };
         if self.current().id != previous_id {
             // 关闭背景标签时当前页面内容没有变化，无须播放。
-            self.start_page_switch(if index < self.tabs.len() { 1 } else { -1 }, cx);
+            self.start_page_switch_from(if index < self.tabs.len() { 1 } else { -1 }, outgoing, cx);
             self.row_scroll = ScrollHandle::new();
         }
         if !self.open_tab_ids.contains(&self.current().id) {
@@ -1855,6 +1960,7 @@ impl CommandWorkspace {
     }
 
     fn set_appearance(&mut self, mode: Theme, window: &mut Window, cx: &mut Context<Self>) {
+        self.finish_page_switch();
         theme::apply(mode, cx);
         self.config_dirty = true;
         theme::set_font_size(self.font_size, cx);
@@ -1895,6 +2001,7 @@ impl CommandWorkspace {
             self.saved_digest = store.config_digest();
             self.persist_tab_session(cx);
         }
+        self.finish_page_switch();
         self.font_size = p.font_size;
         self.font_weight = p.font_weight;
         self.reduced_motion = p.reduced_motion;
@@ -3639,8 +3746,8 @@ impl Render for CommandWorkspace {
         let width = f32::from(window.viewport_size().width);
         let expanded_width = self.expanded_sidebar_width(width);
         let target_sidebar_width = self.sidebar_width(width);
-        // GPUI carries spring velocity across rapid reversals: the 2px right-edge accent follows
-        // the panel boundary instead of teleporting between the rail and expanded width.
+        // GPUI carries sidebar spring velocity across rapid reversals; the live page
+        // keeps its input entities throughout both sidebar resizing and page transitions.
         let sidebar_width = gpui::base::spring(
             "sidebar-boundary-spring",
             target_sidebar_width,
@@ -3680,6 +3787,7 @@ impl Render for CommandWorkspace {
         );
         let log_height = layout.log_height;
         let preview_header_total = PREVIEW_HEADER_HEIGHT + GAP * 2. + CONTROL;
+        let slide_layers = self.page_slide_layers(window, cx);
         let tab = self.current();
         let form = frame("command-form")
             .relative()
@@ -3985,8 +4093,9 @@ impl Render for CommandWorkspace {
                     .flex_col()
                     .child(preview_section),
             );
-        // The editable page stays fixed: translating its hitboxes loses rapid clicks and
-        // moves the IME caret. Slide only a decorative clipped layer over a fading page.
+        // Render the live editor throughout the transition so focus, selection, input
+        // handlers and IME remain bound to its original entities. Only the plain-text
+        // visual sheets slide; interacting with the editor reveals it immediately.
         let editor = frame("command-editor")
             .relative()
             .flex()
@@ -3994,8 +4103,14 @@ impl Render for CommandWorkspace {
             .min_w_0()
             .min_h_0()
             .overflow_hidden()
-            .child(page);
-        // The swipe and cue follow the selected direction; titlebar and log stay fixed.
+            .capture_any_mouse_down(cx.listener(|view, _, _, cx| {
+                if view.page_switch.is_some() {
+                    view.finish_page_switch();
+                    cx.notify();
+                }
+            }))
+            .child(page.opacity(if slide_layers.is_some() { 0. } else { 1. }));
+        // Sheets fill the editor viewport; titlebar, sidebar, status and log do not slide.
         let editor = if self.open_tab_ids.is_empty() {
             frame("empty-editor")
                 .flex_1()
@@ -4005,56 +4120,30 @@ impl Render for CommandWorkspace {
                 .text_color(rgb(p.muted))
                 .child(tr(cx, "从左侧配置列表打开一个标签，或新建配置"))
                 .into_any_element()
-        } else if let Some((epoch, direction)) = self
-            .page_switch
-            .filter(|_| !self.reduced_motion && !cx.reduce_motion())
-        {
-            let sweep = (content_width * 0.28).clamp(72., 180.);
+        } else if let Some((outgoing, incoming, progress, direction)) = slide_layers {
+            let (old_x, new_x) = page_transition::offsets(content_width, direction, progress);
             editor
                 .child(
-                    frame("page-switch-swipe")
+                    frame("page-slide-outgoing")
                         .absolute()
                         .top_0()
                         .bottom_0()
-                        .w(px(sweep))
-                        .bg(gpui::Hsla::from(rgb(p.focus)).opacity(0.12))
-                        .with_animation(
-                            ("page-switch-swipe", epoch),
-                            Animation::new(std::time::Duration::from_millis(260))
-                                .with_easing(|t| 1. - (1. - t).powi(3)),
-                            move |swipe, progress| {
-                                let x = if direction > 0 {
-                                    content_width - (content_width + sweep) * progress
-                                } else {
-                                    -sweep + (content_width + sweep) * progress
-                                };
-                                swipe.left(px(x)).opacity(1. - progress)
-                            },
-                        ),
+                        .left(px(old_x))
+                        .w(px(content_width))
+                        .overflow_hidden()
+                        .bg(rgb(p.panel))
+                        .child(outgoing.render(content_width, compact, compact_actions, cx)),
                 )
                 .child(
-                    frame("page-switch-cue")
+                    frame("page-slide-incoming")
                         .absolute()
-                        .top(px(SECTION))
-                        .when(direction > 0, |d| d.left(px(4.)))
-                        .when(direction < 0, |d| d.right(px(4.)))
-                        .w(px(3.))
-                        .h(px(CONTROL * 2.))
-                        .rounded_full()
-                        .bg(rgb(p.focus))
-                        .with_animation(
-                            ("page-switch-cue", epoch),
-                            Animation::new(std::time::Duration::from_millis(220)),
-                            |cue, progress| {
-                                cue.top(px(SECTION + 16. * (1. - progress)))
-                                    .opacity(0.9 * (1. - progress))
-                            },
-                        ),
-                )
-                .with_animation(
-                    ("page-switch-fade", epoch),
-                    Animation::new(std::time::Duration::from_millis(260)),
-                    |page, progress| page.opacity(0.40 + 0.60 * progress),
+                        .top_0()
+                        .bottom_0()
+                        .left(px(new_x))
+                        .w(px(content_width))
+                        .overflow_hidden()
+                        .bg(rgb(p.panel))
+                        .child(incoming.render(content_width, compact, compact_actions, cx)),
                 )
                 .into_any_element()
         } else {
@@ -4185,6 +4274,10 @@ impl Render for CommandWorkspace {
                 }
             }))
             .capture_key_down(cx.listener(|v, event: &gpui::KeyDownEvent, _, cx| {
+                if v.page_switch.is_some() {
+                    v.finish_page_switch();
+                    cx.notify();
+                }
                 let modifiers = event.keystroke.modifiers;
                 let save_modifier = if cfg!(target_os = "macos") {
                     modifiers.platform && !modifiers.control
@@ -4633,11 +4726,14 @@ mod page_switch_tests {
             view.update(cx, |v, cx| v.new_tab(false, window, cx));
             assert_eq!(view.read(cx).page_switch, Some((1, 1)));
             window.render_frame(cx);
-            assert!(window.try_find("page-switch-cue").is_some());
-            assert!(
-                window.find("page-switch-swipe").bounds().left() > editor.center().x,
-                "向右侧标签切换应从右向左滑动高光"
-            );
+            let outgoing = window.find("page-slide-outgoing").bounds();
+            let incoming = window.find("page-slide-incoming").bounds();
+            assert_eq!(outgoing.left(), editor.left());
+            assert_eq!(incoming.left(), editor.right());
+            assert_eq!(outgoing.size, editor.size);
+            assert_eq!(incoming.size, editor.size);
+            assert!(window.try_find("page-switch-swipe").is_none());
+            assert!(window.try_find("page-switch-cue").is_none());
             assert_eq!(
                 window.find("page-switch-content").bounds().left(),
                 editor.left(),
@@ -4646,6 +4742,10 @@ mod page_switch_tests {
             assert_eq!(window.find("command-editor").bounds(), editor);
             assert_eq!(window.find("status-bar").bounds(), status_bar);
             window.click("program", cx);
+            assert!(
+                view.read(cx).page_switch.is_none(),
+                "点击编辑区应立即结束滑动并保留本次点击"
+            );
             window.input("echo new page", cx);
             assert_eq!(
                 view.read(cx).tabs[1].program.read(cx).value(),
@@ -4665,9 +4765,10 @@ mod page_switch_tests {
             view.update(cx, |v, cx| v.select_tab(0, window, cx));
             assert_eq!(view.read(cx).page_switch, Some((epoch + 1, -1)));
             window.render_frame(cx);
-            assert!(
-                window.find("page-switch-swipe").bounds().left() < editor.left(),
-                "向左侧标签切换应从左向右滑动高光"
+            assert_eq!(
+                window.find("page-slide-incoming").bounds().left(),
+                editor.left() - editor.size.width,
+                "前一页应从左侧整页滑入"
             );
             assert_eq!(
                 window.find("page-switch-content").bounds().left(),
@@ -4687,6 +4788,173 @@ mod page_switch_tests {
             view.update(cx, |v, cx| v.close_tab(1, window, cx));
             assert_eq!(view.read(cx).page_switch_epoch, epoch + 4);
             window.remove_window();
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    fn sliding_sheets_keep_live_inputs_and_finish_or_retarget_without_resetting(
+        cx: &mut TestAppContext,
+    ) {
+        use gpui::component::input::InputState;
+        use std::time::Duration;
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let handle = cx.open_window(size(px(850.), px(800.)), |w, cx| {
+            let view = cx.new(|cx| CommandWorkspace::new(w, cx));
+            workspace = Some(view.clone());
+            Root::new(view, w, cx)
+        });
+        let view = workspace.unwrap();
+        let inputs = cx
+            .update_window(handle.into(), |_, w, cx| {
+                view.update(cx, |v, cx| {
+                    v.new_tab(false, w, cx);
+                    v.finish_page_switch();
+                    v.tabs[0].program.update(cx, |s: &mut InputState, cx| {
+                        s.set_value("旧页中文草稿", w, cx)
+                    });
+                    v.tabs[1].program.update(cx, |s: &mut InputState, cx| {
+                        s.set_value("新页中文草稿", w, cx)
+                    });
+                });
+                (
+                    view.read(cx).tabs[0].program.entity_id(),
+                    view.read(cx).tabs[1].program.entity_id(),
+                )
+            })
+            .unwrap();
+        cx.update_window(handle.into(), |_, w, cx| {
+            view.update(cx, |v, cx| {
+                v.reduced_motion = true;
+                v.select_tab(0, w, cx);
+                v.reduced_motion = false;
+            });
+            w.render_frame(cx);
+            view.update(cx, |v, cx| v.select_tab(1, w, cx));
+            w.render_frame(cx);
+            let transition = view.read(cx).page_transition.as_ref().unwrap();
+            match transition.outgoing.as_ref() {
+                PageVisual::Page(page) => assert_eq!(page.data.program, "旧页中文草稿"),
+                _ => panic!("首次滑出必须是实际旧页内容"),
+            }
+            assert_eq!(
+                transition.incoming.as_ref().unwrap().data.program,
+                "新页中文草稿"
+            );
+        })
+        .unwrap();
+        cx.background_executor
+            .advance_clock(Duration::from_millis(90));
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.render_frame(cx);
+            let viewport = w.find("command-editor").bounds();
+            let old = w.find("page-slide-outgoing").bounds();
+            let new = w.find("page-slide-incoming").bounds();
+            assert!(old.left() < viewport.left() && old.right() > viewport.left());
+            assert!(new.left() > viewport.left() && new.left() < viewport.right());
+            assert!((old.right() - new.left()).abs() <= px(1.));
+            view.update(cx, |v, cx| v.select_tab(0, w, cx));
+            assert!(matches!(
+                view.read(cx)
+                    .page_transition
+                    .as_ref()
+                    .unwrap()
+                    .outgoing
+                    .as_ref(),
+                PageVisual::Composite { .. }
+            ));
+            w.render_frame(cx);
+            assert_eq!(view.read(cx).tabs[0].program.entity_id(), inputs.0);
+            assert_eq!(view.read(cx).tabs[1].program.entity_id(), inputs.1);
+            assert_eq!(
+                view.read(cx).tabs[0].program.read(cx).value().as_ref(),
+                "旧页中文草稿"
+            );
+            assert_eq!(
+                view.read(cx).tabs[1].program.read(cx).value().as_ref(),
+                "新页中文草稿"
+            );
+        })
+        .unwrap();
+        cx.background_executor
+            .advance_clock(Duration::from_millis(300));
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.render_frame(cx);
+            assert!(view.read(cx).page_switch.is_none());
+            assert!(view.read(cx).page_transition.is_none());
+            assert!(w.try_find("page-slide-outgoing").is_none());
+            assert!(w.try_find("page-slide-incoming").is_none());
+            w.click("program", cx);
+            w.input("追加", cx);
+            assert!(view.read(cx).tabs[0]
+                .program
+                .read(cx)
+                .value()
+                .contains("追加"));
+            w.remove_window();
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    fn page_snapshots_preserve_selection_and_ime_marked_text(cx: &mut TestAppContext) {
+        use gpui::EntityInputHandler;
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let handle = cx.open_window(size(px(850.), px(800.)), |w, cx| {
+            let view = cx.new(|cx| CommandWorkspace::new(w, cx));
+            workspace = Some(view.clone());
+            Root::new(view, w, cx)
+        });
+        let view = workspace.unwrap();
+        let (program, before) = cx
+            .update_window(handle.into(), |_, w, cx| {
+                view.update(cx, |v, cx| {
+                    v.reduced_motion = true;
+                    v.new_tab(false, w, cx);
+                    v.select_tab(0, w, cx);
+                    v.reduced_motion = false;
+                });
+                w.click("program", cx);
+                let program = view.read(cx).tabs[0].program.clone();
+                let before = program.update(cx, |state, cx| {
+                    state.set_value("", w, cx);
+                    state.replace_and_mark_text_in_range(None, "正在组字", Some(1..2), w, cx);
+                    (
+                        state.value(),
+                        state.selected_range(),
+                        state.marked_text_range(w, cx),
+                    )
+                });
+                assert!(before.2.is_some());
+                (program, before)
+            })
+            .unwrap();
+        cx.update_window(handle.into(), |_, w, cx| {
+            view.update(cx, |v, cx| v.select_tab(1, w, cx));
+            w.render_frame(cx);
+            assert_eq!(
+                program.entity_id(),
+                view.read(cx).tabs[0].program.entity_id()
+            );
+            let after = program.update(cx, |state, cx| {
+                (
+                    state.value(),
+                    state.selected_range(),
+                    state.marked_text_range(w, cx),
+                )
+            });
+            assert_eq!(after, before, "视觉快照不可改动真实输入的组字或选区");
+            w.remove_window();
         })
         .unwrap();
     }
@@ -4713,8 +4981,9 @@ mod page_switch_tests {
             });
             window.render_frame(cx);
             assert!(view.read(cx).page_switch.is_none());
-            assert!(window.try_find("page-switch-cue").is_none());
-            assert!(window.try_find("page-switch-swipe").is_none());
+            assert!(window.try_find("page-slide-outgoing").is_none());
+            assert!(window.try_find("page-slide-incoming").is_none());
+            assert!(view.read(cx).page_transition.is_none());
             assert_eq!(
                 window.find("page-switch-content").bounds().left(),
                 window.find("command-editor").bounds().left()
@@ -4730,7 +4999,8 @@ mod page_switch_tests {
             view.update(cx, |v, cx| v.select_tab(1, window, cx));
             window.render_frame(cx);
             assert!(view.read(cx).page_switch.is_none());
-            assert!(window.try_find("page-switch-cue").is_none());
+            assert!(view.read(cx).page_transition.is_none());
+            assert!(window.try_find("page-slide-incoming").is_none());
             assert_eq!(view.read(cx).active, 1);
             window.remove_window();
         })
