@@ -114,6 +114,7 @@
   "删除当前运行记录": "Delete selected run",
   "停止当前运行": "Stop selected run",
   "收起日志": "Hide log",
+  "回到底部并恢复自动跟随": "Jump to bottom and resume auto-follow",
   "运行输出": "Run output",
   "复制此标签": "Duplicate this tab",
   "关闭此标签": "Close this tab",

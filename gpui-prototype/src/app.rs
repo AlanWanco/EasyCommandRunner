@@ -92,7 +92,7 @@ pub struct CommandWorkspace {
     next_run_id: usize,
     log_selector: Entity<SelectState<LogItems>>,
     pub(crate) log_output: Entity<TextareaState>,
-    log_auto_scroll: LogAutoScroll,
+    pub(crate) log_auto_scroll: LogAutoScroll,
     // Only the non-interactive sheets move. Live input entities and IME geometry stay stable.
     page_switch_epoch: usize,
     page_switch: Option<(usize, i8)>,
@@ -1250,6 +1250,7 @@ impl CommandWorkspace {
                     stopped: false,
                 });
                 self.selected_log_id = Some(id);
+                self.log_auto_scroll.request_tail();
                 self.run_handles.insert(id, handle);
                 self.show_log = true;
                 self.config_dirty = true;
@@ -1437,6 +1438,7 @@ impl CommandWorkspace {
             .logs
             .get(index.min(self.logs.len().saturating_sub(1)))
             .map(|log| log.id);
+        self.log_auto_scroll.request_tail();
         self.sync_log_list(window, cx);
     }
 
@@ -1475,6 +1477,9 @@ impl CommandWorkspace {
             });
         } else {
             self.show_log = !self.show_log;
+            if self.show_log {
+                self.log_auto_scroll.reopen();
+            }
             self.config_dirty = true;
             cx.notify();
         }
@@ -1483,6 +1488,7 @@ impl CommandWorkspace {
     pub(crate) fn reattach_log(&mut self, cx: &mut Context<Self>) {
         self.detached_log = None;
         self.show_log = true;
+        self.log_auto_scroll.reopen();
         cx.notify();
     }
 
@@ -2731,9 +2737,9 @@ impl CommandWorkspace {
                                 "折叠标签侧栏"
                             },
                             if self.sidebar_collapsed {
-                                IconName::ChevronRight
+                                IconName::ListIndentIncrease
                             } else {
-                                IconName::ChevronLeft
+                                IconName::ListIndentDecrease
                             },
                             cx,
                         )
@@ -4242,6 +4248,21 @@ impl Render for CommandWorkspace {
                     )
                     .child(div().flex_1())
                     .child(
+                        icon_button(
+                            "log-scroll-bottom",
+                            "回到底部并恢复自动跟随",
+                            IconName::ArrowDownToLine,
+                            cx,
+                        )
+                        .disabled(
+                            self.log_auto_scroll.is_following() || self.selected_log_id.is_none(),
+                        )
+                        .on_click(cx.listener(|view, _, _, cx| {
+                            view.log_auto_scroll.request_tail();
+                            cx.notify();
+                        })),
+                    )
+                    .child(
                         icon_button("close-log", "收起日志", IconName::X, cx).on_click(
                             cx.listener(|v, _, _, cx| {
                                 v.show_log = false;
@@ -4273,7 +4294,10 @@ impl Render for CommandWorkspace {
                                 .readonly(true)
                                 .bg(rgb(p.subtle)),
                         )
-                        .child(self.log_auto_scroll.after_layout(&self.log_output)),
+                        .child(
+                            self.log_auto_scroll
+                                .after_layout(&self.log_output, cx.entity_id()),
+                        ),
                 )
             });
         frame("workspace")
@@ -4731,7 +4755,9 @@ mod log_scroll_tests {
     }
 
     #[gpui::test]
-    fn docked_log_follows_reopen_resize_and_truncation_but_not_other_runs(cx: &mut TestAppContext) {
+    fn docked_log_preserves_paused_view_until_tail_button_and_follows_truncation(
+        cx: &mut TestAppContext,
+    ) {
         cx.update(|cx| {
             gpui::init(cx);
             notifications::init(cx);
@@ -4751,14 +4777,20 @@ mod log_scroll_tests {
             let output = view.read(cx).log_output.clone();
             assert_tail(&output, cx);
             let original = output.read(cx).value();
-            output.update(cx, |state, cx| {
-                state.set_scroll_offset(gpui::point(px(0.), px(-80.)), cx)
-            });
+            window.scroll(
+                "log-output",
+                gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(250.))),
+                cx,
+            );
             for _ in 0..3 {
                 window.render_frame(cx);
             }
             let browsed = output.read(cx).scroll_offset();
-            assert_eq!(browsed.y, px(-80.), "可以手动上翻历史输出");
+            assert!(
+                !view.read(cx).log_auto_scroll.is_following(),
+                "向上滚动暂停跟随"
+            );
+            let selected = output.read(cx).selected_range();
             view.update(cx, |view, cx| {
                 view.receive_run_events(
                     1,
@@ -4814,7 +4846,13 @@ mod log_scroll_tests {
             for _ in 0..3 {
                 window.render_frame(cx);
             }
-            assert_tail(&output, cx);
+            assert_eq!(
+                output.read(cx).scroll_offset(),
+                browsed,
+                "新输出及展开不能拉走暂停视口"
+            );
+            assert_eq!(output.read(cx).selected_range(), selected);
+            assert!(!view.read(cx).log_auto_scroll.is_following());
             view.update(cx, |view, cx| {
                 view.log_height_override = Some(140.);
                 view.zoom_log(8, cx);
@@ -4822,6 +4860,15 @@ mod log_scroll_tests {
             for _ in 0..3 {
                 window.render_frame(cx);
             }
+            assert!(
+                !view.read(cx).log_auto_scroll.is_following(),
+                "调整高度或字号不恢复跟随"
+            );
+            window.click("log-scroll-bottom", cx);
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            assert!(view.read(cx).log_auto_scroll.is_following());
             assert_tail(&output, cx);
 
             view.update(cx, |view, cx| {
@@ -4944,6 +4991,233 @@ mod log_scroll_tests {
                 window.render_frame(cx);
             }
             assert!(view.read(cx).detached_log.is_none());
+            assert_tail(&view.read(cx).log_output, cx);
+            window.remove_window();
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    fn upward_scroll_during_streaming_pauses_and_tail_button_resumes(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let handle = cx.open_window(size(px(850.), px(800.)), |window, cx| {
+            let view = cx.new(|cx| long_output_workspace(window, cx));
+            workspace = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let view = workspace.unwrap();
+        cx.update_window(handle.into(), |_, window, cx| {
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            let output = view.read(cx).log_output.clone();
+            assert_tail(&output, cx);
+            // Pause while a preceding output batch still has a queued tail reveal.
+            view.update(cx, |view, cx| {
+                view.receive_run_events(
+                    0,
+                    vec![RunEvent::Output {
+                        stream: OutputStream::Stdout,
+                        text: "最新的第一批\n".into(),
+                    }],
+                    window,
+                    cx,
+                )
+            });
+            window.scroll(
+                "log-output",
+                gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(300.))),
+                cx,
+            );
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            let paused = output.read(cx).scroll_offset();
+            assert!(!view.read(cx).log_auto_scroll.is_following());
+            for _ in 0..4 {
+                view.update(cx, |view, cx| {
+                    view.receive_run_events(
+                        0,
+                        vec![RunEvent::Output {
+                            stream: OutputStream::Stdout,
+                            text: "暂停时的新输出\n".into(),
+                        }],
+                        window,
+                        cx,
+                    )
+                });
+                for _ in 0..3 {
+                    window.render_frame(cx);
+                }
+                assert_eq!(output.read(cx).scroll_offset(), paused);
+            }
+            window.scroll(
+                "log-output",
+                gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(100000.))),
+                cx,
+            );
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            assert_eq!(
+                output.read(cx).scroll_offset().y,
+                px(0.),
+                "向上过量滚动应钳制到顶部"
+            );
+            output.update(cx, |state, cx| state.set_selected_range(0..8, cx));
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            let selected = output.read(cx).selected_range();
+            view.update(cx, |view, cx| {
+                view.receive_run_events(
+                    0,
+                    vec![RunEvent::Output {
+                        stream: OutputStream::Stdout,
+                        text: "复制旧输出时的新内容\n".into(),
+                    }],
+                    window,
+                    cx,
+                )
+            });
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            assert_eq!(
+                output.read(cx).selected_range(),
+                selected,
+                "暂停时不破坏复制选区"
+            );
+            assert_eq!(output.read(cx).scroll_offset().y, px(0.));
+            window.click("log-scroll-bottom", cx);
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            assert!(view.read(cx).log_auto_scroll.is_following());
+            assert_tail(&output, cx);
+            view.update(cx, |view, cx| {
+                view.receive_run_events(
+                    0,
+                    vec![RunEvent::Output {
+                        stream: OutputStream::Stdout,
+                        text: "按钮后继续跟随🌟\n".into(),
+                    }],
+                    window,
+                    cx,
+                )
+            });
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            assert_tail(&output, cx);
+            window.remove_window();
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    fn detached_pause_survives_updates_and_reattachment_until_tail_button(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let main = cx.open_window(size(px(850.), px(800.)), |window, cx| {
+            let view = cx.new(|cx| long_output_workspace(window, cx));
+            workspace = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let view = workspace.unwrap();
+        cx.update_window(main.into(), |_, _, cx| {
+            view.update(cx, |view, cx| view.detach_log(cx))
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let detached = cx.update(|cx| view.read(cx).detached_log).unwrap();
+        let (output, paused) = cx
+            .update_window(detached.into(), |root, window, cx| {
+                for _ in 0..3 {
+                    window.render_frame(cx);
+                }
+                let pane = root
+                    .downcast::<Root>()
+                    .unwrap()
+                    .read(cx)
+                    .view()
+                    .clone()
+                    .downcast::<DetachedLogWindow>()
+                    .unwrap();
+                let output = pane.read(cx).output.clone();
+                assert_tail(&output, cx);
+                window.scroll(
+                    "detached-log-output",
+                    gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(300.))),
+                    cx,
+                );
+                for _ in 0..3 {
+                    window.render_frame(cx);
+                }
+                assert!(!view.read(cx).log_auto_scroll.is_following());
+                let paused = output.read(cx).scroll_offset();
+                (output, paused)
+            })
+            .unwrap();
+        cx.update_window(main.into(), |_, window, cx| {
+            view.update(cx, |view, cx| {
+                view.receive_run_events(
+                    0,
+                    vec![RunEvent::Output {
+                        stream: OutputStream::Stdout,
+                        text: "分离暂停时的新输出\n".into(),
+                    }],
+                    window,
+                    cx,
+                );
+            })
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(detached.into(), |_, window, cx| {
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            assert_eq!(output.read(cx).scroll_offset(), paused);
+            window.click("detached-log-scroll-bottom", cx);
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            assert_tail(&output, cx);
+            assert!(view.read(cx).log_auto_scroll.is_following());
+            window.scroll(
+                "detached-log-output",
+                gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(200.))),
+                cx,
+            );
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            assert!(!view.read(cx).log_auto_scroll.is_following());
+            window.remove_window();
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(main.into(), |_, window, cx| {
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            assert!(
+                !view.read(cx).log_auto_scroll.is_following(),
+                "重新停靠不取消暂停状态"
+            );
+            window.click("log-scroll-bottom", cx);
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            assert!(view.read(cx).log_auto_scroll.is_following());
             assert_tail(&view.read(cx).log_output, cx);
             window.remove_window();
         })

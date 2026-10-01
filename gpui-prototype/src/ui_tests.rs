@@ -87,6 +87,7 @@ fn geometry(window: &gpui::Window) -> BTreeMap<String, [f32; 4]> {
         "log-select-frame",
         "log-selector",
         "detach-log",
+        "log-scroll-bottom",
         "delete-log",
         "close-log",
     ] {
@@ -1004,8 +1005,31 @@ fn detached_log_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
             .expect("离屏停靠日志置底截图失败")
             .save(format!("{directory}/log-docked-{mode:?}-tail.png"))
             .unwrap();
-        cx.update_window(main.into(), |_, w, cx| w.click("detach-log", cx))
+        cx.update_window(main.into(), |_, w, cx| {
+            w.scroll(
+                "log-output",
+                gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(260.))),
+                cx,
+            );
+            for _ in 0..3 {
+                w.render_frame(cx);
+            }
+            assert!(!view.read(cx).log_auto_scroll.is_following());
+        })
+        .unwrap();
+        cx.capture_screenshot(main.into())
+            .unwrap()
+            .save(format!("{directory}/log-docked-{mode:?}-paused.png"))
             .unwrap();
+        cx.update_window(main.into(), |_, w, cx| {
+            w.click("log-scroll-bottom", cx);
+            for _ in 0..3 {
+                w.render_frame(cx);
+            }
+            assert!(view.read(cx).log_auto_scroll.is_following());
+            w.click("detach-log", cx);
+        })
+        .unwrap();
         cx.run_until_parked();
         let detached = cx
             .update(|cx| view.read(cx).detached_log)
@@ -1039,8 +1063,31 @@ fn detached_log_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
             .expect("离屏日志分离截图失败")
             .save(format!("{directory}/log-detached-{mode:?}.png"))
             .unwrap();
-        cx.update_window(detached.into(), |_, w, cx| w.click("reattach-log", cx))
+        cx.update_window(detached.into(), |_, w, cx| {
+            w.scroll(
+                "detached-log-output",
+                gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(260.))),
+                cx,
+            );
+            for _ in 0..3 {
+                w.render_frame(cx);
+            }
+            assert!(!view.read(cx).log_auto_scroll.is_following());
+        })
+        .unwrap();
+        cx.capture_screenshot(detached.into())
+            .unwrap()
+            .save(format!("{directory}/log-detached-{mode:?}-paused.png"))
             .unwrap();
+        cx.update_window(detached.into(), |_, w, cx| {
+            w.click("detached-log-scroll-bottom", cx);
+            for _ in 0..3 {
+                w.render_frame(cx);
+            }
+            assert!(view.read(cx).log_auto_scroll.is_following());
+            w.click("reattach-log", cx);
+        })
+        .unwrap();
         cx.run_until_parked();
         cx.update_window(main.into(), |_, w, cx| {
             w.render_frame(cx);

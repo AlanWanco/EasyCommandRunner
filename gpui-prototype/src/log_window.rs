@@ -36,6 +36,7 @@ impl DetachedLogWindow {
         cx: &mut Context<Self>,
     ) -> Self {
         let snapshot = workspace.read(cx).log_snapshot();
+        let auto_scroll = workspace.read(cx).log_auto_scroll.new_view();
         let selected = snapshot
             .selected_id
             .and_then(|id| snapshot.items.iter().position(|item| item.id == id));
@@ -70,7 +71,7 @@ impl DetachedLogWindow {
             workspace,
             selector,
             output,
-            auto_scroll: LogAutoScroll::default(),
+            auto_scroll,
             last_items,
             last_selected: snapshot.selected_id,
             language: *cx.global::<Language>(),
@@ -87,7 +88,11 @@ impl DetachedLogWindow {
                 output.set_placeholder(tr(cx, "暂无运行记录。"), window, cx)
             });
         }
-        let snapshot = self.workspace.read(cx).log_snapshot();
+        let workspace = self.workspace.read(cx);
+        if !self.auto_scroll.shares_follow(&workspace.log_auto_scroll) {
+            self.auto_scroll = workspace.log_auto_scroll.new_view();
+        }
+        let snapshot = workspace.log_snapshot();
         let items: Vec<_> = snapshot
             .items
             .iter()
@@ -179,6 +184,25 @@ impl Render for DetachedLogWindow {
                                     });
                                 }),
                             )
+                            .child(
+                                icon_button(
+                                    "detached-log-scroll-bottom",
+                                    "回到底部并恢复自动跟随",
+                                    IconName::ArrowDownToLine,
+                                    cx,
+                                )
+                                .disabled(
+                                    self.auto_scroll.is_following()
+                                        || snapshot.selected_id.is_none(),
+                                )
+                                .on_click(cx.listener(
+                                    |view, _, _, cx| {
+                                        view.auto_scroll.request_tail();
+                                        gpui::App::notify(cx, view.workspace.entity_id());
+                                        cx.notify();
+                                    },
+                                )),
+                            )
                             .child(button("reattach-log", "停靠", None, cx).on_click(
                                 move |_, window, cx| {
                                     reattach.update(cx, |workspace, cx| workspace.reattach_log(cx));
@@ -211,7 +235,10 @@ impl Render for DetachedLogWindow {
                                     .readonly(true)
                                     .bg(rgb(p.subtle)),
                             )
-                            .child(self.auto_scroll.after_layout(&self.output)),
+                            .child(
+                                self.auto_scroll
+                                    .after_layout(&self.output, self.workspace.entity_id()),
+                            ),
                     ),
             )
     }
