@@ -354,6 +354,105 @@ fn compact_note_hover_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
     }
 }
 
+fn heading_text_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
+    use crate::components::frame;
+    use crate::tokens::{COMMAND_NAME_HEIGHT, COMMAND_NAME_LINE_HEIGHT, FIELD_PADDING};
+    use gpui::{prelude::*, px, rgb, Context, FontWeight, Render};
+
+    const TEXT: &str = "中文标题 Ågjpq";
+    struct GlyphReference {
+        width: gpui::Pixels,
+    }
+    impl Render for GlyphReference {
+        fn render(&mut self, _: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let p = theme::palette(cx);
+            frame("heading-glyph-reference")
+                .w(self.width)
+                .h(px(COMMAND_NAME_HEIGHT))
+                .flex()
+                .items_center()
+                .px(px(FIELD_PADDING + 1.))
+                .bg(rgb(p.panel))
+                .text_color(rgb(p.text))
+                .font_family(cx.global::<theme::Fonts>().body.clone())
+                .text_size(px(32.))
+                .line_height(px(COMMAND_NAME_LINE_HEIGHT))
+                .font_weight(FontWeight::BOLD)
+                .child(TEXT)
+        }
+    }
+    for mode in [Theme::Dark, Theme::Light] {
+        cx.update(|cx| theme::apply(mode, cx));
+        let handle = cx
+            .open_window(size(px(850.), px(800.)), |w, cx| {
+                let view = cx.new(|cx| {
+                    let mut view = fixture(3, w, cx);
+                    view.font_size = 24;
+                    theme::set_font_size(24, cx);
+                    view.tabs[0]
+                        .name
+                        .update(cx, |state, cx| state.set_value(TEXT, w, cx));
+                    view
+                });
+                cx.new(|cx| Root::new(view, w, cx))
+            })
+            .unwrap();
+        let bounds = cx
+            .update_window(handle.into(), |_, w, cx| {
+                w.click("program", cx); // No title caret or selection in the glyph comparison.
+                w.render_frame(cx);
+                w.find("command-name").bounds()
+            })
+            .unwrap();
+        let actual = cx.capture_screenshot(handle.into()).unwrap();
+        let reference = cx
+            .open_window(size(px(850.), px(200.)), |w, cx| {
+                let view = cx.new(|_| GlyphReference {
+                    width: bounds.size.width,
+                });
+                cx.new(|cx| Root::new(view, w, cx))
+            })
+            .unwrap();
+        let reference_bounds = cx
+            .update_window(reference.into(), |_, w, cx| {
+                w.render_frame(cx);
+                w.find("heading-glyph-reference").bounds()
+            })
+            .unwrap();
+        let expected = cx.capture_screenshot(reference.into()).unwrap();
+        let foreground = cx.update(|cx| theme::palette(cx).text);
+        let [actual_pixels, expected_pixels] = [(&actual, bounds), (&expected, reference_bounds)]
+            .map(|(image, bounds)| {
+                let scale = image.width() as f32 / 850.;
+                let x0 = (f32::from(bounds.left()) * scale).ceil() as u32;
+                let x1 = (f32::from(bounds.right()) * scale).floor() as u32;
+                let y0 = (f32::from(bounds.top()) * scale).ceil() as u32;
+                let y1 = (f32::from(bounds.bottom()) * scale).floor() as u32;
+                (y0..y1)
+                    .flat_map(|y| (x0..x1).map(move |x| image.get_pixel(x, y).0))
+                    .filter(|pixel| {
+                        [16, 8, 0].into_iter().enumerate().all(|(i, shift)| {
+                            pixel[i].abs_diff(((foreground >> shift) & 255) as u8) <= 16
+                        })
+                    })
+                    .count()
+            });
+        assert!(expected_pixels > 100, "参考标题必须包含可见字形");
+        assert!(
+            actual_pixels as f32 >= expected_pixels as f32 * 0.95,
+            "{mode:?} 大标题不得裁去上下字形：{actual_pixels} / {expected_pixels}"
+        );
+        actual
+            .save(format!("{directory}/heading-large-{mode:?}.png"))
+            .unwrap();
+        cx.update_window(reference.into(), |_, w, _| w.remove_window())
+            .unwrap();
+        cx.update_window(handle.into(), |_, w, _| w.remove_window())
+            .unwrap();
+        println!("PASS heading-large-{mode:?}");
+    }
+}
+
 fn focus_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
     use std::time::Duration;
     for mode in [Theme::Dark, Theme::Light] {
@@ -896,6 +995,7 @@ pub fn snapshots(directory: &str) {
     sidebar_resize_snapshots(directory, &mut cx);
     parameter_drag_preview_snapshots(directory, &mut cx);
     compact_note_hover_snapshots(directory, &mut cx);
+    heading_text_snapshots(directory, &mut cx);
     focus_snapshots(directory, &mut cx);
     page_switch_snapshots(directory, &mut cx);
     close_button_hover_snapshots(directory, &mut cx);
@@ -3002,6 +3102,10 @@ mod tests {
     #[gpui::test]
     fn sidebar_hover_tracks_scrolled_configuration_rows(cx: &mut TestAppContext) {
         use crate::state::{CommandTab, TabData};
+        use crate::tokens::{
+            SIDEBAR_HIGHLIGHT_SCROLL_GAP, SIDEBAR_SCROLL_LANE_RIGHT, SIDEBAR_SCROLL_THUMB_INSET,
+            SIDEBAR_SCROLL_THUMB_MAX_WIDTH,
+        };
         use gpui::{PlatformInput, ScrollDelta, ScrollWheelEvent};
         cx.update(|cx| {
             gpui::init(cx);
@@ -3035,8 +3139,20 @@ mod tests {
             let viewport = w.find("sidebar-items").bounds();
             let lane = w.find("sidebar-scrollbar-lane").bounds();
             let resize_handle = w.find("sidebar-resize-handle").bounds();
-            assert_eq!(lane.right(), viewport.right() - px(2.));
+            assert_eq!(
+                lane.right(),
+                viewport.right() - px(SIDEBAR_SCROLL_LANE_RIGHT)
+            );
             assert_eq!(lane.size.height, viewport.size.height);
+            let widest_thumb_left =
+                lane.right() - px(SIDEBAR_SCROLL_THUMB_INSET + SIDEBAR_SCROLL_THUMB_MAX_WIDTH);
+            for id in [25usize, 26usize] {
+                assert!(
+                    widest_thumb_left - w.find(("sidebar-tab", id)).bounds().right()
+                        >= px(SIDEBAR_HIGHLIGHT_SCROLL_GAP),
+                    "配置高亮与最宽滚动滑块之间至少保留 3px"
+                );
+            }
             assert!(
                 lane.right() <= resize_handle.left(),
                 "滚动条不能与侧栏宽度拖动区重叠：{lane:?} / {resize_handle:?}"
@@ -3678,6 +3794,50 @@ mod tests {
     }
 
     #[gpui::test]
+    fn sidebar_delete_button_only_reveals_on_its_row_without_layout_shift(cx: &mut TestAppContext) {
+        use gpui::Focusable;
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let handle = cx.open_window(size(px(850.), px(800.)), |w, cx| {
+            let view = cx.new(|cx| CommandWorkspace::new(w, cx));
+            workspace = Some(view.clone());
+            Root::new(view, w, cx)
+        });
+        let view = workspace.unwrap();
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.click("add-tab-title", cx);
+            w.click("program", cx);
+            let editor = view.read(cx).tabs[1].program.clone();
+            let before = w.find(("sidebar-tab", 0usize)).bounds();
+            let icon_before = w.find(("sidebar-icon", 0usize)).bounds();
+            for id in 0..2usize {
+                assert!(!w
+                    .try_find(("sidebar-close-tab", id))
+                    .is_some_and(|button| button.visible()));
+            }
+            w.hover(("sidebar-tab", 0usize), cx);
+            assert!(w.find(("sidebar-close-tab", 0usize)).visible());
+            assert!(!w
+                .try_find(("sidebar-close-tab", 1usize))
+                .is_some_and(|button| button.visible()));
+            assert_eq!(w.find(("sidebar-tab", 0usize)).bounds(), before);
+            assert_eq!(w.find(("sidebar-icon", 0usize)).bounds(), icon_before);
+            assert!(editor.focus_handle(cx).is_focused(w));
+            w.hover("program", cx);
+            assert!(!w
+                .try_find(("sidebar-close-tab", 0usize))
+                .is_some_and(|button| button.visible()));
+            assert_eq!(w.find(("sidebar-tab", 0usize)).bounds(), before);
+            assert!(!w.has_active_dialog(cx));
+            w.remove_window();
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
     fn removing_sidebar_configuration_always_requires_confirmation(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui::init(cx);
@@ -3692,6 +3852,7 @@ mod tests {
         let view = view.unwrap();
         cx.update_window(handle.into(), |_, w, cx| {
             w.click("add-tab-title", cx);
+            w.hover(("sidebar-tab", 1usize), cx);
             w.click(("sidebar-close-tab", 1usize), cx);
             assert!(w.try_find("confirm-delete-tab").is_some());
             assert_eq!(view.read(cx).tabs.len(), 2);
@@ -3709,6 +3870,7 @@ mod tests {
         cx.update_window(handle.into(), |_, w, cx| {
             w.click("cancel-delete-tab", cx);
             assert_eq!(view.read(cx).tabs.len(), 2);
+            w.hover(("sidebar-tab", 1usize), cx);
             w.click(("sidebar-close-tab", 1usize), cx);
             w.render_frame(cx);
         })

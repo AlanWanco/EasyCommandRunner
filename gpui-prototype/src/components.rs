@@ -260,6 +260,8 @@ pub fn heading_input(state: &Entity<InputState>, cx: &App) -> FocusTextField<Inp
     title.inner = title
         .inner
         .text_size(px((theme::font_size(cx) + 12.).clamp(26., 32.)))
+        // Kit otherwise uses a fixed 1.25rem (20px) text line, clipping the larger glyphs.
+        .line_height(px(COMMAND_NAME_LINE_HEIGHT))
         .font_weight(gpui::FontWeight(theme::font_weight(cx).0.max(700.)))
         .bg(gpui::transparent_black());
     title.inner.style().size.height = Some(px(COMMAND_NAME_HEIGHT).into());
@@ -324,6 +326,47 @@ mod tests {
             self.progress = text_focus_progress(cx.entity_id(), self.focused, window, cx);
             div()
         }
+    }
+
+    #[gpui::test]
+    fn heading_has_room_for_large_glyphs_without_recreating_input(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(theme::Theme::Dark, cx);
+        });
+        let handle = cx.open_window(gpui::size(px(400.), px(200.)), |w, cx| {
+            Root::new(
+                cx.new(|_| FocusMotionProbe {
+                    focused: false,
+                    progress: 0.,
+                }),
+                w,
+                cx,
+            )
+        });
+        cx.update_window(handle.into(), |_, w, cx| {
+            let state = cx.new(|cx| InputState::new(w, cx).default_value("中文 Ågjpq"));
+            let original_id = state.entity_id();
+            for font_size in [10, 14, 24] {
+                theme::set_font_size(font_size, cx);
+                let mut heading = heading_input(&state, cx);
+                assert_eq!(heading.state_id, original_id);
+                assert_eq!(heading.single_line_height, COMMAND_NAME_HEIGHT);
+                let style = heading.inner.style();
+                assert_eq!(style.size.height, Some(px(COMMAND_NAME_HEIGHT).into()));
+                assert_eq!(
+                    style.text.line_height,
+                    Some(px(COMMAND_NAME_LINE_HEIGHT).into())
+                );
+                assert!(
+                    COMMAND_NAME_LINE_HEIGHT >= (font_size as f32 + 12.).clamp(26., 32.) * 1.25
+                );
+                assert!(COMMAND_NAME_HEIGHT - COMMAND_NAME_LINE_HEIGHT >= 8.);
+            }
+            assert_eq!(state.read(cx).value().as_ref(), "中文 Ågjpq");
+            w.remove_window();
+        })
+        .unwrap();
     }
 
     #[test]

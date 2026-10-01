@@ -2277,7 +2277,7 @@ impl CommandWorkspace {
             .w_full()
             .flex_1()
             .min_h_0()
-            .pr(px(10.))
+            .pr(px(SIDEBAR_LIST_RIGHT_PADDING))
             .on_scroll_wheel(cx.listener(|v, _, _, cx| {
                 // A wheel event scrolls rows beneath a stationary pointer without a MouseMove.
                 // Clear the old row before the next frame can paint it at a stale screen position.
@@ -2290,6 +2290,7 @@ impl CommandWorkspace {
         for (index, tab) in self.tabs.iter().enumerate() {
             let id = tab.id;
             let label = tab.label(cx);
+            let hover_group = format!("sidebar-row-{id}");
             // White only on the selected pill; all other glyphs follow the surface text.
             // During travel keep the destination legible until the pill reaches it.
             let selected_visible = !self.open_tab_ids.is_empty()
@@ -2325,6 +2326,7 @@ impl CommandWorkspace {
             };
             items = items.child(
                 frame(("sidebar-tab", id))
+                    .group(hover_group.clone())
                     .w_full()
                     .h(px(40.))
                     .flex_shrink_0()
@@ -2531,6 +2533,9 @@ impl CommandWorkspace {
                                 icon_button(("sidebar-close-tab", id), "删除配置", IconName::X, cx)
                                     .with_size(Size::Size(px(20.)))
                                     .size(px(20.))
+                                    // Reserve its space, but do not paint or hit-test an invisible X.
+                                    .invisible()
+                                    .group_hover(hover_group, |style| style.visible())
                                     .custom(
                                         ButtonCustomVariant::new(cx)
                                             .foreground(rgb(foreground).into())
@@ -2647,7 +2652,7 @@ impl CommandWorkspace {
                         frame("sidebar-scrollbar-lane")
                             .absolute()
                             // Keep the full thumb outside the overlapping resize hit target.
-                            .right(px(2.))
+                            .right(px(SIDEBAR_SCROLL_LANE_RIGHT))
                             .top_0()
                             .bottom_0()
                             .w(px(10.))
@@ -2668,9 +2673,21 @@ impl CommandWorkspace {
                                     // keeping its lane clear of the resize hit target.
                                     .styles(|styles| {
                                         styles
-                                            .thumb(|thumb| thumb.inset(px(1.)))
-                                            .thumb_hover(|thumb| thumb.inset(px(1.)))
-                                            .thumb_active(|thumb| thumb.inset(px(1.)))
+                                            .thumb(|thumb| {
+                                                thumb
+                                                    .width(px(6.))
+                                                    .inset(px(SIDEBAR_SCROLL_THUMB_INSET))
+                                            })
+                                            .thumb_hover(|thumb| {
+                                                thumb
+                                                    .width(px(SIDEBAR_SCROLL_THUMB_MAX_WIDTH))
+                                                    .inset(px(SIDEBAR_SCROLL_THUMB_INSET))
+                                            })
+                                            .thumb_active(|thumb| {
+                                                thumb
+                                                    .width(px(SIDEBAR_SCROLL_THUMB_MAX_WIDTH))
+                                                    .inset(px(SIDEBAR_SCROLL_THUMB_INSET))
+                                            })
                                     })
                                     .viewport_from_layout(),
                             ),
