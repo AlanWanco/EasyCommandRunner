@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -71,6 +72,42 @@ class ReleaseContractTests(unittest.TestCase):
                         check=False,
                     )
                     self.assertEqual(result.returncode == 0, complete, result.stderr)
+
+    @unittest.skipIf(
+        os.name == "nt", "Linux SONAME fixture needs a POSIX shell and symlink"
+    )
+    def test_linux_indicator_deploy_keeps_the_dlopen_soname(self) -> None:
+        script = (release.ROOT / "scripts/package-linux.sh").read_text(encoding="utf-8")
+        start = script.index("indicator=")
+        end = script.index("\nloader_dir=", start)
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            library = folder / "libayatana-appindicator3.so.1.0.0"
+            library.write_bytes(b"same library contents")
+            soname = folder / "libayatana-appindicator3.so.1"
+            soname.symlink_to(library.name)
+            probe = script[start:end].replace("/usr/lib/$multiarch", str(folder))
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    "set -euo pipefail\n" + probe + '\nprintf "%s\\n" "$indicator"',
+                ],
+                capture_output=True,
+                encoding="utf-8",
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            deployed_source = Path(result.stdout.strip())
+            self.assertEqual(
+                deployed_source.name,
+                soname.name,
+                "linuxdeploy copies the provided basename, not ELF SONAME",
+            )
+            stage = folder / "deployed"
+            stage.mkdir()
+            shutil.copy2(deployed_source, stage / deployed_source.name)
+            self.assertEqual((stage / soname.name).read_bytes(), library.read_bytes())
 
     def test_names_cover_exactly_five_native_packages(self) -> None:
         self.assertEqual(len(release.TARGETS), 5)

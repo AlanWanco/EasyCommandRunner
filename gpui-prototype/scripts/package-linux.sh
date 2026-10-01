@@ -62,7 +62,9 @@ done
 cp "$work/linuxdeploy-release.json" "$appdir/usr/share/doc/EasyCommandRunner/linuxdeploy-build-tool.json"
 # AppIndicator and pixbuf image loaders use dlopen; NEEDED cannot discover them.
 multiarch="$(dpkg-architecture -qDEB_HOST_MULTIARCH)"
-indicator="$(readlink -f "/usr/lib/$multiarch/libayatana-appindicator3.so.1")"
+# linuxdeploy uses the supplied basename. Keep the dlopen SONAME instead of
+# resolving the symlink to .so.1.0.0 and losing the required .so.1 entry.
+indicator="/usr/lib/$multiarch/libayatana-appindicator3.so.1"
 test -f "$indicator"
 loader_dir="/usr/lib/$multiarch/gdk-pixbuf-2.0/2.10.0/loaders"
 query="/usr/lib/$multiarch/gdk-pixbuf-2.0/gdk-pixbuf-query-loaders"
@@ -81,7 +83,9 @@ done
   --icon-filename EasyCommandRunner "${args[@]}"
 test -f "$appdir/usr/share/applications/EasyCommandRunner.desktop"
 test -n "$(find "$appdir/usr/share/icons/hicolor" -name EasyCommandRunner.png -print -quit)"
-test -f "$appdir/usr/lib/libayatana-appindicator3.so.1"
+test -f "$appdir/usr/lib/libayatana-appindicator3.so.1" || {
+  echo 'Missing deployed AppIndicator SONAME libayatana-appindicator3.so.1' >&2; exit 1;
+}
 test -f "$appdir/usr/lib/libgtk-3.so.0"
 test -f "$appdir/usr/lib/libgdk-3.so.0"
 mkdir -p "$appdir/usr/share/glib-2.0/schemas"
