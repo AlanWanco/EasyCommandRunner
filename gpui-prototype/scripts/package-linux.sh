@@ -53,7 +53,7 @@ curl --fail --location --retry 3 --proto '=https' --proto-redir '=https' "$url" 
 printf '%s  %s\n' "$expected" "$work/linuxdeploy" | sha256sum --check -
 chmod +x "$work/linuxdeploy"
 export APPIMAGE_EXTRACT_AND_RUN=1
-"$work/linuxdeploy" --help > "$work/linuxdeploy-help.txt"
+"$work/linuxdeploy" --help > "$work/linuxdeploy-help.txt" 2>&1
 for option in --library --executable --icon-filename --custom-apprun --output; do
   grep -F -- "$option" "$work/linuxdeploy-help.txt" >/dev/null || {
     echo "Downloaded linuxdeploy does not support $option" >&2; exit 1;

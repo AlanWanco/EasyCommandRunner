@@ -42,6 +42,11 @@ def digest(path: Path) -> str:
     return h.hexdigest()
 
 
+def command_output(command: list[str], *, cwd: Path = ROOT) -> str:
+    """Cargo emits UTF-8 JSON regardless of the Windows process locale."""
+    return subprocess.check_output(command, cwd=cwd, encoding="utf-8")
+
+
 def prepare(
     value: str, platform: str, arch: str, binary: Path, output: Path, sha: str
 ) -> None:
@@ -55,13 +60,13 @@ def prepare(
     if not binary.is_file():
         raise ValueError(f"Release binary does not exist: {binary}")
     package_version = version(
-        tomllib.loads((ROOT / "Cargo.toml").read_text())["package"]["version"]
+        tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["package"][
+            "version"
+        ]
     )
     if value != package_version:
         raise ValueError("Package version does not match Cargo.toml")
-    actual_sha = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
-    ).strip()
+    actual_sha = command_output(["git", "rev-parse", "HEAD"]).strip()
     if actual_sha != sha:
         raise ValueError("SOURCE_SHA does not match the checked-out source")
     output.mkdir(parents=True)
@@ -74,13 +79,13 @@ def prepare(
     ):
         shutil.copy2(ROOT / "assets/tab-icons" / source, licenses / target)
     shutil.copy2(ROOT / "packaging/README-runtime.md", output / "README-runtime.md")
-    rust_info = subprocess.check_output(["rustc", "-vV"], cwd=ROOT, text=True)
+    rust_info = command_output(["rustc", "-vV"])
     host_match = re.search(r"^host: (.+)$", rust_info, re.MULTILINE)
     if host_match is None:
         raise ValueError("Cannot determine the native Rust target")
     host = host_match.group(1)
     dependencies = json.loads(
-        subprocess.check_output(
+        command_output(
             [
                 "cargo",
                 "metadata",
@@ -91,8 +96,6 @@ def prepare(
                 "--filter-platform",
                 host,
             ],
-            cwd=ROOT,
-            text=True,
         )
     )["packages"]
     notices = []
@@ -120,11 +123,7 @@ def prepare(
     (output / "dependency-notices.json").write_text(
         json.dumps(notices, indent=2) + "\n", encoding="utf-8"
     )
-    dirty = bool(
-        subprocess.check_output(
-            ["git", "status", "--porcelain"], cwd=REPO, text=True
-        ).strip()
-    )
+    dirty = bool(command_output(["git", "status", "--porcelain"], cwd=REPO).strip())
     metadata = {
         "version": value,
         "platform": platform,
@@ -229,7 +228,9 @@ def main() -> None:
     if args.command == "version":
         print(
             version(
-                tomllib.loads((ROOT / "Cargo.toml").read_text())["package"]["version"]
+                tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))[
+                    "package"
+                ]["version"]
             )
         )
     elif args.command == "name":

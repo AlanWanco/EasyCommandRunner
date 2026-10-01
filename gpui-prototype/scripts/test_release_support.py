@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +15,63 @@ import release_support as release
 
 
 class ReleaseContractTests(unittest.TestCase):
+    def test_utf8_command_output_ignores_legacy_windows_locale(self) -> None:
+        payload = json.dumps(
+            {"packages": [{"description": "中文图标 Ł 🌟"}]}, ensure_ascii=False
+        ).encode("utf-8")
+        with self.assertRaises(UnicodeDecodeError):
+            payload.decode("cp1252")  # Reproduce the exact runner encoding failure.
+        original = subprocess.check_output
+        with (
+            patch("locale.getencoding", return_value="cp1252"),
+            patch.object(release.subprocess, "check_output", wraps=original) as checked,
+        ):
+            text = release.command_output(
+                [
+                    sys.executable,
+                    "-c",
+                    f"import sys;sys.stdout.buffer.write({payload!r})",
+                ]
+            )
+            self.assertEqual(
+                json.loads(text)["packages"][0]["description"], "中文图标 Ł 🌟"
+            )
+            self.assertEqual(checked.call_args.kwargs["encoding"], "utf-8")
+
+    @unittest.skipIf(os.name == "nt", "Help stream probe needs a POSIX shell")
+    def test_linux_help_probe_accepts_stderr_and_still_rejects_missing_options(
+        self,
+    ) -> None:
+        script = (release.ROOT / "scripts/package-linux.sh").read_text(encoding="utf-8")
+        start = script.index('"$work/linuxdeploy" --help')
+        end = script.index('cp "$work/linuxdeploy-release.json"', start)
+        probe = "set -euo pipefail\n" + script[start:end]
+        for stream in ("stdout", "stderr"):
+            for complete in (True, False):
+                with (
+                    self.subTest(stream=stream, complete=complete),
+                    tempfile.TemporaryDirectory() as temp,
+                ):
+                    work = Path(temp)
+                    options = "--library --executable --icon-filename --custom-apprun"
+                    if complete:
+                        options += " --output"
+                    redirect = " >&2" if stream == "stderr" else ""
+                    fake = work / "linuxdeploy"
+                    fake.write_text(
+                        f"#!/usr/bin/env bash\nprintf '%s\\n' '{options}'{redirect}\n",
+                        encoding="utf-8",
+                    )
+                    fake.chmod(0o755)
+                    result = subprocess.run(
+                        ["bash", "-c", probe],
+                        env={**os.environ, "work": str(work)},
+                        capture_output=True,
+                        encoding="utf-8",
+                        check=False,
+                    )
+                    self.assertEqual(result.returncode == 0, complete, result.stderr)
+
     def test_names_cover_exactly_five_native_packages(self) -> None:
         self.assertEqual(len(release.TARGETS), 5)
         names = {release.filename("1.0.0", p, a) for p, a in release.TARGETS}
