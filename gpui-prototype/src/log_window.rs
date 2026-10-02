@@ -170,6 +170,25 @@ impl Render for DetachedLogWindow {
                                     });
                                 }),
                             )
+                            .when_some(snapshot.selected_command.clone(), |row, command| {
+                                let copy = self.workspace.clone();
+                                row.child(
+                                    icon_button(
+                                        "detached-copy-running-command",
+                                        "复制当前运行命令",
+                                        IconName::Copy,
+                                        cx,
+                                    )
+                                    .tooltip(command)
+                                    .on_click(
+                                        move |_, _, cx| {
+                                            copy.update(cx, |workspace, cx| {
+                                                workspace.copy_selected_run_command(cx)
+                                            });
+                                        },
+                                    ),
+                                )
+                            })
                             .child(
                                 icon_button(
                                     "detached-delete-log",

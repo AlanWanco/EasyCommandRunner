@@ -1153,6 +1153,49 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_shell_passes_full_quoted_stream_url_without_executing_query_keys() {
+        let url =
+            "https://example.invalid/watch?x=1&browser_version=123&cdm=widevine&os_name=windows";
+        let command = format!(r#"python -c "import sys; print(sys.argv[1])" "{url}""#);
+        let (_handle, events) = start_shell(&command, "").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (mut stdout, mut stderr, mut exit) = (String::new(), String::new(), None);
+        while Instant::now() < deadline {
+            if let Ok(event) = events.recv_timeout(Duration::from_millis(100)) {
+                match event {
+                    RunEvent::Output {
+                        stream: OutputStream::Stdout,
+                        text,
+                    } => stdout.push_str(&text),
+                    RunEvent::Output {
+                        stream: OutputStream::Stderr,
+                        text,
+                    } => stderr.push_str(&text),
+                    RunEvent::Finished { exit_code, .. } => {
+                        exit = Some(exit_code);
+                        break;
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            exit,
+            Some(0),
+            "Shell failed: stdout={stdout:?} stderr={stderr:?}"
+        );
+        assert_eq!(
+            stdout.trim(),
+            url,
+            "quoted URL must reach the process intact"
+        );
+        assert!(
+            stderr.trim().is_empty(),
+            "query keys must not run as commands: {stderr:?}"
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn shell_can_be_stopped() {

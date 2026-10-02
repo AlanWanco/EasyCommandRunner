@@ -36,6 +36,9 @@ use std::{cell::Cell, rc::Rc};
 
 struct SessionLog {
     id: usize,
+    // Immutable command captured at launch, never the editor's subsequently changed preview.
+    // Drop it on completion; completed logs keep only output and metadata.
+    command: Option<String>,
     command_name: String,
     caption: String,
     output: String,
@@ -50,6 +53,7 @@ pub(crate) struct LogSnapshot {
     pub output: String,
     pub can_delete: bool,
     pub can_stop: bool,
+    pub selected_command: Option<String>,
     pub font_size: u8,
 }
 
@@ -78,9 +82,16 @@ pub struct CommandWorkspace {
     saved_digest: Option<u64>,
     saved_tab_data: std::collections::HashMap<usize, serde_json::Value>,
     pub(crate) sidebar_collapsed: bool,
+    /// Transient hover preview; never saved to config or treated as a manual width change.
+    sidebar_auto_expanded: bool,
+    /// Clicking to collapse while still hovering must not reopen until the pointer leaves.
+    sidebar_auto_suppressed: bool,
     /// Preferred expanded width; never overwrite it when the window temporarily shrinks.
     sidebar_expanded_width: Option<f32>,
     sidebar_display_width: f32,
+    /// Last painted hover panel width; used to dismiss it on mouse movement even
+    /// when GPUI replaces the hovered rail with the overlay in the same frame.
+    sidebar_overlay_display_width: f32,
     sidebar_hovered: Option<usize>,
     next_tab_id: usize,
     store: Option<ConfigStore>,
@@ -300,11 +311,14 @@ impl CommandWorkspace {
             sidebar_collapsed: settings
                 .and_then(|s| s["sidebar_collapsed"].as_bool())
                 .unwrap_or(false),
+            sidebar_auto_expanded: false,
+            sidebar_auto_suppressed: false,
             sidebar_expanded_width: settings
                 .and_then(|s| s["sidebar_width"].as_f64())
                 .filter(|width| width.is_finite())
                 .map(|width| (width as f32).clamp(160., 400.)),
             sidebar_display_width: 0.,
+            sidebar_overlay_display_width: 56.,
             sidebar_hovered: None,
             next_tab_id,
             store: store.clone(),
@@ -1297,6 +1311,7 @@ impl CommandWorkspace {
                 }
                 self.logs.push(SessionLog {
                     id,
+                    command: Some(command),
                     command_name: tab_name.clone(),
                     caption: i18n::format(cx, "{} · 运行 #{}", &[&tab_name, &(id + 1).to_string()]),
                     output: String::new(),
@@ -1405,6 +1420,7 @@ impl CommandWorkspace {
                         cx.show_system_notification(notification);
                     }
                     self.run_handles.remove(&id);
+                    log.command = None;
                     self.status = if stopped {
                         tr(cx, "命令已停止")
                     } else {
@@ -1422,6 +1438,25 @@ impl CommandWorkspace {
                     .set_value(&self.log_output, log.output.clone(), window, cx);
             }
         }
+        cx.notify();
+    }
+
+    pub(crate) fn selected_running_command(&self) -> Option<&str> {
+        let id = self.selected_log_id?;
+        self.run_handles.contains_key(&id).then_some(())?;
+        self.logs
+            .iter()
+            .find(|log| log.id == id)?
+            .command
+            .as_deref()
+    }
+
+    pub(crate) fn copy_selected_run_command(&mut self, cx: &mut Context<Self>) {
+        let Some(command) = self.selected_running_command() else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(command.to_owned()));
+        self.status = tr(cx, "当前运行命令已复制到剪贴板");
         cx.notify();
     }
 
@@ -1516,6 +1551,7 @@ impl CommandWorkspace {
             can_stop: self
                 .selected_log_id
                 .is_some_and(|id| self.run_handles.contains_key(&id)),
+            selected_command: self.selected_running_command().map(str::to_owned),
             font_size: self.log_font_size,
         }
     }
@@ -1629,6 +1665,7 @@ impl CommandWorkspace {
         self.next_run_id += 1;
         self.logs.push(SessionLog {
             id,
+            command: None,
             command_name: caption.into(),
             caption: caption.into(),
             output: output.into(),
@@ -1928,6 +1965,38 @@ impl CommandWorkspace {
         }
         self.drag_target = None;
         self.refresh(window, cx);
+    }
+    fn sort_parameters_by_option(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let before = self
+            .current()
+            .rows
+            .iter()
+            .map(|row| row.id)
+            .collect::<Vec<_>>();
+        let enabled_first = self.enabled_first;
+        // Explicit click only: reordering options changes the actual command argument order.
+        // A stable sort preserves the order of equally named flags and their input entities.
+        self.tabs[self.active].rows.sort_by_cached_key(|row| {
+            let option = row.option.read(cx).value();
+            (
+                enabled_first && !row.enabled,
+                option.trim().is_empty(),
+                option.trim().to_lowercase(),
+            )
+        });
+        self.drag_target = None;
+        if before
+            != self
+                .current()
+                .rows
+                .iter()
+                .map(|row| row.id)
+                .collect::<Vec<_>>()
+        {
+            self.changed(self.current().id, window, cx);
+        } else {
+            cx.notify();
+        }
     }
     fn parse(&mut self, append: bool, window: &mut Window, cx: &mut Context<Self>) {
         let source = if append {
@@ -2371,7 +2440,13 @@ impl CommandWorkspace {
             .clamp(160., Self::max_sidebar_width(viewport))
     }
 
+    fn sidebar_folded(&self) -> bool {
+        self.sidebar_collapsed && !self.sidebar_auto_expanded
+    }
+
     fn sidebar_width(&self, viewport: f32) -> f32 {
+        // Only a pinned expansion participates in workspace layout. Hover uses
+        // a separate overlay spring over the editor, leaving editor bounds fixed.
         if self.sidebar_collapsed {
             56.
         } else {
@@ -2380,10 +2455,55 @@ impl CommandWorkspace {
     }
 
     fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
+        // An open hover preview is pinned by clicking its toggle; an explicitly
+        // collapsed panel stays closed until the pointer genuinely leaves it.
         self.sidebar_collapsed = !self.sidebar_collapsed;
+        self.sidebar_auto_expanded = false;
+        self.sidebar_auto_suppressed = self.sidebar_collapsed;
+        self.sidebar_hovered = None;
         self.sidebar_scroll.scroll_to_top_of_item(self.active);
         self.config_dirty = true;
         cx.notify();
+    }
+
+    fn pointer_in_sidebar(position: gpui::Point<gpui::Pixels>, width: f32, height: f32) -> bool {
+        let x = f32::from(position.x);
+        let y = f32::from(position.y);
+        x >= 0. && x < width && y >= TITLE_HEIGHT && y < height
+    }
+
+    fn hover_sidebar(&mut self, hovered: bool, window: &Window, cx: &mut Context<Self>) {
+        if !hovered {
+            let height = f32::from(window.viewport_size().height);
+            if self.sidebar_auto_expanded
+                && Self::pointer_in_sidebar(
+                    window.mouse_position(),
+                    self.expanded_sidebar_width(f32::from(window.viewport_size().width))
+                        .max(self.sidebar_overlay_display_width),
+                    height,
+                )
+            {
+                // The pointer may outrun the opening spring. Keep the preview
+                // while it is inside the eventual overlay, not merely its current width.
+                return;
+            }
+            if !Self::pointer_in_sidebar(window.mouse_position(), 56., height) {
+                self.sidebar_auto_suppressed = false;
+            }
+            let changed = self.sidebar_auto_expanded || self.sidebar_hovered.is_some();
+            self.sidebar_auto_expanded = false;
+            self.sidebar_hovered = None;
+            if changed {
+                cx.notify();
+            }
+        } else if self.sidebar_collapsed
+            && !self.sidebar_auto_expanded
+            && !self.sidebar_auto_suppressed
+            && self.resizing.is_none()
+        {
+            self.sidebar_auto_expanded = true;
+            cx.notify();
+        }
     }
 
     fn sidebar(
@@ -2394,7 +2514,7 @@ impl CommandWorkspace {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let p = palette(cx);
-        let folded = self.sidebar_collapsed;
+        let folded = self.sidebar_folded();
         let progress = ((width - 56.) / (expanded_width - 56.)).clamp(0., 1.);
         let show_details = progress > 0.015 || !folded;
         // Long lists scroll independently of the first-row decoration anchor.
@@ -2451,7 +2571,8 @@ impl CommandWorkspace {
             .w_full()
             .flex_1()
             .min_h_0()
-            .pr(px(SIDEBAR_LIST_RIGHT_PADDING))
+            // Rows and their highlight occupy the entire list viewport. The
+            // slim scrollbar overlays the right edge rather than taking width.
             .on_scroll_wheel(cx.listener(|v, _, _, cx| {
                 // A wheel event scrolls rows beneath a stationary pointer without a MouseMove.
                 // Clear the old row before the next frame can paint it at a stale screen position.
@@ -2671,9 +2792,9 @@ impl CommandWorkspace {
                             .justify_center()
                             .relative()
                             .rounded_full()
-                            // When folded the icon is the only way to select a config;
-                            // when expanded it edits that config's icon without switching pages.
-                            .when(!folded, |slot| {
+                            // In hover preview the icon still selects the config, as it
+                            // did in the collapsed rail. Only pinned expansion edits it.
+                            .when(!folded && !self.sidebar_auto_expanded, |slot| {
                                 slot.cursor(gpui::CursorStyle::PointingHand)
                                     .hover(|slot| {
                                         slot.bg(gpui::Hsla::from(rgb(if selected_visible {
@@ -2702,6 +2823,9 @@ impl CommandWorkspace {
                             .relative()
                             .flex_1()
                             .min_w_0()
+                            // Protect the trailing delete action from the overlay
+                            // scrollbar without narrowing the highlight or icon rail.
+                            .pr(px(12.))
                             .child(div().flex_1().min_w_0().truncate().child(label))
                             .child(
                                 icon_button(("sidebar-close-tab", id), "删除配置", IconName::X, cx)
@@ -2773,6 +2897,8 @@ impl CommandWorkspace {
             .h_full()
             .min_h_0()
             .bg(rgb(p.sidebar))
+            .on_hover(cx.listener(|v, hovered, w, cx| v.hover_sidebar(*hovered, w, cx)))
+            .hover_listener_mode(gpui::HoverListenerMode::InputModalityIndependent)
             .border_r_1()
             .border_color(rgb(p.divider))
             .flex()
@@ -2783,15 +2909,16 @@ impl CommandWorkspace {
                 row()
                     .h(px(CONTROL))
                     .flex_shrink_0()
+                    .when(folded, |header| header.justify_center())
                     .child(
                         icon_button(
                             "collapse-sidebar",
-                            if self.sidebar_collapsed {
+                            if folded {
                                 "展开标签侧栏"
                             } else {
                                 "折叠标签侧栏"
                             },
-                            if self.sidebar_collapsed {
+                            if folded {
                                 IconName::ListIndentIncrease
                             } else {
                                 IconName::ListIndentDecrease
@@ -2822,55 +2949,59 @@ impl CommandWorkspace {
                     .flex_1()
                     .min_h_0()
                     .child(items.child(div().h(px(16.)).flex_shrink_0()))
-                    .child(
-                        frame("sidebar-scrollbar-lane")
-                            .absolute()
-                            // Keep the full thumb outside the overlapping resize hit target.
-                            .right(px(SIDEBAR_SCROLL_LANE_RIGHT))
-                            .top_0()
-                            .bottom_0()
-                            .w(px(10.))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|v, _, _, cx| {
-                                    // Dragging the thumb also scrolls beneath a stationary pointer.
-                                    if v.sidebar_hovered.take().is_some() {
-                                        cx.notify();
-                                    }
-                                }),
-                            )
-                            .child(
-                                Scrollbar::vertical(&self.sidebar_scroll)
-                                    .id("sidebar-scrollbar")
-                                    .mode(ScrollbarMode::Hover)
-                                    // Shift only the painted/clickable thumb 3px right while
-                                    // keeping its lane clear of the resize hit target.
-                                    .styles(|styles| {
-                                        styles
-                                            .thumb(|thumb| {
-                                                thumb
-                                                    .width(px(6.))
-                                                    .inset(px(SIDEBAR_SCROLL_THUMB_INSET))
-                                            })
-                                            .thumb_hover(|thumb| {
-                                                thumb
-                                                    .width(px(SIDEBAR_SCROLL_THUMB_MAX_WIDTH))
-                                                    .inset(px(SIDEBAR_SCROLL_THUMB_INSET))
-                                            })
-                                            .thumb_active(|thumb| {
-                                                thumb
-                                                    .width(px(SIDEBAR_SCROLL_THUMB_MAX_WIDTH))
-                                                    .inset(px(SIDEBAR_SCROLL_THUMB_INSET))
-                                            })
-                                    })
-                                    .viewport_from_layout(),
-                            ),
-                    ),
+                    .when(!folded, |viewport| {
+                        viewport.child(
+                            frame("sidebar-scrollbar-lane")
+                                .absolute()
+                                // Keep the full thumb outside the overlapping resize hit target.
+                                .right(px(SIDEBAR_SCROLL_LANE_RIGHT))
+                                .top_0()
+                                .bottom_0()
+                                .w(px(10.))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|v, _, _, cx| {
+                                        // Dragging the thumb also scrolls beneath a stationary pointer.
+                                        if v.sidebar_hovered.take().is_some() {
+                                            cx.notify();
+                                        }
+                                    }),
+                                )
+                                .child(
+                                    Scrollbar::vertical(&self.sidebar_scroll)
+                                        .id("sidebar-scrollbar")
+                                        .mode(ScrollbarMode::Hover)
+                                        // Shift only the painted/clickable thumb 3px right while
+                                        // keeping its lane clear of the resize hit target.
+                                        .styles(|styles| {
+                                            styles
+                                                .thumb(|thumb| {
+                                                    thumb
+                                                        .width(px(3.))
+                                                        .inset(px(SIDEBAR_SCROLL_THUMB_INSET))
+                                                })
+                                                .thumb_hover(|thumb| {
+                                                    thumb
+                                                        .width(px(SIDEBAR_SCROLL_THUMB_MAX_WIDTH))
+                                                        .inset(px(SIDEBAR_SCROLL_THUMB_INSET))
+                                                })
+                                                .thumb_active(|thumb| {
+                                                    thumb
+                                                        .width(px(SIDEBAR_SCROLL_THUMB_MAX_WIDTH))
+                                                        .inset(px(SIDEBAR_SCROLL_THUMB_INSET))
+                                                })
+                                        })
+                                        .viewport_from_layout(),
+                                ),
+                        )
+                    }),
             )
             .when(folded && progress <= 0.015, |d| {
                 d.child(
-                    icon_button("sidebar-add-tab", "新建标签", IconName::Plus, cx)
-                        .on_click(cx.listener(|v, _, w, cx| v.new_tab(false, w, cx))),
+                    row().justify_center().child(
+                        icon_button("sidebar-add-tab", "新建标签", IconName::Plus, cx)
+                            .on_click(cx.listener(|v, _, w, cx| v.new_tab(false, w, cx))),
+                    ),
                 )
             })
             .child(
@@ -3353,7 +3484,37 @@ impl CommandWorkspace {
             .text_color(rgb(p.muted))
             .child(div().w(px(GRIP)).flex_shrink_0())
             .child(div().w(px(CONTROL)).flex_shrink_0())
-            .child(header_cell("option-heading", "选项 / 功能", grid.option))
+            .child(
+                frame("option-heading")
+                    .w(px(grid.option))
+                    .flex_shrink_0()
+                    .px(px(FIELD_PADDING))
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .cursor(gpui::CursorStyle::PointingHand)
+                    .aria_label(tr(cx, "按选项 / 功能字母排序"))
+                    .tooltip(|w, cx| {
+                        gpui::component::tooltip::Tooltip::new(tr(
+                            cx,
+                            "点击按字母顺序排序；勾选参数置顶时已勾选参数先排序",
+                        ))
+                        .build(w, cx)
+                    })
+                    .on_click(cx.listener(|v, _, w, cx| v.sort_parameters_by_option(w, cx)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(tr(cx, "选项 / 功能")),
+                    )
+                    .child(
+                        Icon::new(IconName::ArrowDownAZ)
+                            .size(px(14.))
+                            .text_color(rgb(p.muted)),
+                    ),
+            )
             .child(header_cell("value-heading", "参数值", grid.value))
             .child(header_cell(
                 "note-heading",
@@ -3809,7 +3970,17 @@ impl Render for RowDragPreview {
 
 impl Render for CommandWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Win32 WM_MOUSELEAVE updates the platform hover flag but does not emit
+        // GPUI MouseExitEvent. A platform refresh is enough to dismiss the preview.
+        // The headless Windows test window does not simulate this flag.
+        #[cfg(all(windows, not(test), not(feature = "ui-test")))]
+        if !window.is_window_hovered() {
+            self.sidebar_auto_expanded = false;
+            self.sidebar_auto_suppressed = false;
+            self.sidebar_hovered = None;
+        }
         let p = palette(cx);
+        let exit_owner = cx.entity().downgrade();
         let width = f32::from(window.viewport_size().width);
         let expanded_width = self.expanded_sidebar_width(width);
         let target_sidebar_width = self.sidebar_width(width);
@@ -3835,7 +4006,25 @@ impl Render for CommandWorkspace {
             cx,
         )
         .clamp(52., expanded_width + 10.);
+        let overlay_width = gpui::base::spring(
+            "sidebar-hover-overlay-spring",
+            if self.sidebar_auto_expanded {
+                expanded_width
+            } else {
+                56.
+            },
+            gpui::base::Spring::new(std::time::Duration::from_millis(210))
+                .with_damping(0.74)
+                .with_epsilon(0.35)
+                .with_travel(!self.reduced_motion),
+            window,
+            cx,
+        )
+        .clamp(52., expanded_width + 10.);
+        let overlay_visible =
+            self.sidebar_collapsed && (self.sidebar_auto_expanded || overlay_width > 56.35);
         self.sidebar_display_width = sidebar_width;
+        self.sidebar_overlay_display_width = overlay_width;
         let content_width = (width - sidebar_width).max(0.);
         let height = f32::from(window.viewport_size().height);
         // Keep the input grid stable while the sidebar is dragged or its spring moves.
@@ -4299,6 +4488,25 @@ impl Render for CommandWorkspace {
                                 icon_button("stop-log", "停止当前运行", IconName::Square, cx)
                                     .on_click(cx.listener(|v, _, _, cx| v.stop_selected_run(cx))),
                             )
+                            .when_some(
+                                self.selected_running_command().map(str::to_owned),
+                                |row, command| {
+                                    row.child(
+                                        icon_button(
+                                            "copy-running-command",
+                                            "复制当前运行命令",
+                                            IconName::Copy,
+                                            cx,
+                                        )
+                                        .tooltip(command)
+                                        .on_click(
+                                            cx.listener(|v, _, _, cx| {
+                                                v.copy_selected_run_command(cx)
+                                            }),
+                                        ),
+                                    )
+                                },
+                            )
                         },
                     )
                     .child(div().flex_1())
@@ -4387,6 +4595,16 @@ impl Render for CommandWorkspace {
                 }
             }))
             .on_mouse_move(cx.listener(|v, event: &gpui::MouseMoveEvent, w, cx| {
+                if v.sidebar_auto_expanded
+                    && !Self::pointer_in_sidebar(
+                        event.position,
+                        v.expanded_sidebar_width(f32::from(w.viewport_size().width))
+                            .max(v.sidebar_overlay_display_width),
+                        f32::from(w.viewport_size().height),
+                    )
+                {
+                    v.hover_sidebar(false, w, cx);
+                }
                 let Some(drag) = v.resizing else {
                     return;
                 };
@@ -4416,6 +4634,8 @@ impl Render for CommandWorkspace {
                         let movement = f32::from(event.position.x) - drag.start_x;
                         if movement.abs() > 0.5 {
                             v.sidebar_collapsed = false;
+                            v.sidebar_auto_expanded = false;
+                            v.sidebar_auto_suppressed = false;
                             v.sidebar_expanded_width = Some((drag.start_value + movement).clamp(
                                 160.,
                                 Self::max_sidebar_width(f32::from(w.viewport_size().width)),
@@ -4494,10 +4714,19 @@ impl Render for CommandWorkspace {
             .child(self.header(width, window, cx))
             .child(
                 frame("workspace-body")
+                    .relative()
                     .flex()
                     .flex_1()
                     .min_h_0()
-                    .child(self.sidebar(sidebar_width, expanded_width, window, cx))
+                    .child(if overlay_visible {
+                        // Keep a real 56px rail in the flex layout. The temporary
+                        // expanded panel is painted last above the editor, not as
+                        // an extra flex column that shifts inputs/IME geometry.
+                        div().w(px(56.)).h_full().flex_shrink_0().into_any_element()
+                    } else {
+                        self.sidebar(sidebar_width, expanded_width, window, cx)
+                            .into_any_element()
+                    })
                     .child(
                         column()
                             .flex_1()
@@ -4522,7 +4751,22 @@ impl Render for CommandWorkspace {
                                     .overflow_hidden()
                                     .child(i18n::message(cx, &self.status)),
                             ),
-                    ),
+                    )
+                    .when(overlay_visible, |body| {
+                        body.child(
+                            frame("sidebar-hover-overlay")
+                                .absolute()
+                                .top_0()
+                                .bottom_0()
+                                .left_0()
+                                .w(px(overlay_width))
+                                .flex()
+                                .bg(rgb(p.sidebar))
+                                .shadow_md()
+                                .occlude()
+                                .child(self.sidebar(overlay_width, expanded_width, window, cx)),
+                        )
+                    }),
             )
             // Kit's animated selected pill can paint over a marker inside tab-context.
             // Paint this non-interactive guide last, above the whole title bar.
@@ -4644,6 +4888,40 @@ impl Render for CommandWorkspace {
             .children(Root::render_dialog_layer(window, cx))
             .children(Root::render_sheet_layer(window, cx))
             .children(Root::render_notification_layer(window, cx))
+            .when(
+                self.sidebar_auto_expanded || self.sidebar_auto_suppressed,
+                |root| {
+                    root.child(
+                        // An OS mouse-exit can arrive without a final MouseMove. The
+                        // GPUI platform keeps the last in-window pointer coordinate,
+                        // so hitbox-filtered on_mouse_exit cannot reliably dismiss an
+                        // overlay. Listen at the window paint phase instead.
+                        gpui::canvas(
+                            |_, _, _| {},
+                            move |_, _, window, _| {
+                                let owner = exit_owner.clone();
+                                window.on_mouse_event(
+                                    move |_: &gpui::MouseExitEvent, phase, _, cx| {
+                                        if phase == gpui::DispatchPhase::Bubble {
+                                            let _ = owner.update(cx, |view, cx| {
+                                                view.sidebar_auto_expanded = false;
+                                                view.sidebar_auto_suppressed = false;
+                                                view.sidebar_hovered = None;
+                                                cx.notify();
+                                            });
+                                        }
+                                    },
+                                );
+                            },
+                        )
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .left_0()
+                        .right_0(),
+                    )
+                },
+            )
     }
 }
 
@@ -4659,6 +4937,7 @@ impl Drop for CommandWorkspace {
 mod tray_action_tests {
     use super::*;
     use gpui::component::WindowExt;
+    use gpui::test::TestWindowExt;
     use gpui::{size, TestAppContext};
 
     #[cfg(unix)]
@@ -4710,6 +4989,102 @@ mod tray_action_tests {
         assert!(cx.update(|cx| view.read(cx).logs[0].stopped));
         cx.update_window(handle.into(), |_, window, _| window.remove_window())
             .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    fn running_log_copy_uses_launch_snapshot_in_docked_and_detached_windows(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let main = cx.open_window(size(px(850.), px(800.)), |window, cx| {
+            let view = cx.new(|cx| CommandWorkspace::new(window, cx));
+            workspace = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let view = workspace.unwrap();
+        let running = "while :; do sleep 0.05; done";
+        cx.update_window(main.into(), |_, window, cx| {
+            view.update(cx, |view, cx| {
+                let tab = &mut view.tabs[0];
+                tab.program
+                    .update(cx, |input, cx| input.set_value(running, window, cx));
+                tab.other
+                    .update(cx, |input, cx| input.set_value("", window, cx));
+                for row in &mut tab.rows {
+                    row.enabled = false;
+                }
+                view.run_current_command(window, cx);
+                assert_eq!(view.selected_running_command(), Some(running));
+                view.tabs[0]
+                    .program
+                    .update(cx, |input, cx| input.set_value("echo changed", window, cx));
+            });
+            window.render_frame(cx);
+            let stop = window.find("stop-log").bounds();
+            let copy = window.find("copy-running-command").bounds();
+            assert!(copy.left() >= stop.right(), "复制 SVG 应紧挨停止按钮右侧");
+            window.click("copy-running-command", cx);
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|item| item.text()),
+                Some(running.into())
+            );
+        })
+        .unwrap();
+        cx.update_window(main.into(), |_, _, cx| {
+            view.update(cx, |view, cx| view.detach_log(cx));
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let detached = cx.update(|cx| view.read(cx).detached_log).unwrap();
+        cx.update_window(detached.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let stop = window.find("detached-stop-log").bounds();
+            let copy = window.find("detached-copy-running-command").bounds();
+            assert!(copy.left() >= stop.right());
+            cx.write_to_clipboard(ClipboardItem::new_string("stale".into()));
+            window.click("detached-copy-running-command", cx);
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|item| item.text()),
+                Some(running.into())
+            );
+            window.click("detached-stop-log", cx);
+        })
+        .unwrap();
+        for _ in 0..100 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            cx.background_executor
+                .advance_clock(std::time::Duration::from_millis(24));
+            cx.run_until_parked();
+            if cx.update(|cx| view.read(cx).selected_running_command().is_none()) {
+                break;
+            }
+        }
+        cx.update(|cx| {
+            let snapshot = view.read(cx).log_snapshot();
+            assert!(!snapshot.can_stop);
+            assert!(snapshot.selected_command.is_none());
+            assert!(
+                view.read(cx).logs[0].command.is_none(),
+                "运行结束后清除命令快照"
+            );
+        });
+        cx.update_window(detached.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("detached-copy-running-command").is_none());
+            window.remove_window();
+        })
+        .unwrap();
+        cx.update_window(main.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("copy-running-command").is_none());
+            window.remove_window();
+        })
+        .unwrap();
     }
 
     #[gpui::test]
@@ -4832,6 +5207,7 @@ mod log_scroll_tests {
                 view.log_height_override = Some(180.);
                 view.logs.push(SessionLog {
                     id: 0,
+                    command: None,
                     command_name: "连续输出".into(),
                     caption: "连续输出 · 运行 #1".into(),
                     output: String::new(),
@@ -4932,6 +5308,7 @@ mod log_scroll_tests {
         view.logs = (0..2)
             .map(|id| SessionLog {
                 id,
+                command: None,
                 command_name: format!("任务 {id}"),
                 caption: format!("运行 #{}", id + 1),
                 output: output.clone(),
@@ -5439,6 +5816,7 @@ mod completion_notification_tests {
                     .enumerate()
                     .map(|(id, name)| SessionLog {
                         id,
+                        command: None,
                         command_name: name.into(),
                         caption: format!("运行 #{}", id + 1),
                         output: String::new(),

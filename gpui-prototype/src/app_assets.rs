@@ -46,6 +46,7 @@ mod tests {
             IconName::FileText,
             IconName::ExternalLink,
             IconName::ArrowDownToLine,
+            IconName::ArrowDownAZ,
             IconName::AppWindow,
             IconName::LogOut,
             IconName::ScanText,

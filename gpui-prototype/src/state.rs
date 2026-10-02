@@ -104,6 +104,56 @@ pub fn menu_row_content(
 }
 use crate::{app::CommandWorkspace, core::parser::CommandParser};
 
+/// GPUI also accepts pasted complete shell commands and raw extra arguments. In
+/// those fields an unquoted HTTP query `&key=value` would otherwise be parsed
+/// by cmd/sh as another command. Quote only bare URL tokens; keep genuine shell
+/// fragments (`&&`, pipes, redirects) and already quoted URLs unchanged.
+fn quote_bare_query_urls(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut double_quoted = false;
+    let mut single_quoted = false;
+    let mut remaining = text;
+    while !remaining.is_empty() {
+        if remaining.starts_with('"') && !single_quoted {
+            double_quoted = !double_quoted;
+            result.push('"');
+            remaining = &remaining[1..];
+            continue;
+        }
+        if remaining.starts_with('\'')
+            && !double_quoted
+            && (single_quoted
+                || result
+                    .chars()
+                    .last()
+                    .is_none_or(|ch| ch.is_whitespace() || matches!(ch, '=' | '(')))
+        {
+            single_quoted = !single_quoted;
+            result.push('\'');
+            remaining = &remaining[1..];
+            continue;
+        }
+        let url_start = remaining.starts_with("https://") || remaining.starts_with("http://");
+        if !double_quoted && !single_quoted && url_start {
+            let end = remaining
+                .find(|ch: char| ch.is_whitespace() || matches!(ch, '"' | '|' | '<' | '>'))
+                .unwrap_or(remaining.len());
+            let url = &remaining[..end];
+            if url.contains('&') && !url.contains("^&") && !url.contains("&&") {
+                result.push('"');
+                result.push_str(url);
+                result.push('"');
+                remaining = &remaining[end..];
+                continue;
+            }
+        }
+        let ch = remaining.chars().next().unwrap();
+        result.push(ch);
+        remaining = &remaining[ch.len_utf8()..];
+    }
+    result
+}
+
 fn enabled_by_default() -> bool {
     true
 }
@@ -368,7 +418,11 @@ impl CommandTab {
                 )
             })
             .collect::<Vec<_>>();
-        CommandParser::build(&program, &parameters, &self.other.read(cx).value())
+        CommandParser::build(
+            &quote_bare_query_urls(&program),
+            &parameters,
+            &quote_bare_query_urls(&self.other.read(cx).value()),
+        )
     }
     pub fn data(&self, cx: &App) -> TabData {
         TabData {
@@ -381,5 +435,95 @@ impl CommandTab {
             icon_source: self.icon_source.clone(),
             icon_svg: self.icon_svg.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod query_url_tests {
+    use super::*;
+
+    #[test]
+    fn pasted_stream_url_is_one_shell_argument_without_changing_real_operators() {
+        let url =
+            "https://example.invalid/stream?x=1&browser_version=123&cdm=widevine&os_name=windows";
+        let program = format!("N_m3u8DL-RE {url} --live-real-time-merge");
+        assert_eq!(
+            quote_bare_query_urls(&program),
+            format!("N_m3u8DL-RE \"{url}\" --live-real-time-merge")
+        );
+        assert_eq!(
+            quote_bare_query_urls(&format!("--url={url} --save-name video")),
+            format!("--url=\"{url}\" --save-name video")
+        );
+        assert_eq!(
+            quote_bare_query_urls(&format!("tool \"{url}\"")),
+            format!("tool \"{url}\"")
+        );
+        assert_eq!(
+            quote_bare_query_urls(&format!("tool '{url}'")),
+            format!("tool '{url}'"),
+            "不改写用户明确输入的引号语法"
+        );
+        assert_eq!(
+            quote_bare_query_urls(&format!("tool --name don't {url}")),
+            format!("tool --name don't \"{url}\""),
+            "普通词内的撇号不能让后续网址脱离保护"
+        );
+        assert_eq!(
+            quote_bare_query_urls("echo first && echo second | more"),
+            "echo first && echo second | more"
+        );
+        assert_eq!(
+            quote_bare_query_urls("tool https://example.invalid/a?x=1^&y=2"),
+            "tool https://example.invalid/a?x=1^&y=2"
+        );
+        // Preview/launch use the same protected command; a raw shell operator
+        // elsewhere in the command must still be available to deliberate scripts.
+        let preview = CommandParser::build(&quote_bare_query_urls(&program), &[], "");
+        assert!(preview.contains(&format!("\"{url}\"")), "{preview}");
+        assert!(CommandParser::build("echo", &[], "hello | more").contains(" | more"));
+    }
+
+    #[test]
+    fn pasted_stream_url_reaches_a_local_process_as_one_argument() {
+        use crate::backend::{self, OutputStream, RunEvent};
+        use std::time::{Duration, Instant};
+
+        let url =
+            "https://example.invalid/watch?x=1&browser_version=123&cdm=widevine&os_name=windows";
+        let python = if cfg!(windows) { "python" } else { "python3" };
+        let program = format!(r#"{python} -c "import sys; print(sys.argv[1])" {url}"#);
+        let command = CommandParser::build(&quote_bare_query_urls(&program), &[], "");
+        let (_handle, events) = backend::start_shell(&command, "").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (mut stdout, mut stderr, mut exit) = (String::new(), String::new(), None);
+        while Instant::now() < deadline {
+            if let Ok(event) = events.recv_timeout(Duration::from_millis(100)) {
+                match event {
+                    RunEvent::Output {
+                        stream: OutputStream::Stdout,
+                        text,
+                    } => stdout.push_str(&text),
+                    RunEvent::Output {
+                        stream: OutputStream::Stderr,
+                        text,
+                    } => stderr.push_str(&text),
+                    RunEvent::Finished { exit_code, .. } => {
+                        exit = Some(exit_code);
+                        break;
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            exit,
+            Some(0),
+            "命令应完成而非将查询字段当成 shell 命令：{stderr:?}"
+        );
+        assert_eq!(stdout.trim(), url, "必须将完整 URL 作为同一个参数传入");
+        assert!(
+            stderr.trim().is_empty(),
+            "查询字段不应成为独立命令：{stderr:?}"
+        );
     }
 }

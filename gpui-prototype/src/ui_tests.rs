@@ -1559,12 +1559,71 @@ pub fn snapshots(directory: &str) {
         cx.background_executor()
             .advance_clock(std::time::Duration::from_millis(840));
         cx.run_until_parked();
-        cx.capture_screenshot(handle.into())
-            .unwrap()
+        let collapsed_image = cx.capture_screenshot(handle.into()).unwrap();
+        let sidebar_probe = ((100. * scale).round() as u32, (250. * scale).round() as u32);
+        let editor_probe = ((260. * scale).round() as u32, (250. * scale).round() as u32);
+        let collapsed_sidebar_pixel = collapsed_image
+            .get_pixel(sidebar_probe.0, sidebar_probe.1)
+            .0;
+        let editor_pixel = collapsed_image.get_pixel(editor_probe.0, editor_probe.1).0;
+        collapsed_image
             .save(format!("{directory}/sidebar-{mode:?}-collapsed.png"))
             .unwrap();
         cx.update_window(handle.into(), |_, w, cx| {
             assert_eq!(w.find("tab-sidebar").bounds().size.width, px(56.));
+            w.hover("program", cx);
+            w.hover(("sidebar-tab", 0usize), cx);
+        })
+        .unwrap();
+        cx.background_executor()
+            .advance_clock(std::time::Duration::from_millis(840));
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.render_frame(cx);
+            assert!(w.find("tab-sidebar").bounds().size.width >= px(160.));
+        })
+        .unwrap();
+        let expanded_image = cx.capture_screenshot(handle.into()).unwrap();
+        let surface = cx.update(|cx| theme::palette(cx).sidebar);
+        let surface_rgb = [(surface >> 16) as u8, (surface >> 8) as u8, surface as u8];
+        assert_eq!(
+            &expanded_image.get_pixel(sidebar_probe.0, sidebar_probe.1).0[..3],
+            surface_rgb,
+            "悬停浮层必须实际盖住编辑区，而非只改变布局：{mode:?}"
+        );
+        assert_eq!(
+            expanded_image.get_pixel(editor_probe.0, editor_probe.1).0,
+            editor_pixel,
+            "浮层外编辑区像素不得移动：{mode:?}"
+        );
+        expanded_image
+            .save(format!("{directory}/sidebar-{mode:?}-hover-expanded.png"))
+            .unwrap();
+        cx.update_window(handle.into(), |_, w, cx| w.hover("program", cx))
+            .unwrap();
+        cx.background_executor()
+            .advance_clock(std::time::Duration::from_millis(840));
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.render_frame(cx);
+            assert_eq!(w.find("tab-sidebar").bounds().size.width, px(56.));
+        })
+        .unwrap();
+        let returned_image = cx.capture_screenshot(handle.into()).unwrap();
+        assert_eq!(
+            returned_image.get_pixel(sidebar_probe.0, sidebar_probe.1).0,
+            collapsed_sidebar_pixel,
+            "移出后应露出原来未位移的编辑区：{mode:?}"
+        );
+        assert_eq!(
+            returned_image.get_pixel(editor_probe.0, editor_probe.1).0,
+            editor_pixel,
+            "编辑区在整个悬停过程中不应移动：{mode:?}"
+        );
+        returned_image
+            .save(format!("{directory}/sidebar-{mode:?}-hover-returned.png"))
+            .unwrap();
+        cx.update_window(handle.into(), |_, w, cx| {
             w.click("collapse-sidebar", cx);
         })
         .unwrap();
@@ -1706,6 +1765,7 @@ pub fn snapshots(directory: &str) {
                 theme::Accent::Amber,
             ] {
                 cx.update_window(handle.into(), |_, w, cx| {
+                    w.hover("program", cx); // Exit the collapsed row before replacing its panel.
                     cx.set_global(accent);
                     theme::apply(Theme::Light, cx);
                     view.update(cx, |v, cx| {
@@ -1719,6 +1779,11 @@ pub fn snapshots(directory: &str) {
                     w.hover("program", cx); // Remove the prior picker-trigger hover.
                 })
                 .unwrap();
+                // The picker/hover preview leaves a tooltip for a short grace period.
+                // Wait for it to disappear before sampling the icon's real background.
+                cx.background_executor()
+                    .advance_clock(std::time::Duration::from_millis(840));
+                cx.run_until_parked();
                 let (unselected, selected) = cx
                     .update_window(handle.into(), |_, w, cx| {
                         w.render_frame(cx);
@@ -1756,18 +1821,19 @@ pub fn snapshots(directory: &str) {
                         >= 24,
                     "{accent:?} 白底未选中 Lucide 必须是深色"
                 );
+                let surface_pixels = plain
+                    .iter()
+                    .filter(|[r, g, b, _]| {
+                        [*r, *g, *b]
+                            .into_iter()
+                            .zip(surface_rgb)
+                            .all(|(actual, expected)| actual.abs_diff(expected) <= 2)
+                    })
+                    .count();
                 assert!(
-                    plain
-                        .iter()
-                        .filter(|[r, g, b, _]| {
-                            [*r, *g, *b]
-                                .into_iter()
-                                .zip(surface_rgb)
-                                .all(|(actual, expected)| actual.abs_diff(expected) <= 2)
-                        })
-                        .count()
-                        >= 80,
-                    "{accent:?} 未选中图标应保持侧栏底色，不能垫主题色块"
+                    surface_pixels >= 80,
+                    "{accent:?} 未选中图标应保持侧栏底色，不能垫主题色块：{surface_pixels}px，图标={unselected:?}，侧栏色={surface_rgb:?}，像素样本={:?}",
+                    &plain[..8]
                 );
                 assert!(
                     active
@@ -3018,6 +3084,32 @@ mod tests {
                     assert_eq!(w.find("tab-sidebar").bounds().size.width, px(56.));
                     assert!(w.try_find(("sidebar-icon", 0usize)).is_some());
                     assert!(w.try_find(("sidebar-edit-icon", 0usize)).is_none());
+                    let panel = w.find("tab-sidebar").bounds();
+                    let toggle_x = w.find("collapse-sidebar").bounds().center().x;
+                    let add_x = w.find("sidebar-add-tab").bounds().center().x;
+                    assert_eq!(toggle_x, add_x, "折叠控制和新建按钮必须同轴");
+                    let row = w.find(("sidebar-tab", 0usize)).bounds();
+                    assert_eq!(row.left() - panel.left(), px(8.), "左侧高亮留白");
+                    assert_eq!(
+                        panel.right() - row.right(),
+                        px(9.),
+                        "右侧高亮留白含 1px 边框"
+                    );
+                    assert!(
+                        (row.center().x - toggle_x).abs() <= px(0.5),
+                        "折叠后高亮、图标及上下控制应共用中心轴"
+                    );
+                    assert!(
+                        w.try_find("sidebar-scrollbar-lane").is_none(),
+                        "折叠时不得留一条影响观感的滑块"
+                    );
+                    for id in 0..count as usize {
+                        let icon_x = w.find(("sidebar-icon", id)).bounds().center().x;
+                        assert!(
+                            (icon_x - toggle_x).abs() <= px(0.5),
+                            "折叠列表图标必须与上下两个操作图标对齐：{icon_x:?}/{toggle_x:?}"
+                        );
+                    }
                     w.click(("sidebar-icon", 0usize), cx);
                     assert_eq!(view.read(cx).active, 0, "折叠时点击图标仍应切换标签");
                     assert!(!w.has_active_dialog(cx), "折叠时图标不应抢走切换入口");
@@ -3032,6 +3124,386 @@ mod tests {
                 .unwrap();
             }
         }
+    }
+
+    #[gpui::test]
+    fn collapsed_sidebar_is_centered_at_common_fractional_dpi(cx: &mut TestAppContext) {
+        cx.update(gpui::init);
+        for mode in [Theme::Dark, Theme::Light] {
+            for scale in [1., 1.25, 1.5, 1.75, 2.] {
+                cx.update(|cx| theme::apply(mode, cx));
+                let handle = cx.open_window(size(px(850.), px(800.)), |w, cx| {
+                    let view = cx.new(|cx| {
+                        let mut view = CommandWorkspace::new(w, cx);
+                        view.reduced_motion = true;
+                        view
+                    });
+                    Root::new(view, w, cx)
+                });
+                cx.simulate_window_scale_factor_change(handle.into(), scale);
+                cx.update_window(handle.into(), |_, w, cx| {
+                    w.click("collapse-sidebar", cx);
+                    w.render_frame(cx);
+                    let panel = w.find("tab-sidebar").bounds();
+                    let icon = w.find(("sidebar-icon", 0usize)).bounds();
+                    let row = w.find(("sidebar-tab", 0usize)).bounds();
+                    let selected = w.find("sidebar-selection-indicator").bounds();
+                    let control = w.find("collapse-sidebar").bounds();
+                    let add = w.find("sidebar-add-tab").bounds();
+                    let tolerance = px(1. / scale + 0.01);
+                    for (name, center) in [
+                        ("icon", icon.center().x),
+                        ("highlight", selected.center().x),
+                        ("row", row.center().x),
+                        ("toggle", control.center().x),
+                        ("add", add.center().x),
+                    ] {
+                        assert!(
+                            (center - panel.center().x).abs() <= tolerance,
+                            "{mode:?}/{scale}x {name} 偏离折叠栏中心：{center:?}/{panel:?}"
+                        );
+                    }
+                    assert!(w.try_find("sidebar-scrollbar-lane").is_none());
+                    w.remove_window();
+                })
+                .unwrap();
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn collapsed_sidebar_hover_previews_then_restores_and_click_pins_open(cx: &mut TestAppContext) {
+        use gpui::{point, Focusable};
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let handle = cx.open_window(size(px(850.), px(800.)), |w, cx| {
+            let view = cx.new(|cx| CommandWorkspace::new(w, cx));
+            workspace = Some(view.clone());
+            Root::new(view, w, cx)
+        });
+        let view = workspace.unwrap();
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.click("add-tab-title", cx);
+            assert_eq!(view.read(cx).active, 1);
+            view.update(cx, |v, cx| {
+                v.reduced_motion = true;
+                v.sidebar_collapsed = true;
+                cx.notify();
+            });
+            w.render_frame(cx);
+            assert_eq!(w.find("tab-sidebar").bounds().size.width, px(56.));
+            assert!(
+                w.try_find("sidebar-scrollbar-lane").is_none(),
+                "折叠轨道不显示滚动条"
+            );
+            assert!(w.try_find("sidebar-hover-overlay").is_none());
+            let editor = w.find("command-editor").bounds();
+            let program = w.find("program").bounds();
+            let dirty = view.read(cx).has_unsaved_edits();
+            let input_id = view.read(cx).tabs[0].program.entity_id();
+            w.hover(("sidebar-tab", 0usize), cx); // pointer into the narrow rail
+            assert!(view.read(cx).sidebar_collapsed, "悬停不改持久化折叠偏好");
+            assert_eq!(view.read(cx).has_unsaved_edits(), dirty);
+            let overlay = w.find("sidebar-hover-overlay").bounds();
+            assert!(w.find("tab-sidebar").bounds().size.width >= px(160.));
+            assert!(
+                overlay.left() < editor.left() && overlay.right() > editor.left(),
+                "浮层要覆盖编辑区的左边缘：{overlay:?}/{editor:?}"
+            );
+            assert_eq!(
+                w.find("command-editor").bounds(),
+                editor,
+                "悬停不能挤动编辑区"
+            );
+            assert_eq!(
+                w.find("program").bounds(),
+                program,
+                "输入和 IME 几何不得移动"
+            );
+            assert!(w.try_find("sidebar-scrollbar-lane").is_some());
+            assert_eq!(view.read(cx).tabs[0].program.entity_id(), input_id);
+            w.hover(("sidebar-tab", 0usize), cx); // Move from rail into the overlaid label area.
+            assert!(
+                w.try_find("sidebar-hover-overlay").is_some(),
+                "鼠标进入浮层覆盖的编辑区后不能提前收回"
+            );
+            assert!(
+                program.left() + px(10.) < overlay.right(),
+                "测试点击须落在浮层覆盖范围内"
+            );
+            let name_focus = view.read(cx).tabs[1].name.focus_handle(cx);
+            let program_focus = view.read(cx).tabs[1].program.focus_handle(cx);
+            w.focus(&name_focus, cx);
+            w.click_at("program", point(px(10.), px(10.)), cx);
+            assert!(
+                !program_focus.is_focused(w),
+                "浮层必须拦截被遮住的编辑器点击"
+            );
+            w.press("shift", cx);
+            w.render_frame(cx);
+            assert!(
+                w.find("tab-sidebar").bounds().size.width >= px(160.),
+                "键盘事件不应将仍在侧栏内的鼠标视为移出"
+            );
+            w.click(("sidebar-icon", 0usize), cx);
+            assert_eq!(view.read(cx).active, 0, "临时展开时点击图标仍选择配置");
+            assert!(!w.has_active_dialog(cx), "临时展开不应误开图标选择器");
+            w.hover("program", cx);
+            assert_eq!(w.find("tab-sidebar").bounds().size.width, px(56.));
+            assert!(w.try_find("sidebar-hover-overlay").is_none());
+            assert_eq!(w.find("command-editor").bounds(), editor);
+            assert!(w.try_find("sidebar-scrollbar-lane").is_none());
+            assert_eq!(view.read(cx).has_unsaved_edits(), dirty);
+            w.hover("tab-sidebar", cx);
+            assert!(w.find("tab-sidebar").bounds().size.width >= px(160.));
+            w.click("collapse-sidebar", cx); // pin the temporary expansion
+            assert!(!view.read(cx).sidebar_collapsed);
+            assert!(
+                w.try_find("sidebar-hover-overlay").is_none(),
+                "固定展开须回归正常布局"
+            );
+            w.hover("program", cx);
+            assert!(w.find("tab-sidebar").bounds().size.width >= px(160.));
+            assert!(
+                w.find("command-editor").bounds().left() > editor.left(),
+                "只有固定展开才允许编辑区被侧栏推开"
+            );
+            w.click("collapse-sidebar", cx); // explicitly close while pointer remains inside
+            assert!(view.read(cx).sidebar_collapsed);
+            assert_eq!(w.find("tab-sidebar").bounds().size.width, px(56.));
+            w.render_frame(cx);
+            assert_eq!(
+                w.find("tab-sidebar").bounds().size.width,
+                px(56.),
+                "显式关闭后不应在同一次悬停中立即重开"
+            );
+            w.hover("program", cx);
+            w.hover("tab-sidebar", cx);
+            assert!(
+                w.find("tab-sidebar").bounds().size.width >= px(160.),
+                "真正移出后再次进入才重新自动展开"
+            );
+            w.remove_window();
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    fn hover_overlay_survives_pointer_moving_into_its_animated_target(cx: &mut TestAppContext) {
+        use gpui::point;
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let handle = cx.open_window(size(px(850.), px(800.)), |w, cx| {
+            Root::new(
+                cx.new(|cx| {
+                    let mut view = CommandWorkspace::new(w, cx);
+                    view.sidebar_collapsed = true;
+                    view
+                }),
+                w,
+                cx,
+            )
+        });
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.render_frame(cx);
+            w.hover("tab-sidebar", cx);
+            // An immediate move can outrun the 210ms spring: retain hover while
+            // the cursor is inside the eventual floating panel (not the 56px rail).
+            w.simulate_mouse_move(point(px(110.), px(250.)), cx);
+            w.render_frame(cx);
+            assert!(w.try_find("sidebar-hover-overlay").is_some());
+        })
+        .unwrap();
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_millis(840));
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.render_frame(cx);
+            assert!(w.find("sidebar-hover-overlay").bounds().size.width >= px(160.));
+            w.simulate_mouse_move(point(px(420.), px(250.)), cx);
+        })
+        .unwrap();
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_millis(840));
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.render_frame(cx);
+            assert!(w.try_find("sidebar-hover-overlay").is_none());
+            assert_eq!(w.find("tab-sidebar").bounds().size.width, px(56.));
+            w.remove_window();
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    fn window_mouse_exit_dismisses_hover_sidebar(cx: &mut TestAppContext) {
+        use gpui::{MouseExitEvent, PlatformInput};
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let handle = cx.open_window(size(px(850.), px(800.)), |w, cx| {
+            Root::new(
+                cx.new(|cx| {
+                    let mut view = CommandWorkspace::new(w, cx);
+                    view.sidebar_collapsed = true;
+                    view.reduced_motion = true;
+                    view
+                }),
+                w,
+                cx,
+            )
+        });
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.render_frame(cx);
+            w.hover("tab-sidebar", cx);
+            assert!(w.try_find("sidebar-hover-overlay").is_some());
+            w.dispatch_event(
+                PlatformInput::MouseExited(MouseExitEvent {
+                    position: w.mouse_position(),
+                    ..Default::default()
+                }),
+                cx,
+            );
+            w.render_frame(cx);
+            assert!(
+                w.try_find("sidebar-hover-overlay").is_none(),
+                "系统鼠标移出窗口时即使 GPUI 保留旧坐标也应收回浮层"
+            );
+            w.remove_window();
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    fn hover_preview_resize_pins_open_without_losing_drag_width(cx: &mut TestAppContext) {
+        use gpui::point;
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let handle = cx.open_window(size(px(1000.), px(800.)), |w, cx| {
+            let view = cx.new(|cx| CommandWorkspace::new(w, cx));
+            workspace = Some(view.clone());
+            Root::new(view, w, cx)
+        });
+        let view = workspace.unwrap();
+        cx.update_window(handle.into(), |_, w, cx| {
+            view.update(cx, |v, cx| {
+                v.sidebar_collapsed = true;
+                v.reduced_motion = true;
+                cx.notify();
+            });
+            w.render_frame(cx);
+            w.hover(("sidebar-tab", 0usize), cx);
+            assert!(w.find("tab-sidebar").bounds().size.width >= px(160.));
+            let before = w.find("tab-sidebar").bounds().size.width;
+            let grip = w.find("sidebar-resize-handle").bounds().center();
+            w.drag(grip, point(grip.x + px(60.), grip.y), cx);
+            assert!(
+                !view.read(cx).sidebar_collapsed,
+                "在预览态拖动宽度应固定展开"
+            );
+            assert!((w.find("tab-sidebar").bounds().size.width - before - px(60.)).abs() <= px(1.));
+            w.hover("program", cx);
+            assert!(
+                (w.find("tab-sidebar").bounds().size.width - before - px(60.)).abs() <= px(1.),
+                "拖动后的宽度不能在移出时回缩"
+            );
+            w.remove_window();
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    fn hover_expansion_reverses_the_existing_sidebar_spring_without_waiting_for_completion(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let handle = cx.open_window(size(px(850.), px(800.)), |w, cx| {
+            Root::new(
+                cx.new(|cx| {
+                    let mut view = CommandWorkspace::new(w, cx);
+                    view.sidebar_collapsed = true;
+                    view
+                }),
+                w,
+                cx,
+            )
+        });
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.render_frame(cx);
+            assert_eq!(w.find("tab-sidebar").bounds().size.width, px(56.));
+            w.hover("tab-sidebar", cx);
+        })
+        .unwrap();
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_millis(60));
+        cx.run_until_parked();
+        let intermediate = cx
+            .update_window(handle.into(), |_, w, cx| {
+                w.render_frame(cx);
+                w.find("tab-sidebar").bounds().size.width
+            })
+            .unwrap();
+        assert!(
+            intermediate > px(56.) && intermediate < px(208.),
+            "{intermediate:?}"
+        );
+        cx.update_window(handle.into(), |_, w, cx| w.hover("program", cx))
+            .unwrap();
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_millis(900));
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.render_frame(cx);
+            assert_eq!(w.find("tab-sidebar").bounds().size.width, px(56.));
+            w.remove_window();
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    fn hover_expansion_does_not_mark_clean_configuration_dirty(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Light, cx);
+        });
+        let mut workspace = None;
+        let handle = cx.open_window(size(px(640.), px(700.)), |w, cx| {
+            let view = cx.new(|cx| CommandWorkspace::new(w, cx));
+            workspace = Some(view.clone());
+            Root::new(view, w, cx)
+        });
+        let view = workspace.unwrap();
+        cx.update_window(handle.into(), |_, w, cx| {
+            view.update(cx, |v, cx| {
+                v.reduced_motion = true;
+                v.sidebar_collapsed = true;
+                cx.notify();
+            });
+            w.render_frame(cx);
+            assert!(!view.read(cx).has_unsaved_edits());
+            w.hover("tab-sidebar", cx);
+            assert!(view.read(cx).sidebar_collapsed);
+            assert!(!view.read(cx).has_unsaved_edits());
+            let overlay = w.find("sidebar-hover-overlay").bounds();
+            assert!(w.find("status-bar").bounds().center().x > overlay.right());
+            w.hover("status-bar", cx); // A narrow program field can be under the overlay.
+            assert_eq!(w.find("tab-sidebar").bounds().size.width, px(56.));
+            assert!(!view.read(cx).has_unsaved_edits());
+            w.remove_window();
+        })
+        .unwrap();
     }
 
     #[gpui::test]
@@ -3369,8 +3841,7 @@ mod tests {
     fn sidebar_hover_tracks_scrolled_configuration_rows(cx: &mut TestAppContext) {
         use crate::state::{CommandTab, TabData};
         use crate::tokens::{
-            SIDEBAR_HIGHLIGHT_SCROLL_GAP, SIDEBAR_SCROLL_LANE_RIGHT, SIDEBAR_SCROLL_THUMB_INSET,
-            SIDEBAR_SCROLL_THUMB_MAX_WIDTH,
+            SIDEBAR_SCROLL_LANE_RIGHT, SIDEBAR_SCROLL_THUMB_INSET, SIDEBAR_SCROLL_THUMB_MAX_WIDTH,
         };
         use gpui::{PlatformInput, ScrollDelta, ScrollWheelEvent};
         cx.update(|cx| {
@@ -3413,10 +3884,13 @@ mod tests {
             let widest_thumb_left =
                 lane.right() - px(SIDEBAR_SCROLL_THUMB_INSET + SIDEBAR_SCROLL_THUMB_MAX_WIDTH);
             for id in [25usize, 26usize] {
+                let row = w.find(("sidebar-tab", id)).bounds();
+                assert_eq!(row.right(), viewport.right(), "滚动条不得预留高亮宽度");
+                assert!(widest_thumb_left < row.right(), "细滑块在高亮上层重叠绘制");
+                let delete = w.find(("sidebar-close-tab", id)).bounds();
                 assert!(
-                    widest_thumb_left - w.find(("sidebar-tab", id)).bounds().right()
-                        >= px(SIDEBAR_HIGHLIGHT_SCROLL_GAP),
-                    "配置高亮与最宽滚动滑块之间至少保留 3px"
+                    delete.right() <= widest_thumb_left,
+                    "删除按钮须避开叠加滑块：{delete:?}/{lane:?}"
                 );
             }
             assert!(
@@ -4465,6 +4939,162 @@ mod tests {
             assert_eq!(view.read(cx).tabs[0].rows[4].id, disabled);
             assert!(view.read(cx).tabs[0].rows[4].enabled);
             assert!(view.read(cx).preview.read(cx).value().contains("-i"));
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    fn stream_query_url_is_protected_in_program_extras_and_structured_parameter(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let handle = cx.open_window(size(px(850.), px(800.)), |window, cx| {
+            let view = cx.new(|cx| CommandWorkspace::new(window, cx));
+            workspace = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let view = workspace.unwrap();
+        let url = "https://example.invalid/watch?x=1&browser_version=123&cdm=widevine";
+        cx.update_window(handle.into(), |_, window, cx| {
+            view.update(cx, |view, cx| {
+                for row in &mut view.tabs[0].rows {
+                    row.enabled = false;
+                }
+                view.tabs[0]
+                    .other
+                    .update(cx, |input, cx| input.set_value("", window, cx));
+                view.tabs[0].program.update(cx, |input, cx| {
+                    input.set_value(
+                        format!("N_m3u8DL-RE {url} --live-real-time-merge"),
+                        window,
+                        cx,
+                    )
+                });
+            });
+            assert!(view.read(cx).tabs[0]
+                .command(cx)
+                .contains(&format!("\"{url}\"")));
+            view.update(cx, |view, cx| {
+                view.tabs[0]
+                    .program
+                    .update(cx, |input, cx| input.set_value("N_m3u8DL-RE", window, cx));
+                view.tabs[0].other.update(cx, |input, cx| {
+                    input.set_value(format!("--url={url}"), window, cx)
+                });
+            });
+            assert!(view.read(cx).tabs[0]
+                .command(cx)
+                .contains(&format!("\"{url}\"")));
+            view.update(cx, |view, cx| {
+                view.tabs[0]
+                    .other
+                    .update(cx, |input, cx| input.set_value("", window, cx));
+                let row = &mut view.tabs[0].rows[0];
+                row.enabled = true;
+                row.option
+                    .update(cx, |input, cx| input.set_value("--url", window, cx));
+                row.value
+                    .update(cx, |input, cx| input.set_value(url, window, cx));
+            });
+            let command = view.read(cx).tabs[0].command(cx);
+            assert!(command.contains(url));
+            assert!(command.contains("--url"));
+            window.remove_window();
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    fn option_heading_sorts_alphabetically_and_keeps_enabled_group_first_when_requested(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let handle = cx.open_window(size(px(850.), px(900.)), |window, cx| {
+            let view = cx.new(|cx| super::fixture(6, window, cx));
+            workspace = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let view = workspace.unwrap();
+        cx.update_window(handle.into(), |_, window, cx| {
+            view.update(cx, |view, cx| {
+                for (id, (option, enabled)) in [
+                    ("-z", false),
+                    ("-a", true),
+                    ("-B", false),
+                    ("-a", true),
+                    ("-c", true),
+                    ("", false),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let row = &mut view.tabs[0].rows[id];
+                    row.enabled = enabled;
+                    row.option
+                        .update(cx, |input, cx| input.set_value(option, window, cx));
+                }
+            });
+            let before = view.read(cx).tabs[0].command(cx);
+            let original_input = view.read(cx).tabs[0].rows[1].option.entity_id();
+            window.click("option-heading", cx);
+            assert_eq!(
+                view.read(cx).tabs[0]
+                    .rows
+                    .iter()
+                    .map(|row| row.id)
+                    .collect::<Vec<_>>(),
+                vec![1, 3, 2, 4, 0, 5],
+                "关闭置顶时按字母排序，空选项在末尾，同名项稳定"
+            );
+            assert_eq!(
+                view.read(cx).tabs[0].rows[0].option.entity_id(),
+                original_input,
+                "排序须移动原有输入实体，不重建选择、焦点或 IME 状态"
+            );
+            assert_eq!(
+                before,
+                view.read(cx).tabs[0].command(cx),
+                "仅移动未勾选项不改变执行命令"
+            );
+            assert_eq!(
+                view.read(cx).preview.read(cx).value().as_ref(),
+                view.read(cx).tabs[0].command(cx)
+            );
+            view.update(cx, |view, cx| {
+                view.tabs[0].rows.reverse();
+                cx.notify();
+            });
+            window.click("enabled-first", cx);
+            let before_sort = view.read(cx).tabs[0].command(cx);
+            window.click("option-heading", cx);
+            assert_eq!(
+                view.read(cx).tabs[0]
+                    .rows
+                    .iter()
+                    .map(|row| row.id)
+                    .collect::<Vec<_>>(),
+                vec![3, 1, 4, 2, 0, 5],
+                "开启置顶后分别为已勾选组和未勾选组稳定排序"
+            );
+            assert_ne!(
+                before_sort,
+                view.read(cx).tabs[0].command(cx),
+                "已勾选项排序应同步改变命令预览"
+            );
+            assert_eq!(
+                view.read(cx).preview.read(cx).value().as_ref(),
+                view.read(cx).tabs[0].command(cx)
+            );
+            assert!(view.read(cx).tabs[0].dirty);
+            window.remove_window();
         })
         .unwrap();
     }

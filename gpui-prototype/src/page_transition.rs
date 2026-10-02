@@ -361,7 +361,25 @@ impl PageSnapshot {
             .text_color(rgb(p.muted))
             .child(div().w(px(GRIP)).flex_shrink_0())
             .child(div().w(px(CONTROL)).flex_shrink_0())
-            .child(header_cell("选项 / 功能", grid.option))
+            .child(
+                row()
+                    .w(px(grid.option))
+                    .flex_shrink_0()
+                    .px(px(FIELD_PADDING))
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(tr(cx, "选项 / 功能")),
+                    )
+                    .child(
+                        Icon::new(IconName::ArrowDownAZ)
+                            .size(px(14.))
+                            .text_color(rgb(p.muted)),
+                    ),
+            )
             .child(header_cell("参数值", grid.value))
             .child(header_cell(
                 if compact { "" } else { "备注" },
