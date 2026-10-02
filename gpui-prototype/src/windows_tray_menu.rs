@@ -20,7 +20,10 @@ const PADDING: f32 = 8.;
 const WIDTH: f32 = 280.;
 
 fn row_height(cx: &App) -> f32 {
-    (theme::font_size(cx) * 1.4 + 12.).max(32.)
+    // Use the same 4-DIP grid as the gaps/insets so each row lands on physical
+    // pixels at the common 100/125/150/175/200% Windows scales. Otherwise eight
+    // separately rounded row heights accumulate into uneven bottom whitespace.
+    ((theme::font_size(cx) * 1.4 + 12.).max(32.) / 4.).ceil() * 4.
 }
 pub(crate) fn menu_size(cx: &App) -> Size<Pixels> {
     size(
@@ -190,6 +193,7 @@ impl Render for TrayPopup {
                         );
                 }
                 column()
+                    .flex_shrink_0()
                     .when([3, 6, 7].contains(&index), |column| {
                         column.child(
                             row()
@@ -201,6 +205,11 @@ impl Render for TrayPopup {
             });
         frame("tray-popup-surface")
             .size_full()
+            .flex()
+            .flex_col()
+            // Keep the four insets outside the scroll viewport. Revealing the
+            // first/last item must never consume the card's outer whitespace.
+            .p(px(PADDING))
             .rounded(px(RADIUS))
             .overflow_hidden()
             .bg(rgb(p.panel))
@@ -249,10 +258,15 @@ impl Render for TrayPopup {
             }))
             .child(
                 frame("tray-popup-items")
-                    .size_full()
+                    .w_full()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .overflow_x_hidden()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
-                    .p(px(PADDING))
                     .children(items),
             )
     }
@@ -480,6 +494,125 @@ mod tests {
         assert!(receiver.try_recv().is_err());
         cx.update_window(main.into(), |_, window, _| window.remove_window())
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn normal_popup_hover_insets_are_equal_on_all_four_sides(cx: &mut TestAppContext) {
+        cx.update(gpui::init);
+        for mode in [crate::theme::Theme::Dark, crate::theme::Theme::Light] {
+            for font_size in [10, 14, 16, 24] {
+                for scale_factor in [1., 1.25, 1.5, 1.75, 2.] {
+                    cx.update(|cx| theme::apply(mode, cx));
+                    let mut workspace = None;
+                    let main = cx.open_window(size(px(850.), px(800.)), |window, cx| {
+                        let view = cx.new(|cx| CommandWorkspace::new(window, cx));
+                        workspace = Some(view.clone());
+                        Root::new(view, window, cx)
+                    });
+                    let workspace = workspace.unwrap();
+                    cx.update(|cx| theme::set_font_size(font_size, cx));
+                    let dimensions = cx.update(|cx| menu_size(cx));
+                    let (sender, _receiver) = mpsc::channel();
+                    let mut menu = None;
+                    let popup = cx.open_window(dimensions, |window, cx| {
+                        let view = cx.new(|cx| TrayPopup::new(workspace, true, sender, window, cx));
+                        menu = Some(view.clone());
+                        Root::new(view, window, cx)
+                    });
+                    let menu = menu.unwrap();
+                    cx.simulate_window_scale_factor_change(popup.into(), scale_factor);
+                    cx.update_window(popup.into(), |_, window, cx| {
+                        // Actual hit testing / hover in the test platform, no OS input.
+                        for hovered in [TrayAction::ToggleWindow, TrayAction::Logs, TrayAction::Quit] {
+                            window.hover(hovered.id(), cx);
+                            window.render_frame(cx);
+                            assert_eq!(menu.read(cx).selected.map(|index| TrayAction::ALL[index]), Some(hovered));
+                            let surface = window.find("tray-popup-surface").bounds();
+                            let first = window.find(TrayAction::ToggleWindow.id()).bounds();
+                            let last = window.find(TrayAction::Quit.id()).bounds();
+                            let expected = px(PADDING + 1.);
+                            // Fractional DPI may round opposing edges by one physical pixel.
+                            let tolerance = px(1. / scale_factor + 0.01);
+                            for action in TrayAction::ALL {
+                                let item = window.find(action.id()).bounds();
+                                let left = item.left() - surface.left();
+                                let right = surface.right() - item.right();
+                                assert!((left - right).abs() <= tolerance,
+                                    "{mode:?}/{font_size}px/{scale_factor}x {action:?}: 左右留白不对称：{left:?}/{right:?}");
+                                assert!((left - expected).abs() <= tolerance && (right - expected).abs() <= tolerance);
+                            }
+                            let top = first.top() - surface.top();
+                            let bottom = surface.bottom() - last.bottom();
+                            assert!((top - bottom).abs() <= tolerance,
+                                "{mode:?}/{font_size}px/{scale_factor}x: 上下留白不对称：{top:?}/{bottom:?}");
+                            assert!((top - expected).abs() <= tolerance && (bottom - expected).abs() <= tolerance);
+                            assert!(menu.read(cx).scroll.offset().y.abs() <= tolerance,
+                                "内容可完整显示时 hover 不得触发滚动");
+                        }
+                        window.remove_window();
+                    }).unwrap();
+                    cx.update_window(main.into(), |_, window, _| window.remove_window())
+                        .unwrap();
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn constrained_popup_keeps_hover_padding_when_keyboard_scrolls_to_last_item(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(gpui::init);
+        for font_size in [14, 24] {
+            for scale_factor in [1., 1.25, 1.5, 1.75, 2.] {
+                cx.update(|cx| theme::apply(crate::theme::Theme::Dark, cx));
+                let mut workspace = None;
+                let main = cx.open_window(size(px(850.), px(800.)), |window, cx| {
+                    let view = cx.new(|cx| CommandWorkspace::new(window, cx));
+                    workspace = Some(view.clone());
+                    Root::new(view, window, cx)
+                });
+                let workspace = workspace.unwrap();
+                cx.update(|cx| theme::set_font_size(font_size, cx));
+                let (sender, _receiver) = mpsc::channel();
+                let mut menu = None;
+                let popup = cx.open_window(size(px(240.), px(180.)), |window, cx| {
+                    let view = cx.new(|cx| TrayPopup::new(workspace, true, sender, window, cx));
+                    menu = Some(view.clone());
+                    Root::new(view, window, cx)
+                });
+                let menu = menu.unwrap();
+                cx.simulate_window_scale_factor_change(popup.into(), scale_factor);
+                cx.update_window(popup.into(), |_, window, cx| {
+                    window.render_frame(cx);
+                    window.press("end", cx);
+                    window.hover(TrayAction::Quit.id(), cx);
+                    window.render_frame(cx);
+                    let surface = window.find("tray-popup-surface").bounds();
+                    let last = window.find(TrayAction::Quit.id()).bounds();
+                    let left = last.left() - surface.left();
+                    let right = surface.right() - last.right();
+                    let bottom = surface.bottom() - last.bottom();
+                    let tolerance = px(1. / scale_factor + 0.01);
+                    assert!((left - right).abs() <= tolerance && (left - bottom).abs() <= tolerance,
+                        "{font_size}px/{scale_factor}x: 滚动到末项后左右／底部留白不等：{left:?}/{right:?}/{bottom:?}");
+                    assert!((left - px(PADDING + 1.)).abs() <= tolerance);
+                    window.press("home", cx);
+                    window.render_frame(cx);
+                    let first = window.find(TrayAction::ToggleWindow.id()).bounds();
+                    assert!((first.top() - surface.top() - left).abs() <= tolerance);
+                    window.scroll("tray-popup-items", gpui::ScrollDelta::Pixels(point(px(-1000.),px(-1000.))), cx);
+                    window.render_frame(cx);
+                    assert_eq!(menu.read(cx).scroll.offset().x, px(0.), "不能横向滚动造成右侧留白错位");
+                    let last = window.find(TrayAction::Quit.id()).bounds();
+                    assert!((surface.bottom() - last.bottom() - left).abs() <= tolerance,
+                        "滚轮到底也必须保留相同底部留白");
+                    window.remove_window();
+                }).unwrap();
+                cx.update_window(main.into(), |_, window, _| window.remove_window())
+                    .unwrap();
+            }
+        }
     }
 
     #[test]

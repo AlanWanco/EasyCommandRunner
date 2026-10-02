@@ -1156,14 +1156,24 @@ fn tray_popup_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
             cx.update_window(popup.into(), |_, window, cx| {
                 window.render_frame(cx);
                 let surface = window.find("tray-popup-surface").bounds();
+                let expected = px(9.); // 8px fixed inset plus the 1px card border.
                 for action in crate::tray_actions::TrayAction::ALL {
                     let row = window.find(action.id()).bounds();
-                    assert!(row.left() >= surface.left() && row.right() <= surface.right());
+                    assert!((row.left() - surface.left() - expected).abs() < px(0.1));
+                    assert!((surface.right() - row.right() - expected).abs() < px(0.1));
                     assert!(
                         row.top() >= surface.top() && row.bottom() <= surface.bottom(),
                         "菜单项不能裁切：{row:?}/{surface:?}"
                     );
                 }
+                let first = window
+                    .find(crate::tray_actions::TrayAction::ToggleWindow.id())
+                    .bounds();
+                let last = window
+                    .find(crate::tray_actions::TrayAction::Quit.id())
+                    .bounds();
+                assert!((first.top() - surface.top() - expected).abs() < px(0.1));
+                assert!((surface.bottom() - last.bottom() - expected).abs() < px(0.1));
             })
             .unwrap();
             let image = cx.capture_screenshot(popup.into()).unwrap();
@@ -1177,6 +1187,58 @@ fn tray_popup_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
             image
                 .save(format!("{directory}/tray-popup-{mode:?}-{font_size}px.png"))
                 .unwrap();
+            // Check painted hover margins, not just the invisible row hitboxes.
+            for (action, suffix) in [
+                (crate::tray_actions::TrayAction::ToggleWindow, "first-hover"),
+                (crate::tray_actions::TrayAction::Quit, "last-hover"),
+            ] {
+                let row = cx
+                    .update_window(popup.into(), |_, window, cx| {
+                        window.hover(action.id(), cx);
+                        window.render_frame(cx);
+                        window.find(action.id()).bounds()
+                    })
+                    .unwrap();
+                let hover = cx.update(|cx| theme::palette(cx).hover);
+                let expected = [(hover >> 16) as u8, (hover >> 8) as u8, hover as u8];
+                let image = cx.capture_screenshot(popup.into()).unwrap();
+                let scale = image.width() as f32 / f32::from(dimensions.width);
+                let matches_hover = |x: u32, y: u32| {
+                    image.get_pixel(x, y).0[..3]
+                        .iter()
+                        .zip(expected)
+                        .all(|(actual, expected)| actual.abs_diff(expected) <= 2)
+                };
+                let y = (f32::from(row.center().y) * scale).floor() as u32;
+                let left = (0..image.width())
+                    .find(|&x| matches_hover(x, y))
+                    .expect("高光已绘制");
+                let right =
+                    image.width() - 1 - (0..image.width()).rfind(|&x| matches_hover(x, y)).unwrap();
+                assert!(
+                    left.abs_diff(right) <= 1,
+                    "{mode:?}/{font_size}px {suffix} 高光左右像素留白：{left}/{right}"
+                );
+                // The right-hand 12px text inset stays empty, outside the rounded
+                // corner radius, so this vertical probe cannot hit a label/icon.
+                let x = ((f32::from(row.right()) - 8.) * scale).floor() as u32;
+                let vertical = if action == crate::tray_actions::TrayAction::ToggleWindow {
+                    (0..image.height()).find(|&y| matches_hover(x, y)).unwrap()
+                } else {
+                    image.height()
+                        - 1
+                        - (0..image.height()).rfind(|&y| matches_hover(x, y)).unwrap()
+                };
+                assert!(
+                    left.abs_diff(vertical) <= 1,
+                    "{mode:?}/{font_size}px {suffix} 高光水平／垂直像素留白：{left}/{vertical}"
+                );
+                image
+                    .save(format!(
+                        "{directory}/tray-popup-{mode:?}-{font_size}px-{suffix}.png"
+                    ))
+                    .unwrap();
+            }
             cx.update_window(popup.into(), |_, window, _| window.remove_window())
                 .unwrap();
             cx.update_window(main.into(), |_, window, _| window.remove_window())
