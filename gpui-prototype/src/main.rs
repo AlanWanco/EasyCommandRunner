@@ -26,6 +26,8 @@ mod tokens;
 mod tray;
 #[cfg(feature = "ui-test")]
 mod ui_tests;
+#[cfg(any(target_os = "windows", test))]
+mod windows_tray_menu;
 
 use gpui::component::{Root, TitleBar};
 use gpui::{prelude::*, px, size, App, Bounds, WindowBounds, WindowDecorations, WindowOptions};
@@ -117,14 +119,15 @@ fn main() {
                     .timer(Duration::from_millis(50))
                     .await;
                 let language = cx.update(|cx| *cx.global::<i18n::Language>());
-                let mut tray =
-                    match tray::TrayRuntime::new(window_handle, workspace_handle, language) {
-                        Ok(tray) => tray,
-                        Err(error) => {
-                            eprintln!("无法创建系统托盘，关闭窗口将正常退出：{error}");
-                            return;
-                        }
-                    };
+                let mut tray = match cx.update(|app| {
+                    tray::TrayRuntime::new(window_handle, workspace_handle, language, app)
+                }) {
+                    Ok(tray) => tray,
+                    Err(error) => {
+                        eprintln!("无法创建系统托盘，关闭窗口将正常退出：{error}");
+                        return;
+                    }
+                };
                 let mut tick = 0;
                 loop {
                     match tray.ready() {

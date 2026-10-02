@@ -1,5 +1,5 @@
-//! 原型托盘：使用与 Qt 版相同的 SVG，但不依赖运行目录或窗口内的主题。
-//! macOS 交给菜单栏模板图标着色；Windows 读取任务栏系统主题；Linux 使用 GTK 桌面主题。
+//! 托盘图标保持系统配色；仅 Windows 的原生右键菜单复用主窗口外观。
+//! macOS 使用模板图标及原生菜单；Linux 使用 GTK 桌面主题，不套应用内主题。
 use crate::{
     app::CommandWorkspace,
     i18n::{self, Language},
@@ -10,7 +10,7 @@ use resvg::{tiny_skia, usvg};
 #[cfg(target_os = "linux")]
 use std::time::Duration;
 use tray_icon::{
-    menu::{Menu, MenuEvent, MenuItem},
+    menu::{ContextMenu, Menu, MenuEvent, MenuItem},
     Icon, TrayIcon, TrayIconBuilder, TrayIconEvent,
 };
 
@@ -65,7 +65,11 @@ impl TrayLabels {
     }
 }
 
-fn build_tray(dark: bool, language: Language) -> Result<(TrayIcon, TrayLabels), String> {
+fn build_tray(
+    dark: bool,
+    language: Language,
+    wrap_menu: impl FnOnce(Menu) -> Result<Box<dyn ContextMenu>, String>,
+) -> Result<(TrayIcon, TrayLabels), String> {
     let menu = Menu::new();
     let labels = TrayLabels {
         show: MenuItem::with_id(SHOW_ID, i18n::translate(language, "显示主窗口"), true, None),
@@ -77,7 +81,7 @@ fn build_tray(dark: bool, language: Language) -> Result<(TrayIcon, TrayLabels), 
         .with_id(tray_id())
         .with_icon(icon(dark)?)
         .with_icon_as_template(cfg!(target_os = "macos"))
-        .with_menu(Box::new(menu))
+        .with_menu(wrap_menu(menu)?)
         .with_menu_on_left_click(cfg!(target_os = "macos"))
         .with_tooltip("EasyCommandRunner · GPUI")
         .build()
@@ -201,6 +205,10 @@ pub struct TrayRuntime {
     labels: TrayLabels,
     #[cfg(target_os = "linux")]
     language_updates: std::sync::mpsc::Sender<Language>,
+    #[cfg(target_os = "windows")]
+    menu_style: crate::windows_tray_menu::StyleHandle,
+    #[cfg(target_os = "windows")]
+    _theme_observers: Vec<gpui::Subscription>,
     #[cfg(not(target_os = "linux"))]
     _icon: TrayIcon,
     #[cfg(target_os = "windows")]
@@ -218,16 +226,31 @@ impl TrayRuntime {
         window: WindowHandle<Root>,
         workspace: Entity<CommandWorkspace>,
         language: Language,
+        cx: &mut App,
     ) -> Result<Self, String> {
+        #[cfg(not(target_os = "windows"))]
+        let _ = cx;
         #[cfg(not(target_os = "linux"))]
         {
             let dark = system_dark();
-            let (icon, labels) = build_tray(dark, language)?;
+            #[cfg(target_os = "windows")]
+            let menu_style = crate::windows_tray_menu::StyleHandle::new(cx);
+            #[cfg(target_os = "windows")]
+            let (icon, labels) = build_tray(dark, language, |menu| {
+                crate::windows_tray_menu::ThemedMenu::new(menu, menu_style.clone())
+                    .map(|menu| Box::new(menu) as Box<dyn ContextMenu>)
+            })?;
+            #[cfg(not(target_os = "windows"))]
+            let (icon, labels) = build_tray(dark, language, |menu| Ok(Box::new(menu)))?;
             Ok(Self {
                 window,
                 workspace,
                 language,
                 labels,
+                #[cfg(target_os = "windows")]
+                _theme_observers: menu_style.observe_changes(cx),
+                #[cfg(target_os = "windows")]
+                menu_style,
                 _icon: icon,
                 #[cfg(target_os = "windows")]
                 dark,
@@ -246,7 +269,7 @@ impl TrayRuntime {
                     let setup = (|| {
                         gtk::init().map_err(|e| e.to_string())?;
                         let dark = system_dark();
-                        let (tray, labels) = build_tray(dark, language)?;
+                        let (tray, labels) = build_tray(dark, language, |menu| Ok(Box::new(menu)))?;
                         Ok::<_, String>((tray, labels, dark))
                     })();
                     let (tray, labels, mut dark) = match setup {
@@ -380,6 +403,8 @@ impl TrayRuntime {
 
     /// 返回 true 表示用户请求退出（交由统一的确认流程处理）。
     pub fn poll(&mut self, cx: &mut App, tick: usize) -> bool {
+        #[cfg(target_os = "windows")]
+        self.menu_style.sync(cx); // Also covers startup/config reload, without touching Root.
         let language = cx.try_global::<Language>().copied().unwrap_or_default();
         if language != self.language {
             #[cfg(not(target_os = "linux"))]
@@ -404,7 +429,7 @@ impl TrayRuntime {
         }
         #[cfg(target_os = "windows")]
         if tick % 5 == 0 {
-            // 每秒查询任务栏系统主题；不跟随应用内深浅主题。
+            // 图标仍匹配任务栏系统主题；右键菜单单独跟随应用内外观。
             let dark = system_dark();
             if dark != self.dark {
                 match icon(dark)
