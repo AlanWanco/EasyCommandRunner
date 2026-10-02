@@ -46,6 +46,8 @@ mod tests {
             IconName::FileText,
             IconName::ExternalLink,
             IconName::ArrowDownToLine,
+            IconName::AppWindow,
+            IconName::LogOut,
             IconName::ScanText,
             IconName::RefreshCw,
             IconName::Shuffle,

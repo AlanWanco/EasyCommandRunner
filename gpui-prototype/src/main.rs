@@ -24,9 +24,10 @@ mod tab_icons;
 mod theme;
 mod tokens;
 mod tray;
+mod tray_actions;
 #[cfg(feature = "ui-test")]
 mod ui_tests;
-#[cfg(any(target_os = "windows", test))]
+#[cfg(any(target_os = "windows", test, feature = "ui-test"))]
 mod windows_tray_menu;
 
 use gpui::component::{Root, TitleBar};
@@ -118,10 +119,9 @@ fn main() {
                 cx.background_executor()
                     .timer(Duration::from_millis(50))
                     .await;
-                let language = cx.update(|cx| *cx.global::<i18n::Language>());
-                let mut tray = match cx.update(|app| {
-                    tray::TrayRuntime::new(window_handle, workspace_handle, language, app)
-                }) {
+                let mut tray = match cx
+                    .update(|app| tray::TrayRuntime::new(window_handle, workspace_handle, app))
+                {
                     Ok(tray) => tray,
                     Err(error) => {
                         eprintln!("无法创建系统托盘，关闭窗口将正常退出：{error}");

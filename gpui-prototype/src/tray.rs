@@ -1,8 +1,8 @@
-//! 托盘图标保持系统配色；仅 Windows 的原生右键菜单复用主窗口外观。
+//! Windows 使用圆角 GPUI 操作菜单；macOS/GTK 使用同一动作契约和系统菜单。
 //! macOS 使用模板图标及原生菜单；Linux 使用 GTK 桌面主题，不套应用内主题。
 use crate::{
     app::CommandWorkspace,
-    i18n::{self, Language},
+    tray_actions::{TrayAction, TrayMenuState},
 };
 use gpui::component::Root;
 use gpui::{App, Entity, Window, WindowHandle};
@@ -10,14 +10,12 @@ use resvg::{tiny_skia, usvg};
 #[cfg(target_os = "linux")]
 use std::time::Duration;
 use tray_icon::{
-    menu::{ContextMenu, Menu, MenuEvent, MenuItem},
+    menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     Icon, TrayIcon, TrayIconBuilder, TrayIconEvent,
 };
 
 const SVG: &str = include_str!("../../resources/tray_icon.svg");
 const ICON_ID: &str = "ecr-gpui-tray";
-const SHOW_ID: &str = "ecr-tray-show";
-const QUIT_ID: &str = "ecr-tray-quit";
 
 // Linux 的 tray-icon 按 ID 写入 PNG；固定 ID 会让同一用户的多个实例相互覆盖/删除图标。
 fn tray_id() -> String {
@@ -55,38 +53,90 @@ fn icon(dark: bool) -> Result<Icon, String> {
 }
 
 struct TrayLabels {
-    show: MenuItem,
-    quit: MenuItem,
+    items: Vec<(TrayAction, MenuItem)>,
+    dark: CheckMenuItem,
 }
 impl TrayLabels {
-    fn translate(&self, language: Language) {
-        self.show.set_text(i18n::translate(language, "显示主窗口"));
-        self.quit.set_text(i18n::translate(language, "退出…"));
+    fn sync(&self, state: &TrayMenuState) {
+        for (action, item) in &self.items {
+            item.set_text(state.label(*action));
+            item.set_enabled(state.enabled(*action));
+        }
+        self.dark.set_text(state.label(TrayAction::ToggleTheme));
+        self.dark
+            .set_checked(state.checked(TrayAction::ToggleTheme));
     }
 }
 
-fn build_tray(
-    dark: bool,
-    language: Language,
-    wrap_menu: impl FnOnce(Menu) -> Result<Box<dyn ContextMenu>, String>,
-) -> Result<(TrayIcon, TrayLabels), String> {
+fn build_tray(dark: bool, state: &TrayMenuState) -> Result<(TrayIcon, TrayLabels), String> {
     let menu = Menu::new();
-    let labels = TrayLabels {
-        show: MenuItem::with_id(SHOW_ID, i18n::translate(language, "显示主窗口"), true, None),
-        quit: MenuItem::with_id(QUIT_ID, i18n::translate(language, "退出…"), true, None),
-    };
-    menu.append(&labels.show).map_err(|e| e.to_string())?;
-    menu.append(&labels.quit).map_err(|e| e.to_string())?;
+    let mut items = Vec::new();
+    let dark_item = CheckMenuItem::with_id(
+        TrayAction::ToggleTheme.id(),
+        state.label(TrayAction::ToggleTheme),
+        true,
+        state.checked(TrayAction::ToggleTheme),
+        None,
+    );
+    for (index, action) in TrayAction::ALL.into_iter().enumerate() {
+        if [3, 6, 7].contains(&index) {
+            menu.append(&PredefinedMenuItem::separator())
+                .map_err(|error| error.to_string())?;
+        }
+        if action == TrayAction::ToggleTheme {
+            menu.append(&dark_item).map_err(|error| error.to_string())?;
+        } else {
+            let item = MenuItem::with_id(
+                action.id(),
+                state.label(action),
+                state.enabled(action),
+                None,
+            );
+            menu.append(&item).map_err(|error| error.to_string())?;
+            items.push((action, item));
+        }
+    }
     let icon = TrayIconBuilder::new()
         .with_id(tray_id())
         .with_icon(icon(dark)?)
         .with_icon_as_template(cfg!(target_os = "macos"))
-        .with_menu(wrap_menu(menu)?)
+        .with_menu(Box::new(menu))
         .with_menu_on_left_click(cfg!(target_os = "macos"))
+        .with_menu_on_right_click(!cfg!(target_os = "windows"))
         .with_tooltip("EasyCommandRunner · GPUI")
         .build()
-        .map_err(|e| e.to_string())?;
-    Ok((icon, labels))
+        .map_err(|error| error.to_string())?;
+    Ok((
+        icon,
+        TrayLabels {
+            items,
+            dark: dark_item,
+        },
+    ))
+}
+
+fn main_visible(handle: WindowHandle<Root>, cx: &mut App) -> bool {
+    let handle: gpui::AnyWindowHandle = handle.into();
+    handle
+        .update(cx, |_, window, _| {
+            #[cfg(target_os = "windows")]
+            {
+                !windows_window_hidden(window)
+            }
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(marker) = objc2_foundation::MainThreadMarker::new() {
+                    return !objc2_app_kit::NSApplication::sharedApplication(marker).isHidden()
+                        && window.visibility().is_visible();
+                }
+                window.visibility().is_visible()
+            }
+            #[cfg(target_os = "linux")]
+            {
+                window.visibility().is_visible()
+            }
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(target_os = "windows")]
@@ -127,8 +177,10 @@ fn windows_hwnd(window: &Window) -> Option<isize> {
 
 #[cfg(target_os = "windows")]
 fn windows_window_hidden(window: &Window) -> bool {
-    use windows_sys::Win32::UI::WindowsAndMessaging::IsWindowVisible;
-    windows_hwnd(window).is_some_and(|hwnd| unsafe { IsWindowVisible(hwnd as *mut _) == 0 })
+    use windows_sys::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindowVisible};
+    windows_hwnd(window).is_some_and(|hwnd| unsafe {
+        IsWindowVisible(hwnd as *mut _) == 0 || IsIconic(hwnd as *mut _) != 0
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -185,12 +237,32 @@ fn restore(handle: WindowHandle<Root>, cx: &mut App) {
     if let Some(mtm) = objc2_foundation::MainThreadMarker::new() {
         objc2_app_kit::NSApplication::sharedApplication(mtm).unhide(None);
     }
+    #[cfg(not(target_os = "windows"))]
     cx.activate(true);
+    let handle: gpui::AnyWindowHandle = handle.into();
     if let Err(error) = handle.update(cx, |_, window, _| {
         #[cfg(target_os = "windows")]
         {
+            use windows_sys::Win32::UI::{
+                Input::KeyboardAndMouse::{SetActiveWindow, SetFocus},
+                WindowsAndMessaging::{IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE},
+            };
             set_windows_visibility(window, true);
+            if let Some(hwnd) = windows_hwnd(window) {
+                unsafe {
+                    let hwnd = hwnd as *mut _;
+                    if IsIconic(hwnd) != 0 {
+                        ShowWindow(hwnd, SW_RESTORE);
+                    }
+                    SetForegroundWindow(hwnd);
+                    SetActiveWindow(hwnd);
+                    SetFocus(hwnd);
+                }
+            }
+            // GPUI's Windows activate() emits synthetic Alt input. Tray actions
+            // deliberately use only native focus APIs, never SendInput.
         }
+        #[cfg(not(target_os = "windows"))]
         window.activate_window();
     }) {
         eprintln!("托盘无法恢复主窗口：{error}");
@@ -200,15 +272,17 @@ fn restore(handle: WindowHandle<Root>, cx: &mut App) {
 pub struct TrayRuntime {
     window: WindowHandle<Root>,
     workspace: Entity<CommandWorkspace>,
-    language: Language,
+    state: TrayMenuState,
     #[cfg(not(target_os = "linux"))]
     labels: TrayLabels,
     #[cfg(target_os = "linux")]
-    language_updates: std::sync::mpsc::Sender<Language>,
+    state_updates: std::sync::mpsc::Sender<TrayMenuState>,
     #[cfg(target_os = "windows")]
-    menu_style: crate::windows_tray_menu::StyleHandle,
+    popup: Option<WindowHandle<crate::windows_tray_menu::TrayPopup>>,
     #[cfg(target_os = "windows")]
-    _theme_observers: Vec<gpui::Subscription>,
+    action_sender: std::sync::mpsc::Sender<TrayAction>,
+    #[cfg(target_os = "windows")]
+    actions: std::sync::mpsc::Receiver<TrayAction>,
     #[cfg(not(target_os = "linux"))]
     _icon: TrayIcon,
     #[cfg(target_os = "windows")]
@@ -225,32 +299,27 @@ impl TrayRuntime {
     pub fn new(
         window: WindowHandle<Root>,
         workspace: Entity<CommandWorkspace>,
-        language: Language,
         cx: &mut App,
     ) -> Result<Self, String> {
-        #[cfg(not(target_os = "windows"))]
-        let _ = cx;
+        let visible = main_visible(window, cx);
+        let state = workspace.read(cx).tray_menu_state(visible, cx);
         #[cfg(not(target_os = "linux"))]
         {
             let dark = system_dark();
+            let (icon, labels) = build_tray(dark, &state)?;
             #[cfg(target_os = "windows")]
-            let menu_style = crate::windows_tray_menu::StyleHandle::new(cx);
-            #[cfg(target_os = "windows")]
-            let (icon, labels) = build_tray(dark, language, |menu| {
-                crate::windows_tray_menu::ThemedMenu::new(menu, menu_style.clone())
-                    .map(|menu| Box::new(menu) as Box<dyn ContextMenu>)
-            })?;
-            #[cfg(not(target_os = "windows"))]
-            let (icon, labels) = build_tray(dark, language, |menu| Ok(Box::new(menu)))?;
+            let (action_sender, actions) = std::sync::mpsc::channel();
             Ok(Self {
                 window,
                 workspace,
-                language,
+                state,
                 labels,
                 #[cfg(target_os = "windows")]
-                _theme_observers: menu_style.observe_changes(cx),
+                popup: None,
                 #[cfg(target_os = "windows")]
-                menu_style,
+                action_sender,
+                #[cfg(target_os = "windows")]
+                actions,
                 _icon: icon,
                 #[cfg(target_os = "windows")]
                 dark,
@@ -258,7 +327,8 @@ impl TrayRuntime {
         }
         #[cfg(target_os = "linux")]
         {
-            let (language_updates, language_rx) = std::sync::mpsc::channel();
+            let (state_updates, state_rx) = std::sync::mpsc::channel();
+            let initial_state = state.clone();
             let (ready_tx, ready) = std::sync::mpsc::channel();
             let (shutdown, shutdown_rx) = std::sync::mpsc::channel();
             let alive = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -269,7 +339,7 @@ impl TrayRuntime {
                     let setup = (|| {
                         gtk::init().map_err(|e| e.to_string())?;
                         let dark = system_dark();
-                        let (tray, labels) = build_tray(dark, language, |menu| Ok(Box::new(menu)))?;
+                        let (tray, labels) = build_tray(dark, &initial_state)?;
                         Ok::<_, String>((tray, labels, dark))
                     })();
                     let (tray, labels, mut dark) = match setup {
@@ -283,26 +353,27 @@ impl TrayRuntime {
                             return;
                         }
                     };
-                    let timer = gtk::glib::timeout_add_local(Duration::from_secs(1), move || {
-                        if shutdown_rx.try_recv().is_ok() {
-                            gtk::main_quit();
-                            return gtk::glib::ControlFlow::Break;
-                        }
-                        for language in language_rx.try_iter() {
-                            labels.translate(language);
-                        }
-                        let next = system_dark();
-                        if next != dark {
-                            if let Ok(icon) = icon(next) {
-                                if let Err(error) = tray.set_icon(Some(icon)) {
-                                    eprintln!("托盘换色失败：{error}");
-                                } else {
-                                    dark = next;
+                    let timer =
+                        gtk::glib::timeout_add_local(Duration::from_millis(200), move || {
+                            if shutdown_rx.try_recv().is_ok() {
+                                gtk::main_quit();
+                                return gtk::glib::ControlFlow::Break;
+                            }
+                            if let Some(state) = state_rx.try_iter().last() {
+                                labels.sync(&state);
+                            }
+                            let next = system_dark();
+                            if next != dark {
+                                if let Ok(icon) = icon(next) {
+                                    if let Err(error) = tray.set_icon(Some(icon)) {
+                                        eprintln!("托盘换色失败：{error}");
+                                    } else {
+                                        dark = next;
+                                    }
                                 }
                             }
-                        }
-                        gtk::glib::ControlFlow::Continue
-                    });
+                            gtk::glib::ControlFlow::Continue
+                        });
                     gtk::main();
                     // shutdown 定时器返回 Break 时 source 已被 GLib 移除，再 remove 会 panic。
                     // 如果 GTK 因其他原因退出，则主动释放尚存活的托盘/定时器。
@@ -317,8 +388,8 @@ impl TrayRuntime {
             Ok(Self {
                 window,
                 workspace,
-                language,
-                language_updates,
+                state,
+                state_updates,
                 ready: Some(ready),
                 alive,
                 shutdown,
@@ -401,30 +472,110 @@ impl TrayRuntime {
         }
     }
 
+    fn perform(&mut self, action: TrayAction, cx: &mut App) -> bool {
+        let visible = main_visible(self.window, cx);
+        if !self
+            .workspace
+            .read(cx)
+            .tray_menu_state(visible, cx)
+            .enabled(action)
+        {
+            return false;
+        }
+        if action == TrayAction::Quit {
+            return true;
+        }
+        if action == TrayAction::ToggleWindow {
+            if !visible {
+                restore(self.window, cx);
+            } else {
+                let handle: gpui::AnyWindowHandle = self.window.into();
+                let _ = handle.update(cx, |_, window, cx| hide_to_tray(window, cx));
+            }
+            return false;
+        }
+        // Settings/logs need a visible owner. Save errors must also be readable.
+        if matches!(
+            action,
+            TrayAction::Settings | TrayAction::Logs | TrayAction::Save
+        ) && !visible
+        {
+            restore(self.window, cx);
+        }
+        let handle: gpui::AnyWindowHandle = self.window.into();
+        if let Err(error) = handle.update(cx, |_, window, cx| {
+            self.workspace.update(cx, |workspace, cx| {
+                workspace.perform_tray_action(action, window, cx)
+            });
+        }) {
+            eprintln!("托盘操作失败：{error}");
+        }
+        false
+    }
+
     /// 返回 true 表示用户请求退出（交由统一的确认流程处理）。
     pub fn poll(&mut self, cx: &mut App, tick: usize) -> bool {
-        #[cfg(target_os = "windows")]
-        self.menu_style.sync(cx); // Also covers startup/config reload, without touching Root.
-        let language = cx.try_global::<Language>().copied().unwrap_or_default();
-        if language != self.language {
+        let visible = main_visible(self.window, cx);
+        let state = self.workspace.read(cx).tray_menu_state(visible, cx);
+        if state != self.state {
             #[cfg(not(target_os = "linux"))]
-            self.labels.translate(language);
+            self.labels.sync(&state);
             #[cfg(target_os = "linux")]
-            let _ = self.language_updates.send(language);
-            self.language = language;
+            let _ = self.state_updates.send(state.clone());
+            self.state = state;
+        }
+        #[cfg(target_os = "windows")]
+        while let Ok(action) = self.actions.try_recv() {
+            self.popup = None;
+            if self.perform(action, cx) {
+                return true;
+            }
         }
         for event in MenuEvent::receiver().try_iter() {
-            match event.id.0.as_str() {
-                SHOW_ID => restore(self.window, cx),
-                QUIT_ID => return true,
-                _ => {}
+            if let Some(action) = TrayAction::from_id(event.id.0.as_str()) {
+                if self.perform(action, cx) {
+                    return true;
+                }
             }
         }
         for event in TrayIconEvent::receiver().try_iter() {
-            if let TrayIconEvent::DoubleClick { id, .. } = event {
-                if id.0 == tray_id() {
-                    restore(self.window, cx);
+            match event {
+                TrayIconEvent::DoubleClick { id, .. } if id.0 == tray_id() => {
+                    restore(self.window, cx)
                 }
+                #[cfg(target_os = "windows")]
+                TrayIconEvent::Click {
+                    id,
+                    position,
+                    button: tray_icon::MouseButton::Right,
+                    button_state: tray_icon::MouseButtonState::Up,
+                    ..
+                } if id.0 == tray_id() => {
+                    if let Some(handle) = self.popup.take() {
+                        let handle: gpui::AnyWindowHandle = handle.into();
+                        if handle
+                            .update(cx, |_, window, _| window.remove_window())
+                            .is_ok()
+                        {
+                            continue;
+                        }
+                    }
+                    match crate::windows_tray_menu::open(
+                        self.workspace.clone(),
+                        visible,
+                        self.action_sender.clone(),
+                        (position.x, position.y),
+                        cx,
+                    ) {
+                        Ok(handle) => self.popup = Some(handle),
+                        Err(error) => {
+                            eprintln!("圆角托盘菜单不可用：{error}；显示原生菜单");
+                            self.labels.sync(&self.state);
+                            self._icon.show_menu();
+                        }
+                    }
+                }
+                _ => {}
             }
         }
         #[cfg(target_os = "windows")]

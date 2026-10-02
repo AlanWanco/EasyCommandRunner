@@ -13,6 +13,7 @@ use crate::{
     theme::{self, palette, Accent, Fonts, Theme},
     tokens::*,
     tray,
+    tray_actions::{TrayAction, TrayMenuState},
 };
 use futures::io::AsyncReadExt as _;
 use gpui::assets::IconName;
@@ -400,6 +401,60 @@ impl CommandWorkspace {
                     .map(|current| self.saved_tab_data.get(&tab.id) != Some(&current))
                     .unwrap_or(true)
             })
+    }
+
+    pub(crate) fn tray_menu_state(&self, visible: bool, cx: &App) -> TrayMenuState {
+        TrayMenuState {
+            language: *cx.global::<Language>(),
+            visible,
+            can_hide: !self.exit_dialog_open.get(),
+            can_run: !self.open_tab_ids.is_empty() && !self.current().command(cx).trim().is_empty(),
+            can_stop: self
+                .selected_log_id
+                .is_some_and(|id| self.run_handles.contains_key(&id)),
+            can_save: self.config_writable && self.store.is_some(),
+            theme: *cx.global::<Theme>(),
+        }
+    }
+
+    /// Tray commands call the same workspace paths as the main UI. No draft autosave.
+    pub(crate) fn perform_tray_action(
+        &mut self,
+        action: TrayAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.tray_menu_state(true, cx).enabled(action) {
+            return;
+        }
+        match action {
+            TrayAction::Run => self.run_current_command(window, cx),
+            TrayAction::Stop => self.stop_selected_run(cx),
+            TrayAction::Logs => {
+                if self.detached_log.is_some() {
+                    self.toggle_log(cx);
+                } else {
+                    if !self.show_log {
+                        self.config_dirty = true;
+                    }
+                    self.show_log = true;
+                    self.log_auto_scroll.reopen();
+                    cx.notify();
+                }
+            }
+            TrayAction::Save => {
+                if let Err(error) = self.save_configuration(cx) {
+                    self.status = error;
+                    cx.notify();
+                }
+            }
+            TrayAction::Settings => self.open_settings(window, cx),
+            TrayAction::ToggleTheme => {
+                self.set_appearance(cx.global::<Theme>().toggle(), window, cx)
+            }
+            // Window visibility and exit have platform/confirmation handling in TrayRuntime.
+            TrayAction::ToggleWindow | TrayAction::Quit => {}
+        }
     }
 
     pub(crate) fn has_running_commands(&self) -> bool {
@@ -4597,6 +4652,142 @@ impl Drop for CommandWorkspace {
         for handle in self.run_handles.values() {
             let _ = handle.stop();
         }
+    }
+}
+
+#[cfg(all(test, feature = "ui-test"))]
+mod tray_action_tests {
+    use super::*;
+    use gpui::component::WindowExt;
+    use gpui::{size, TestAppContext};
+
+    #[cfg(unix)]
+    #[gpui::test]
+    fn tray_run_and_stop_use_real_selected_run_handles(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui::init(cx);
+            notifications::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let handle = cx.open_window(size(px(850.), px(800.)), |window, cx| {
+            let view = cx.new(|cx| CommandWorkspace::new(window, cx));
+            workspace = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let view = workspace.unwrap();
+        cx.update_window(handle.into(), |_, window, cx| {
+            view.update(cx, |view, cx| {
+                let tab = &mut view.tabs[0];
+                tab.program.update(cx, |state, cx| {
+                    state.set_value("while :; do sleep 0.05; done", window, cx)
+                });
+                tab.other
+                    .update(cx, |state, cx| state.set_value("", window, cx));
+                for row in &mut tab.rows {
+                    row.enabled = false;
+                }
+                assert!(!view.tray_menu_state(false, cx).can_stop);
+                view.perform_tray_action(TrayAction::Run, window, cx);
+                assert!(view.tray_menu_state(false, cx).can_stop);
+                assert_eq!(view.logs.len(), 1);
+                view.perform_tray_action(TrayAction::Stop, window, cx);
+            })
+        })
+        .unwrap();
+        let mut stopped = false;
+        for _ in 0..100 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            cx.background_executor
+                .advance_clock(std::time::Duration::from_millis(24));
+            cx.run_until_parked();
+            stopped = cx.update(|cx| !view.read(cx).tray_menu_state(false, cx).can_stop);
+            if stopped {
+                break;
+            }
+        }
+        assert!(stopped, "停止操作应终止选中的真实进程组并禁用 Stop");
+        assert!(cx.update(|cx| view.read(cx).logs[0].stopped));
+        cx.update_window(handle.into(), |_, window, _| window.remove_window())
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn tray_actions_reuse_logs_settings_theme_and_explicit_save_without_autosave(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let dir = std::env::temp_dir().join(format!(
+            "ecr-tray-actions-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = ConfigStore::at(dir.join("config.json"), dir.join("backup"));
+        store
+            .save(&serde_json::json!({"tabs":[{"name":"current","program":"echo original"}]}))
+            .unwrap();
+        let original = std::fs::read(store.config_path()).unwrap();
+        let mut workspace = None;
+        let handle = cx.open_window(size(px(850.), px(800.)), |window, cx| {
+            let view = cx.new(|cx| {
+                CommandWorkspace::new_with_backend(
+                    window,
+                    cx,
+                    Some(store.clone()),
+                    store.load().unwrap(),
+                    None,
+                )
+            });
+            workspace = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let view = workspace.unwrap();
+        cx.update_window(handle.into(), |_, window, cx| {
+            view.update(cx, |view, cx| {
+                let program = view.tabs[0].program.clone();
+                program.update(cx, |state, cx| {
+                    state.set_value("echo unsaved draft", window, cx)
+                });
+                let state = view.tray_menu_state(false, cx);
+                assert!(state.can_run && state.can_save);
+                assert!(!state.can_stop);
+                view.perform_tray_action(TrayAction::Stop, window, cx);
+                view.perform_tray_action(TrayAction::Logs, window, cx);
+                assert!(view.show_log);
+                view.perform_tray_action(TrayAction::Logs, window, cx);
+                assert!(view.show_log, "打开运行日志不应反向收起");
+                view.perform_tray_action(TrayAction::ToggleTheme, window, cx);
+                assert_eq!(*cx.global::<Theme>(), Theme::Light);
+                view.perform_tray_action(TrayAction::Settings, window, cx);
+                assert!(view.settings_panel.is_some());
+                assert!(window.has_active_dialog(cx));
+                window.close_dialog(cx);
+                assert_eq!(
+                    std::fs::read(store.config_path()).unwrap(),
+                    original,
+                    "打开菜单／日志／设置及换主题都不可暗中保存命令"
+                );
+                assert_eq!(program.read(cx).value().as_ref(), "echo unsaved draft");
+                view.perform_tray_action(TrayAction::Save, window, cx);
+                assert_eq!(
+                    store.load().unwrap().unwrap()["tabs"][0]["program"],
+                    "echo unsaved draft"
+                );
+                view.open_tab_ids.clear();
+                assert!(
+                    !view.tray_menu_state(true, cx).can_run,
+                    "没有打开配置时不可运行"
+                );
+            });
+            window.remove_window();
+        })
+        .unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
 

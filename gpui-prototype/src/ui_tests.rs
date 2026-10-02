@@ -1114,6 +1114,78 @@ fn detached_log_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
     }
 }
 
+fn tray_popup_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
+    use crate::windows_tray_menu::{menu_size, TrayPopup};
+    for mode in [Theme::Dark, Theme::Light] {
+        for font_size in [14, 24] {
+            cx.update(|cx| {
+                theme::apply(mode, cx);
+                theme::set_font_size(font_size, cx);
+            });
+            let mut workspace = None;
+            let main = cx
+                .open_window(size(px(850.), px(800.)), |window, cx| {
+                    let view = cx.new(|cx| CommandWorkspace::new(window, cx));
+                    workspace = Some(view.clone());
+                    cx.new(|cx| Root::new(view, window, cx))
+                })
+                .unwrap();
+            let workspace = workspace.unwrap();
+            cx.update(|cx| theme::set_font_size(font_size, cx));
+            let dimensions = cx.update(|cx| menu_size(cx));
+            let (sender, _receiver) = std::sync::mpsc::channel();
+            let popup = cx
+                .update(|cx| {
+                    cx.open_window(
+                        gpui::WindowOptions {
+                            window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::new(
+                                gpui::point(px(0.), px(0.)),
+                                dimensions,
+                            ))),
+                            window_background: gpui::WindowBackgroundAppearance::Transparent,
+                            focus: false,
+                            show: false,
+                            ..Default::default()
+                        },
+                        |window, cx| {
+                            cx.new(|cx| TrayPopup::new(workspace, true, sender, window, cx))
+                        },
+                    )
+                })
+                .unwrap();
+            cx.update_window(popup.into(), |_, window, cx| {
+                window.render_frame(cx);
+                let surface = window.find("tray-popup-surface").bounds();
+                for action in crate::tray_actions::TrayAction::ALL {
+                    let row = window.find(action.id()).bounds();
+                    assert!(row.left() >= surface.left() && row.right() <= surface.right());
+                    assert!(
+                        row.top() >= surface.top() && row.bottom() <= surface.bottom(),
+                        "菜单项不能裁切：{row:?}/{surface:?}"
+                    );
+                }
+            })
+            .unwrap();
+            let image = cx.capture_screenshot(popup.into()).unwrap();
+            let corner = image.get_pixel(0, 0).0;
+            let interior = image.get_pixel(24, 24).0;
+            // The Metal headless target clears to opaque black, even for a
+            // transparent TestWindow. Verify unpainted round corners, not an
+            // unsupported alpha claim; real HWND clipping is Windows-only.
+            assert_eq!(&corner[..3], &[0, 0, 0], "圆角外侧不能被菜单背景填满");
+            assert_ne!(&interior[..3], &corner[..3], "卡片内部应有主题色背景");
+            image
+                .save(format!("{directory}/tray-popup-{mode:?}-{font_size}px.png"))
+                .unwrap();
+            cx.update_window(popup.into(), |_, window, _| window.remove_window())
+                .unwrap();
+            cx.update_window(main.into(), |_, window, _| window.remove_window())
+                .unwrap();
+            println!("PASS tray-popup-{mode:?}-{font_size}px");
+        }
+    }
+}
+
 pub fn snapshots(directory: &str) {
     std::fs::create_dir_all(directory).unwrap();
     let mut cx = HeadlessAppContext::with_platform(
@@ -1133,6 +1205,7 @@ pub fn snapshots(directory: &str) {
     sidebar_icon_hover_snapshots(directory, &mut cx);
     top_tab_drag_visual_snapshots(directory, &mut cx);
     detached_log_snapshots(directory, &mut cx);
+    tray_popup_snapshots(directory, &mut cx);
     // Keep visual evidence that the parameter-sort switch is neutral when off and
     // follows the user-selected accent when on, at every supported text size.
     for (mode, accent) in [
