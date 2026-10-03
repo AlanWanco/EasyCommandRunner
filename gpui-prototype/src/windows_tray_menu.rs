@@ -17,6 +17,9 @@ use std::sync::mpsc::Sender;
 
 const RADIUS: f32 = 12.;
 const PADDING: f32 = 8.;
+// Keep the painted left/right stroke one DIP inside the Windows client edge.
+// The transparent side guards protect the right border from HWND rounding.
+const EDGE_GUARD: f32 = 1.;
 const WIDTH: f32 = 280.;
 
 fn row_height(cx: &App) -> f32 {
@@ -27,7 +30,7 @@ fn row_height(cx: &App) -> f32 {
 }
 pub(crate) fn menu_size(cx: &App) -> Size<Pixels> {
     size(
-        px(WIDTH.max(theme::font_size(cx) * 15.)),
+        px(WIDTH.max(theme::font_size(cx) * 15.) + EDGE_GUARD * 2.),
         px(row_height(cx) * 8. + 3. * 12. + PADDING * 2. + 2.),
     )
 }
@@ -141,10 +144,20 @@ impl TrayPopup {
 }
 
 impl Render for TrayPopup {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
         let state = self.workspace.read(cx).tray_menu_state(self.visible, cx);
         let height = row_height(cx);
+        // A native client rect may round down by a few DIP at fractional DPI.
+        // Divide that tiny loss between top and bottom instead of making the
+        // scroll container 1–4px short and shifting all rows when Quit is selected.
+        // Truly constrained work areas retain the full inset and remain scrollable.
+        let shortfall = f32::from(menu_size(cx).height - window.viewport_size().height);
+        let vertical_inset = if shortfall > 0. && shortfall <= 4. {
+            PADDING - shortfall / 2.
+        } else {
+            PADDING
+        };
         let icons = [
             IconName::AppWindow,
             IconName::Play,
@@ -203,71 +216,80 @@ impl Render for TrayPopup {
                     })
                     .child(item)
             });
-        frame("tray-popup-surface")
+        frame("tray-popup-host")
             .size_full()
-            .flex()
-            .flex_col()
-            // Keep the four insets outside the scroll viewport. Revealing the
-            // first/last item must never consume the card's outer whitespace.
-            .p(px(PADDING))
-            .rounded(px(RADIUS))
-            .overflow_hidden()
-            .bg(rgb(p.panel))
-            .border_1()
-            .border_color(rgb(p.border))
-            .font_family(cx.global::<Fonts>().body.clone())
-            .font_weight(theme::font_weight(cx))
-            .text_size(px(theme::font_size(cx)))
-            .track_focus(&self.focus)
-            .on_key_down(cx.listener(|view, event: &gpui::KeyDownEvent, window, cx| {
-                let state = view.workspace.read(cx).tray_menu_state(view.visible, cx);
-                match event.keystroke.key.as_str() {
-                    "escape" => {
-                        window.remove_window();
-                    }
-                    "up" | "down" | "tab" => {
-                        let delta = if event.keystroke.key == "up"
-                            || (event.keystroke.key == "tab" && event.keystroke.modifiers.shift)
-                        {
-                            -1
-                        } else {
-                            1
-                        };
-                        if let Some(index) = next_enabled(&state, view.selected, delta) {
-                            view.select(index, cx);
-                        }
-                    }
-                    "home" => {
-                        if let Some(index) = next_enabled(&state, None, 1) {
-                            view.select(index, cx);
-                        }
-                    }
-                    "end" => {
-                        if let Some(index) = next_enabled(&state, None, -1) {
-                            view.select(index, cx);
-                        }
-                    }
-                    "enter" | "space" => {
-                        if let Some(index) = view.selected {
-                            view.choose(TrayAction::ALL[index], window, cx);
-                        }
-                    }
-                    _ => return,
-                }
-                cx.stop_propagation();
-            }))
+            .px(px(EDGE_GUARD))
             .child(
-                frame("tray-popup-items")
-                    .w_full()
-                    .flex_1()
-                    .min_w_0()
-                    .min_h_0()
+                frame("tray-popup-surface")
+                    .size_full()
                     .flex()
                     .flex_col()
-                    .overflow_x_hidden()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
-                    .children(items),
+                    // Keep the four insets outside the scroll viewport. Revealing the
+                    // first/last item must never consume the card's outer whitespace.
+                    // Count the transparent side guard in the visible margin:
+                    // guard + stroke + inner inset = the vertical stroke + inset.
+                    .px(px(PADDING - EDGE_GUARD))
+                    .py(px(vertical_inset))
+                    .rounded(px(RADIUS))
+                    .overflow_hidden()
+                    .bg(rgb(p.panel))
+                    .border_1()
+                    .border_color(rgb(p.border))
+                    .font_family(cx.global::<Fonts>().body.clone())
+                    .font_weight(theme::font_weight(cx))
+                    .text_size(px(theme::font_size(cx)))
+                    .track_focus(&self.focus)
+                    .on_key_down(cx.listener(|view, event: &gpui::KeyDownEvent, window, cx| {
+                        let state = view.workspace.read(cx).tray_menu_state(view.visible, cx);
+                        match event.keystroke.key.as_str() {
+                            "escape" => {
+                                window.remove_window();
+                            }
+                            "up" | "down" | "tab" => {
+                                let delta = if event.keystroke.key == "up"
+                                    || (event.keystroke.key == "tab"
+                                        && event.keystroke.modifiers.shift)
+                                {
+                                    -1
+                                } else {
+                                    1
+                                };
+                                if let Some(index) = next_enabled(&state, view.selected, delta) {
+                                    view.select(index, cx);
+                                }
+                            }
+                            "home" => {
+                                if let Some(index) = next_enabled(&state, None, 1) {
+                                    view.select(index, cx);
+                                }
+                            }
+                            "end" => {
+                                if let Some(index) = next_enabled(&state, None, -1) {
+                                    view.select(index, cx);
+                                }
+                            }
+                            "enter" | "space" => {
+                                if let Some(index) = view.selected {
+                                    view.choose(TrayAction::ALL[index], window, cx);
+                                }
+                            }
+                            _ => return,
+                        }
+                        cx.stop_propagation();
+                    }))
+                    .child(
+                        frame("tray-popup-items")
+                            .w_full()
+                            .flex_1()
+                            .min_w_0()
+                            .min_h_0()
+                            .flex()
+                            .flex_col()
+                            .overflow_x_hidden()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.scroll)
+                            .children(items),
+                    ),
             )
     }
 }
@@ -527,34 +549,110 @@ mod tests {
                             window.hover(hovered.id(), cx);
                             window.render_frame(cx);
                             assert_eq!(menu.read(cx).selected.map(|index| TrayAction::ALL[index]), Some(hovered));
+                            let host = window.find("tray-popup-host").bounds();
                             let surface = window.find("tray-popup-surface").bounds();
                             let first = window.find(TrayAction::ToggleWindow.id()).bounds();
                             let last = window.find(TrayAction::Quit.id()).bounds();
-                            let expected = px(PADDING + 1.);
+                            let expected_x = px(PADDING);
+                            let expected_y = px(PADDING + 1.);
                             // Fractional DPI may round opposing edges by one physical pixel.
                             let tolerance = px(1. / scale_factor + 0.01);
+                            let guard_left = surface.left() - host.left();
+                            let guard_right = host.right() - surface.right();
+                            assert!(guard_left >= px(0.5 / scale_factor) && guard_right >= px(0.5 / scale_factor),
+                                "{mode:?}/{font_size}px/{scale_factor}x: 左右描边须在客户区内：{guard_left:?}/{guard_right:?}");
+                            assert!((guard_left - guard_right).abs() <= tolerance);
                             for action in TrayAction::ALL {
                                 let item = window.find(action.id()).bounds();
                                 let left = item.left() - surface.left();
                                 let right = surface.right() - item.right();
                                 assert!((left - right).abs() <= tolerance,
                                     "{mode:?}/{font_size}px/{scale_factor}x {action:?}: 左右留白不对称：{left:?}/{right:?}");
-                                assert!((left - expected).abs() <= tolerance && (right - expected).abs() <= tolerance);
+                                assert!((left - expected_x).abs() <= tolerance && (right - expected_x).abs() <= tolerance);
+                                assert!((item.left() - host.left() - (host.right() - item.right())).abs() <= tolerance,
+                                    "{action:?} 可见左右外边距必须对称");
+                                // At fractional DPI the outer guard and inner
+                                // border snap on separate device-pixel grids.
+                                assert!((left + guard_left - expected_y).abs() <= px(2. / scale_factor + 0.01),
+                                    "{mode:?}/{font_size}px/{scale_factor}x {action:?}: 可见侧向留白 {left:?}+{guard_left:?} 与顶部差距过大 {expected_y:?}");
                             }
                             let top = first.top() - surface.top();
                             let bottom = surface.bottom() - last.bottom();
                             assert!((top - bottom).abs() <= tolerance,
                                 "{mode:?}/{font_size}px/{scale_factor}x: 上下留白不对称：{top:?}/{bottom:?}");
-                            assert!((top - expected).abs() <= tolerance && (bottom - expected).abs() <= tolerance);
+                            assert!((top - expected_y).abs() <= tolerance && (bottom - expected_y).abs() <= tolerance);
                             assert!(menu.read(cx).scroll.offset().y.abs() <= tolerance,
                                 "内容可完整显示时 hover 不得触发滚动");
                         }
+                        let tolerance = px(1. / scale_factor + 0.01);
+                        let original_first = window.find(TrayAction::ToggleWindow.id()).bounds();
+                        let original_last = window.find(TrayAction::Quit.id()).bounds();
+                        window.press("end", cx);
+                        window.render_frame(cx);
+                        assert_eq!(menu.read(cx).selected, Some(7));
+                        assert!((menu.read(cx).scroll.offset().y).abs() <= tolerance,
+                            "{mode:?}/{font_size}px/{scale_factor}x: 正常高度选择末项不该让整列向下偏移；offset={:?}",menu.read(cx).scroll.offset());
+                        assert!((window.find(TrayAction::ToggleWindow.id()).bounds().top() - original_first.top()).abs() <= tolerance);
+                        assert!((window.find(TrayAction::Quit.id()).bounds().bottom() - original_last.bottom()).abs() <= tolerance);
                         window.remove_window();
                     }).unwrap();
                     cx.update_window(main.into(), |_, window, _| window.remove_window())
                         .unwrap();
                 }
             }
+        }
+    }
+
+    #[gpui::test]
+    fn slightly_reduced_client_area_does_not_jump_when_selecting_last_row(cx: &mut TestAppContext) {
+        cx.update(gpui::init);
+        for scale_factor in [1., 1.25, 1.5, 2.] {
+            cx.update(|cx| {
+                theme::apply(crate::theme::Theme::Dark, cx);
+                theme::set_font_size(14, cx);
+            });
+            let mut workspace = None;
+            let main = cx.open_window(size(px(850.), px(800.)), |window, cx| {
+                let view = cx.new(|cx| CommandWorkspace::new(window, cx));
+                workspace = Some(view.clone());
+                Root::new(view, window, cx)
+            });
+            let requested = cx.update(|cx| menu_size(cx));
+            let dimensions = size(requested.width - px(1.), requested.height - px(2.));
+            let (sender, _receiver) = mpsc::channel();
+            let mut menu = None;
+            let popup = cx.open_window(dimensions, |window, cx| {
+                let view =
+                    cx.new(|cx| TrayPopup::new(workspace.unwrap(), true, sender, window, cx));
+                menu = Some(view.clone());
+                Root::new(view, window, cx)
+            });
+            let menu = menu.unwrap();
+            cx.simulate_window_scale_factor_change(popup.into(), scale_factor);
+            cx.update_window(popup.into(), |_, window, cx| {
+                window.render_frame(cx);
+                let first = window.find(TrayAction::ToggleWindow.id()).bounds();
+                window.press("end", cx);
+                window.render_frame(cx);
+                assert_eq!(menu.read(cx).selected, Some(7));
+                assert!(menu.read(cx).scroll.offset().y.abs() <= px(0.1),
+                    "{scale_factor}x 末项本来可见，不得为几像素误差挪动菜单内容：offset={:?},max={:?}",
+                    menu.read(cx).scroll.offset(), menu.read(cx).scroll.max_offset());
+                assert!((window.find(TrayAction::ToggleWindow.id()).bounds().top() - first.top()).abs() <= px(0.1));
+                let surface = window.find("tray-popup-surface").bounds();
+                let last = window.find(TrayAction::Quit.id()).bounds();
+                let top = first.top() - surface.top();
+                let bottom = surface.bottom() - last.bottom();
+                // Fractional DPI may give the opposite sides one physical pixel
+                // each during the native client-size rounding. It must never
+                // cause a scroll jump or a row to touch the card boundary.
+                assert!((top - bottom).abs() <= px(2. / scale_factor + 0.01),
+                    "{scale_factor}x 微小客户区取整后的首末留白不可明显失衡：{top:?}/{bottom:?}; {surface:?}/{first:?}/{last:?}; {dimensions:?}");
+                assert!(top >= px(PADDING - 3.) && bottom >= px(PADDING - 3.));
+                window.remove_window();
+            }).unwrap();
+            cx.update_window(main.into(), |_, window, _| window.remove_window())
+                .unwrap();
         }
     }
 
@@ -594,19 +692,20 @@ mod tests {
                     let right = surface.right() - last.right();
                     let bottom = surface.bottom() - last.bottom();
                     let tolerance = px(1. / scale_factor + 0.01);
-                    assert!((left - right).abs() <= tolerance && (left - bottom).abs() <= tolerance,
-                        "{font_size}px/{scale_factor}x: 滚动到末项后左右／底部留白不等：{left:?}/{right:?}/{bottom:?}");
-                    assert!((left - px(PADDING + 1.)).abs() <= tolerance);
+                    assert!((left - right).abs() <= tolerance
+                            && (left + px(EDGE_GUARD) - bottom).abs() <= tolerance,
+                        "{font_size}px/{scale_factor}x: 滚动到末项后左右／底部可见留白不等：{left:?}/{right:?}/{bottom:?}");
+                    assert!((left - px(PADDING)).abs() <= tolerance);
                     window.press("home", cx);
                     window.render_frame(cx);
                     let first = window.find(TrayAction::ToggleWindow.id()).bounds();
-                    assert!((first.top() - surface.top() - left).abs() <= tolerance);
+                    assert!((first.top() - surface.top() - left - px(EDGE_GUARD)).abs() <= tolerance);
                     window.scroll("tray-popup-items", gpui::ScrollDelta::Pixels(point(px(-1000.),px(-1000.))), cx);
                     window.render_frame(cx);
                     assert_eq!(menu.read(cx).scroll.offset().x, px(0.), "不能横向滚动造成右侧留白错位");
                     let last = window.find(TrayAction::Quit.id()).bounds();
-                    assert!((surface.bottom() - last.bottom() - left).abs() <= tolerance,
-                        "滚轮到底也必须保留相同底部留白");
+                    assert!((surface.bottom() - last.bottom() - left - px(EDGE_GUARD)).abs() <= tolerance,
+                        "滚轮到底也必须保留相同底部可见留白");
                     window.remove_window();
                 }).unwrap();
                 cx.update_window(main.into(), |_, window, _| window.remove_window())

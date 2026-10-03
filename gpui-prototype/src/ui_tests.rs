@@ -1153,30 +1153,62 @@ fn tray_popup_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
                     )
                 })
                 .unwrap();
-            cx.update_window(popup.into(), |_, window, cx| {
-                window.render_frame(cx);
-                let surface = window.find("tray-popup-surface").bounds();
-                let expected = px(9.); // 8px fixed inset plus the 1px card border.
-                for action in crate::tray_actions::TrayAction::ALL {
-                    let row = window.find(action.id()).bounds();
-                    assert!((row.left() - surface.left() - expected).abs() < px(0.1));
-                    assert!((surface.right() - row.right() - expected).abs() < px(0.1));
-                    assert!(
-                        row.top() >= surface.top() && row.bottom() <= surface.bottom(),
-                        "菜单项不能裁切：{row:?}/{surface:?}"
-                    );
-                }
-                let first = window
-                    .find(crate::tray_actions::TrayAction::ToggleWindow.id())
-                    .bounds();
-                let last = window
-                    .find(crate::tray_actions::TrayAction::Quit.id())
-                    .bounds();
-                assert!((first.top() - surface.top() - expected).abs() < px(0.1));
-                assert!((surface.bottom() - last.bottom() - expected).abs() < px(0.1));
-            })
-            .unwrap();
+            let surface = cx
+                .update_window(popup.into(), |_, window, cx| {
+                    window.render_frame(cx);
+                    let surface = window.find("tray-popup-surface").bounds();
+                    let horizontal = px(8.); // 7px inset + 1px border; 1px guard completes 9px.
+                    let vertical = px(9.); // 8px inset + 1px border.
+                    for action in crate::tray_actions::TrayAction::ALL {
+                        let row = window.find(action.id()).bounds();
+                        assert!((row.left() - surface.left() - horizontal).abs() < px(0.1));
+                        assert!((surface.right() - row.right() - horizontal).abs() < px(0.1));
+                        assert!(
+                            row.top() >= surface.top() && row.bottom() <= surface.bottom(),
+                            "菜单项不能裁切：{row:?}/{surface:?}"
+                        );
+                    }
+                    let first = window
+                        .find(crate::tray_actions::TrayAction::ToggleWindow.id())
+                        .bounds();
+                    let last = window
+                        .find(crate::tray_actions::TrayAction::Quit.id())
+                        .bounds();
+                    assert!((first.top() - surface.top() - vertical).abs() < px(0.1));
+                    assert!((surface.bottom() - last.bottom() - vertical).abs() < px(0.1));
+                    surface
+                })
+                .unwrap();
             let image = cx.capture_screenshot(popup.into()).unwrap();
+            let scale = image.width() as f32 / f32::from(dimensions.width);
+            let edge_x = (
+                (f32::from(surface.left()) * scale).round() as u32,
+                (f32::from(surface.right()) * scale).round() as u32 - 1,
+            );
+            let mid_y = (f32::from(surface.center().y) * scale).round() as u32;
+            let mid_x = (f32::from(surface.center().x) * scale).round() as u32;
+            let edge_y = (
+                (f32::from(surface.top()) * scale).round() as u32,
+                (f32::from(surface.bottom()) * scale).round() as u32 - 1,
+            );
+            let border = cx.update(|cx| theme::palette(cx).border);
+            let border_rgb = [
+                ((border >> 16) & 255) as u8,
+                ((border >> 8) & 255) as u8,
+                (border & 255) as u8,
+            ];
+            for (x, y) in [
+                (edge_x.0, mid_y),
+                (edge_x.1, mid_y),
+                (mid_x, edge_y.0),
+                (mid_x, edge_y.1),
+            ] {
+                assert_eq!(
+                    &image.get_pixel(x, y).0[..3],
+                    &border_rgb,
+                    "{mode:?}/{font_size}px 弹窗四侧必须绘出相同边框：({x},{y})"
+                );
+            }
             let corner = image.get_pixel(0, 0).0;
             let interior = image.get_pixel(24, 24).0;
             // The Metal headless target clears to opaque black, even for a
@@ -1203,6 +1235,14 @@ fn tray_popup_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
                 let expected = [(hover >> 16) as u8, (hover >> 8) as u8, hover as u8];
                 let image = cx.capture_screenshot(popup.into()).unwrap();
                 let scale = image.width() as f32 / f32::from(dimensions.width);
+                let y = (f32::from(row.center().y) * scale).floor() as u32;
+                for x in [edge_x.0, edge_x.1] {
+                    assert_eq!(
+                        &image.get_pixel(x, y).0[..3],
+                        &border_rgb,
+                        "{mode:?}/{font_size}px {suffix}: 悬停时左/右边框不能消失"
+                    );
+                }
                 let matches_hover = |x: u32, y: u32| {
                     image.get_pixel(x, y).0[..3]
                         .iter()
