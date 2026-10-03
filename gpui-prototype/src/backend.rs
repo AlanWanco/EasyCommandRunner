@@ -376,9 +376,29 @@ fn hide_windows_console(command: &mut Command) {
 
 #[cfg(any(windows, test))]
 fn windows_shell_arguments(shell: &str, command: &str) -> String {
-    // Match Qt: set the console code page in an outer cmd, then let an inner cmd
-    // parse the user's command. This preserves quotes around paths with spaces.
-    format!(r#"/D /S /C "chcp 65001>nul & "{shell}" /D /S /C "{command}"""#)
+    // Retain the Qt-style two-stage code-page setup: `chcp & echo` in one cmd
+    // emits legacy-encoded bytes on the tested Windows machine. GPUI currently
+    // uses CREATE_NO_WINDOW, however, so this is not a complete output-encoding
+    // solution and must not be described as Qt-equivalent.
+    //
+    // The outer /S /C consumes a quoting layer. A quoted URL containing `&`
+    // otherwise gets split into multiple commands by the inner cmd. Escape
+    // ampersands in double-quoted arguments for the outer parse; its parse
+    // removes `^`, leaving the inner cmd the intended literal ampersand.
+    // Keep unquoted & / && / | as intentional shell operators.
+    let mut protected = String::with_capacity(command.len());
+    let mut in_quotes = false;
+    let mut previous = None;
+    for ch in command.chars() {
+        if ch == '"' {
+            in_quotes = !in_quotes;
+        } else if ch == '&' && in_quotes && previous != Some('^') {
+            protected.push('^');
+        }
+        protected.push(ch);
+        previous = Some(ch);
+    }
+    format!(r#"/D /S /C "chcp 65001>nul & "{shell}" /D /S /C "{protected}"""#)
 }
 
 #[derive(Clone)]
@@ -463,8 +483,8 @@ pub fn start_shell(
         let shell_text = shell.to_string_lossy().into_owned();
         let mut process = Command::new(shell);
         hide_windows_console(&mut process);
-        // Use the same nested cmd/code-page wrapper as Qt; raw_arg is required so
-        // Rust's CRT argument quoting does not alter cmd's own quote semantics.
+        // cmd does not use CRT quote escaping; raw_arg retains the native
+        // arguments and the inner cmd's Unicode-path quoting.
         process
             .raw_arg(windows_shell_arguments(&shell_text, command))
             // Match Qt: Python tools write UTF-8 to the redirected stdout/stderr pipes.
@@ -803,17 +823,30 @@ mod tests {
         let shell = r"C:\Windows\System32\cmd.exe";
         let command = r#"python E:\code-repository\ass_translate.py "H:\虹虹\声优个人相关\Lumina Charis 1-147\Lumina Charis_9995_0110.ass" --gemini --no-confirm"#;
         let arguments = windows_shell_arguments(shell, command);
-        let expected = [
-            "/D /S /C \"chcp 65001>nul & \"",
-            shell,
-            "\" /D /S /C \"",
-            command,
-            "\"\"",
-        ]
-        .concat();
-        assert_eq!(arguments, expected);
+        assert_eq!(
+            arguments,
+            format!(r#"/D /S /C "chcp 65001>nul & "{shell}" /D /S /C "{command}"""#)
+        );
         assert!(arguments
             .contains(r#""H:\虹虹\声优个人相关\Lumina Charis 1-147\Lumina Charis_9995_0110.ass""#));
+    }
+
+    #[test]
+    fn windows_shell_wrapper_only_escapes_quoted_literal_ampersands() {
+        let shell = r"C:\Windows\System32\cmd.exe";
+        let command = r#"python -c "import sys; print(sys.argv[1])" "https://example.invalid/watch?x=%2F%3A&browser_version=123&cdm=widevine" && echo done"#;
+        let arguments = windows_shell_arguments(shell, command);
+        assert!(arguments.contains(r#""https://example.invalid/watch?x=%2F%3A^&browser_version=123^&cdm=widevine" && echo done"#));
+        assert!(
+            arguments.contains("chcp 65001>nul & "),
+            "wrapper operator remains intact"
+        );
+        let previously_escaped = r#"echo "a^&b" & echo second"#;
+        let escaped = windows_shell_arguments(shell, previously_escaped);
+        assert!(
+            escaped.contains(r#""a^&b" & echo second"#),
+            "do not double-escape literal or operator"
+        );
     }
 
     #[test]
@@ -1194,6 +1227,41 @@ mod tests {
             stderr.trim().is_empty(),
             "query keys must not run as commands: {stderr:?}"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_shell_keeps_quoted_ampersand_in_path_and_runs_intentional_operator() {
+        let path = r"C:\Folder With Spaces\part&notes.txt";
+        let command =
+            format!(r#"python -c "import sys; print(sys.argv[1])" "{path}" & echo shell-after"#);
+        let (_handle, events) = start_shell(&command, "").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (mut stdout, mut stderr, mut exit) = (String::new(), String::new(), None);
+        while Instant::now() < deadline {
+            if let Ok(event) = events.recv_timeout(Duration::from_millis(100)) {
+                match event {
+                    RunEvent::Output {
+                        stream: OutputStream::Stdout,
+                        text,
+                    } => stdout.push_str(&text),
+                    RunEvent::Output {
+                        stream: OutputStream::Stderr,
+                        text,
+                    } => stderr.push_str(&text),
+                    RunEvent::Finished { exit_code, .. } => {
+                        exit = Some(exit_code);
+                        break;
+                    }
+                }
+            }
+        }
+        assert_eq!(exit, Some(0), "stdout={stdout:?} stderr={stderr:?}");
+        assert_eq!(
+            stdout.lines().collect::<Vec<_>>(),
+            vec![path, "shell-after"]
+        );
+        assert!(stderr.trim().is_empty(), "{stderr:?}");
     }
 
     #[cfg(unix)]
