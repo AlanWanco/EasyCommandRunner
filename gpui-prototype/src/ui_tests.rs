@@ -6384,6 +6384,279 @@ mod tests {
     }
 
     #[gpui::test]
+    fn parameter_drag_beyond_viewport_scrolls_both_ways_without_crashing(cx: &mut TestAppContext) {
+        use gpui::{point, ScrollDelta};
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut view = None;
+        let handle = cx.open_window(size(px(900.), px(800.)), |w, cx| {
+            let entity = cx.new(|cx| super::fixture(12, w, cx));
+            view = Some(entity.clone());
+            Root::new(entity, w, cx)
+        });
+        let view = view.unwrap();
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.render_frame(cx);
+            let viewport = w.find("parameter-items").bounds();
+            let order = view.read(cx).tabs[0]
+                .rows
+                .iter()
+                .map(|r| r.id)
+                .collect::<Vec<_>>();
+            let first_before = w.find(("parameter-row", 0usize)).bounds().top();
+            let from = w.find(("move-row", 0usize)).bounds().center();
+            w.drag(from, point(from.x, viewport.bottom() + px(16.)), cx);
+            assert!(
+                w.find(("parameter-row", 0usize)).bounds().top() < first_before,
+                "拖到下边界外应自动向下滚动"
+            );
+            w.scroll(
+                "parameter-items",
+                ScrollDelta::Pixels(point(px(0.), px(-1000.))),
+                cx,
+            );
+            let viewport = w.find("parameter-items").bounds();
+            let last_before = w.find(("parameter-row", 11usize)).bounds().top();
+            let from = w.find(("move-row", 11usize)).bounds().center();
+            w.drag(from, point(from.x, viewport.top() - px(16.)), cx);
+            assert!(
+                w.find(("parameter-row", 11usize)).bounds().top() > last_before,
+                "拖到上边界外应自动向上滚动"
+            );
+            assert_eq!(
+                view.read(cx).tabs[0]
+                    .rows
+                    .iter()
+                    .map(|r| r.id)
+                    .collect::<Vec<_>>(),
+                order,
+                "释放到参数视口外不能误触发重排"
+            );
+            w.remove_window();
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    fn held_parameter_drag_keeps_scrolling_then_stops_on_release(cx: &mut TestAppContext) {
+        use gpui::{
+            point, InputEvent as _, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+        };
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut view = None;
+        let handle = cx.open_window(size(px(900.), px(800.)), |w, cx| {
+            let entity = cx.new(|cx| super::fixture(12, w, cx));
+            view = Some(entity.clone());
+            Root::new(entity, w, cx)
+        });
+        let view = view.unwrap();
+        let (target, position_after_move) = cx
+            .update_window(handle.into(), |_, w, cx| {
+                w.render_frame(cx);
+                let from = w.find(("move-row", 0usize)).bounds().center();
+                let viewport = w.find("parameter-items").bounds();
+                let target = point(from.x, viewport.bottom() + px(16.));
+                w.dispatch_event(
+                    MouseMoveEvent {
+                        position: from,
+                        pressed_button: None,
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                w.dispatch_event(
+                    MouseDownEvent {
+                        position: from,
+                        button: MouseButton::Left,
+                        modifiers: Default::default(),
+                        click_count: 1,
+                        first_mouse: false,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                for step in 1..=8 {
+                    let fraction = step as f32 / 8.;
+                    w.dispatch_event(
+                        MouseMoveEvent {
+                            position: point(from.x, from.y + (target.y - from.y) * fraction),
+                            pressed_button: Some(MouseButton::Left),
+                            modifiers: Default::default(),
+                        }
+                        .to_platform_input(),
+                        cx,
+                    );
+                    w.render_frame(cx);
+                }
+                (target, w.find(("parameter-row", 0usize)).bounds().top())
+            })
+            .unwrap();
+        cx.run_until_parked(); // Arm the 30ms timer before advancing the test clock.
+        for _ in 0..4 {
+            cx.background_executor
+                .advance_clock(std::time::Duration::from_millis(32));
+            cx.run_until_parked();
+        }
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.render_frame(cx);
+            let after_ticks = w.find(("parameter-row", 0usize)).bounds().top();
+            assert!(
+                after_ticks < position_after_move - px(12.),
+                "鼠标停在视口外也应持续自动滚动：{position_after_move:?}/{after_ticks:?}"
+            );
+            w.dispatch_event(
+                MouseUpEvent {
+                    position: target,
+                    button: MouseButton::Left,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            w.render_frame(cx);
+        })
+        .unwrap();
+        let stopped = cx
+            .update_window(handle.into(), |_, w, _| {
+                w.find(("parameter-row", 0usize)).bounds().top()
+            })
+            .unwrap();
+        for _ in 0..4 {
+            cx.background_executor
+                .advance_clock(std::time::Duration::from_millis(32));
+            cx.run_until_parked();
+        }
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.render_frame(cx);
+            assert_eq!(
+                w.find(("parameter-row", 0usize)).bounds().top(),
+                stopped,
+                "松开鼠标后必须取消自动滚动计时器"
+            );
+            assert_eq!(
+                view.read(cx).tabs[0]
+                    .rows
+                    .iter()
+                    .map(|r| r.id)
+                    .collect::<Vec<_>>(),
+                (0..12).collect::<Vec<_>>()
+            );
+            w.remove_window();
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    fn held_parameter_drag_above_viewport_keeps_scrolling_up(cx: &mut TestAppContext) {
+        use gpui::{
+            point, InputEvent as _, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+            ScrollDelta,
+        };
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut view = None;
+        let handle = cx.open_window(size(px(900.), px(800.)), |w, cx| {
+            let entity = cx.new(|cx| super::fixture(12, w, cx));
+            view = Some(entity.clone());
+            Root::new(entity, w, cx)
+        });
+        let view = view.unwrap();
+        let (target, position_after_move) = cx
+            .update_window(handle.into(), |_, w, cx| {
+                w.scroll(
+                    "parameter-items",
+                    ScrollDelta::Pixels(point(px(0.), px(-1000.))),
+                    cx,
+                );
+                let from = w.find(("move-row", 11usize)).bounds().center();
+                let viewport = w.find("parameter-items").bounds();
+                assert!(viewport.contains(&from));
+                let target = point(from.x, viewport.top() - px(16.));
+                w.dispatch_event(
+                    MouseMoveEvent {
+                        position: from,
+                        pressed_button: None,
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                w.dispatch_event(
+                    MouseDownEvent {
+                        position: from,
+                        button: MouseButton::Left,
+                        modifiers: Default::default(),
+                        click_count: 1,
+                        first_mouse: false,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                for step in 1..=8 {
+                    w.dispatch_event(
+                        MouseMoveEvent {
+                            position: point(
+                                from.x,
+                                from.y + (target.y - from.y) * step as f32 / 8.,
+                            ),
+                            pressed_button: Some(MouseButton::Left),
+                            modifiers: Default::default(),
+                        }
+                        .to_platform_input(),
+                        cx,
+                    );
+                    w.render_frame(cx);
+                }
+                (target, w.find(("parameter-row", 11usize)).bounds().top())
+            })
+            .unwrap();
+        cx.run_until_parked();
+        for _ in 0..4 {
+            cx.background_executor
+                .advance_clock(std::time::Duration::from_millis(32));
+            cx.run_until_parked();
+        }
+        cx.update_window(handle.into(), |_, w, cx| {
+            w.render_frame(cx);
+            let after_ticks = w.find(("parameter-row", 11usize)).bounds().top();
+            assert!(
+                after_ticks > position_after_move + px(12.),
+                "停在上边界外也应连续上滚：{position_after_move:?}/{after_ticks:?}"
+            );
+            w.dispatch_event(
+                MouseUpEvent {
+                    position: target,
+                    button: MouseButton::Left,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            w.render_frame(cx);
+            assert_eq!(
+                view.read(cx).tabs[0]
+                    .rows
+                    .iter()
+                    .map(|r| r.id)
+                    .collect::<Vec<_>>(),
+                (0..12).collect::<Vec<_>>()
+            );
+            w.remove_window();
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
     fn selected_tab_dot_and_close_fit_and_contrast_in_all_accents(cx: &mut TestAppContext) {
         use crate::theme::Accent;
         cx.update(|cx| {

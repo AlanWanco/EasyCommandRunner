@@ -128,6 +128,9 @@ pub struct CommandWorkspace {
     description_width_override: Option<f32>,
     resizing: Option<ResizeDrag>,
     drag_target: Option<(usize, bool)>,
+    row_drag_auto_scroll: Option<RowDragAutoScroll>,
+    row_drag_auto_scroll_running: bool,
+    row_drag_auto_scroll_generation: u64,
     tab_drag_target: Option<(TabArea, usize, bool)>,
     // Window-local X: draw above the Kit tab-bar indicator, not inside a label.
     tab_drop_x: Option<f32>,
@@ -363,6 +366,9 @@ impl CommandWorkspace {
                 .map(|width| width as f32),
             resizing: None,
             drag_target: None,
+            row_drag_auto_scroll: None,
+            row_drag_auto_scroll_running: false,
+            row_drag_auto_scroll_generation: 0,
             tab_drag_target: None,
             tab_drop_x: None,
             tab_drag_centers: std::collections::HashMap::new(),
@@ -1273,6 +1279,7 @@ impl CommandWorkspace {
         self.resizing = None; // 切页时终止拖动，不能把上一页的拖动继续写入新页。
         self.tab_menu = None;
         self.drag_target = None;
+        self.stop_row_drag_auto_scroll();
         self.tab_drag_target = None;
         self.tab_drop_x = None;
         self.row_scroll = ScrollHandle::new();
@@ -1913,6 +1920,62 @@ impl CommandWorkspace {
         self.changed(self.current().id, window, cx);
         window.focus(&focus, cx);
     }
+    fn stop_row_drag_auto_scroll(&mut self) {
+        if self.row_drag_auto_scroll.take().is_some() || self.row_drag_auto_scroll_running {
+            self.row_drag_auto_scroll_running = false;
+            self.row_drag_auto_scroll_generation =
+                self.row_drag_auto_scroll_generation.wrapping_add(1);
+        }
+    }
+
+    fn advance_row_drag_auto_scroll(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(state) = self.row_drag_auto_scroll else {
+            self.row_drag_auto_scroll_running = false;
+            return false;
+        };
+        if self.current().id != state.drag.tab_id
+            || !self
+                .current()
+                .rows
+                .iter()
+                .any(|row| row.id == state.drag.row_id)
+        {
+            self.stop_row_drag_auto_scroll();
+            self.drag_target = None;
+            cx.notify();
+            return false;
+        }
+        let offset = self.row_scroll.offset();
+        // max_offset is a positive extent; actual positions lie in [-max, 0].
+        let limit = self.row_scroll.max_offset().y;
+        let next_y = (offset.y + px(state.direction * 12.)).clamp(-limit, px(0.));
+        if next_y != offset.y {
+            self.row_scroll.set_offset(gpui::point(offset.x, next_y));
+        }
+        let bounds = self.row_scroll.bounds();
+        let y = f32::from(state.pointer.y - bounds.top() - next_y);
+        let next = row_drop_target(
+            &self.current().rows,
+            y,
+            state.drag.row_id,
+            self.enabled_first,
+        );
+        if self.drag_target != next {
+            self.drag_target = next;
+            cx.notify();
+        }
+        if next_y == offset.y {
+            self.row_drag_auto_scroll_running = false;
+            return false;
+        }
+        window.refresh();
+        true
+    }
+
     fn reorder_row(
         &mut self,
         drag: &RowDrag,
@@ -3535,31 +3598,65 @@ impl CommandWorkspace {
             .on_drag_move::<RowDrag>({
                 let view = cx.entity().downgrade();
                 move |ev, w, cx| {
-                    let source_tab = ev.drag(cx).tab_id;
-                    let source_row = ev.drag(cx).row_id;
+                    let drag = *ev.drag(cx);
                     let bounds = ev.bounds;
-                    let position = ev.event.position;
+                    let pointer = ev.event.position;
                     let _ = view.update(cx, |v, cx| {
-                        if v.current().id != source_tab {
+                        if v.current().id != drag.tab_id {
+                            v.stop_row_drag_auto_scroll();
                             return;
                         }
-                        let offset = v.row_scroll.offset();
-                        let edge = f32::from(position.y - bounds.top());
-                        if edge < 14. || edge > f32::from(bounds.size.height) - 14. {
-                            let step = if edge < 14. { 12. } else { -12. };
-                            let limit = v.row_scroll.max_offset().y;
-                            v.row_scroll.set_offset(gpui::point(
-                                offset.x,
-                                (offset.y + px(step)).clamp(limit, px(0.)),
-                            ));
-                            w.refresh();
-                        }
-                        let y = f32::from(position.y - bounds.top() - v.row_scroll.offset().y);
-                        let next =
-                            row_drop_target(&v.current().rows, y, source_row, v.enabled_first);
-                        if v.drag_target != next {
-                            v.drag_target = next;
-                            cx.notify();
+                        let edge = f32::from(pointer.y - bounds.top());
+                        let inside_x = pointer.x >= bounds.left() && pointer.x < bounds.right();
+                        let direction = if inside_x && edge < 14. {
+                            Some(1.)
+                        } else if inside_x && edge > f32::from(bounds.size.height) - 14. {
+                            Some(-1.)
+                        } else {
+                            None
+                        };
+                        if let Some(direction) = direction {
+                            v.row_drag_auto_scroll = Some(RowDragAutoScroll {
+                                drag,
+                                pointer,
+                                direction,
+                            });
+                            let advanced = v.advance_row_drag_auto_scroll(w, cx);
+                            if advanced && !v.row_drag_auto_scroll_running {
+                                v.row_drag_auto_scroll_running = true;
+                                let generation = v.row_drag_auto_scroll_generation.wrapping_add(1);
+                                v.row_drag_auto_scroll_generation = generation;
+                                cx.spawn_in(w, async move |owner, window| loop {
+                                    window
+                                        .background_executor()
+                                        .timer(std::time::Duration::from_millis(30))
+                                        .await;
+                                    let keep = owner
+                                        .update_in(window, |v, w, cx| {
+                                            if v.row_drag_auto_scroll_generation != generation {
+                                                return false;
+                                            }
+                                            v.advance_row_drag_auto_scroll(w, cx)
+                                        })
+                                        .unwrap_or(false);
+                                    if !keep {
+                                        break;
+                                    }
+                                })
+                                .detach();
+                            }
+                        } else {
+                            v.stop_row_drag_auto_scroll();
+                            let y = f32::from(pointer.y - bounds.top() - v.row_scroll.offset().y);
+                            let next = if inside_x {
+                                row_drop_target(&v.current().rows, y, drag.row_id, v.enabled_first)
+                            } else {
+                                None
+                            };
+                            if v.drag_target != next {
+                                v.drag_target = next;
+                                cx.notify();
+                            }
                         }
                     });
                 }
@@ -3568,6 +3665,7 @@ impl CommandWorkspace {
                 let view = cx.entity().downgrade();
                 move |drag, w, cx| {
                     let _ = view.update(cx, |v, cx| {
+                        v.stop_row_drag_auto_scroll();
                         if let Some((target, after)) = v.drag_target {
                             v.reorder_row(drag, target, after, w, cx);
                         } else {
@@ -3580,6 +3678,7 @@ impl CommandWorkspace {
             .on_mouse_up_out(
                 MouseButton::Left,
                 cx.listener(|v, _, _, cx| {
+                    v.stop_row_drag_auto_scroll();
                     if v.drag_target.take().is_some() {
                         cx.notify();
                     }
@@ -3891,10 +3990,17 @@ struct TabDrag {
     area: TabArea,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 struct RowDrag {
     tab_id: usize,
     row_id: usize,
+}
+
+#[derive(Clone, Copy)]
+struct RowDragAutoScroll {
+    drag: RowDrag,
+    pointer: gpui::Point<gpui::Pixels>,
+    direction: f32,
 }
 
 /// 使用 32px 行高和 8px 行距计算落点；源行及启用优先排序组外不显示错误插入线。
@@ -4663,6 +4769,7 @@ impl Render for CommandWorkspace {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|v, _, _, cx| {
+                    v.stop_row_drag_auto_scroll();
                     v.resizing = None;
                     // on_drop runs after mouse_up; defer cleanup so its insertion side survives.
                     if v.tab_drag_target.is_none() && v.tab_drag_centers.is_empty() {
@@ -4685,6 +4792,7 @@ impl Render for CommandWorkspace {
             .on_mouse_up_out(
                 MouseButton::Left,
                 cx.listener(|v, _, _, cx| {
+                    v.stop_row_drag_auto_scroll();
                     v.resizing = None;
                     if v.tab_drag_target.is_none() && v.tab_drag_centers.is_empty() {
                         return;
