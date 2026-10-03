@@ -35,6 +35,60 @@ pub(crate) fn menu_size(cx: &App) -> Size<Pixels> {
     )
 }
 
+/// Request enough physical room for independently snapped rows and separators.
+/// A 4-DIP grid does not stay on whole pixels at custom Windows scales (115%:
+/// 32 DIP becomes 37 physical pixels per row rather than 36.8).
+fn menu_size_at_scale(cx: &App, scale_factor: f32) -> Size<Pixels> {
+    let scale = scale_factor.max(1.);
+    let rows = (row_height(cx) * scale).round() * 8.;
+    let separators = (12. * scale).round() * 3.;
+    let insets = (PADDING * scale).round() * 2.;
+    let border = scale.floor().max(1.) * 2.;
+    // Quarter-DPI steps align with the existing 4-DIP grid. Custom scales use
+    // the snapped rows instead, avoiding accumulated excess or shortage below.
+    let nominal = (f32::from(menu_size(cx).height) * scale).round();
+    let painted = rows + separators + insets + border;
+    let quarter_scale = (scale * 4. - (scale * 4.).round()).abs() < 0.001;
+    let physical_height = if quarter_scale {
+        painted.max(nominal)
+    } else {
+        painted
+    };
+    size(menu_size(cx).width, px(physical_height / scale))
+}
+
+/// Split a minor native client-size loss between top and bottom; genuinely
+/// constrained work areas keep the normal insets and scroll as before.
+fn menu_vertical_inset(cx: &App, client_height: Pixels, scale_factor: f32) -> f32 {
+    let scale = scale_factor.max(1.);
+    let shortfall = f32::from(menu_size_at_scale(cx, scale).height - client_height);
+    if !(0. ..=4.).contains(&shortfall) {
+        return PADDING;
+    }
+    let available = (f32::from(client_height) * scale).round()
+        - (row_height(cx) * scale).round() * 8.
+        - (12. * scale).round() * 3.
+        - scale.floor().max(1.) * 2.;
+    (PADDING * scale)
+        .round()
+        .min((available.max(0.) / 2.).floor())
+        / scale
+}
+
+/// Win32 SetWindowRgn takes window-relative coordinates, whereas GetClientRect
+/// starts at (0, 0) in client coordinates. Include the non-client left/top
+/// offset; otherwise a hidden frame at custom DPI cuts the right/bottom off.
+#[cfg(any(target_os = "windows", test))]
+fn client_region_box(
+    window_origin: (i32, i32),
+    client_origin: (i32, i32),
+    client_size: (i32, i32),
+) -> (i32, i32, i32, i32) {
+    let left = client_origin.0 - window_origin.0;
+    let top = client_origin.1 - window_origin.1;
+    (left, top, left + client_size.0 + 1, top + client_size.1 + 1)
+}
+
 /// Works for negative-origin monitors and small work areas; taskbar bounds are excluded.
 #[cfg(any(target_os = "windows", test))]
 fn placement(
@@ -148,16 +202,8 @@ impl Render for TrayPopup {
         let p = palette(cx);
         let state = self.workspace.read(cx).tray_menu_state(self.visible, cx);
         let height = row_height(cx);
-        // A native client rect may round down by a few DIP at fractional DPI.
-        // Divide that tiny loss between top and bottom instead of making the
-        // scroll container 1–4px short and shifting all rows when Quit is selected.
-        // Truly constrained work areas retain the full inset and remain scrollable.
-        let shortfall = f32::from(menu_size(cx).height - window.viewport_size().height);
-        let vertical_inset = if shortfall > 0. && shortfall <= 4. {
-            PADDING - shortfall / 2.
-        } else {
-            PADDING
-        };
+        let vertical_inset =
+            menu_vertical_inset(cx, window.viewport_size().height, window.scale_factor());
         let icons = [
             IconName::AppWindow,
             IconName::Play,
@@ -311,16 +357,16 @@ pub(crate) fn open(
     use windows_sys::Win32::{
         Foundation::{POINT, RECT},
         Graphics::Gdi::{
-            CreateRoundRectRgn, DeleteObject, GetMonitorInfoW, MonitorFromPoint, SetWindowRgn,
-            MONITORINFO, MONITOR_DEFAULTTONEAREST,
+            ClientToScreen, CreateRoundRectRgn, DeleteObject, GetMonitorInfoW, MonitorFromPoint,
+            SetWindowRgn, MONITORINFO, MONITOR_DEFAULTTONEAREST,
         },
         UI::{
             Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW},
             HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
             Input::KeyboardAndMouse::{GetFocus, SetActiveWindow, SetFocus},
             WindowsAndMessaging::{
-                GetClientRect, GetForegroundWindow, SetForegroundWindow, SystemParametersInfoW,
-                SPI_GETHIGHCONTRAST,
+                GetClientRect, GetForegroundWindow, GetWindowRect, SetForegroundWindow,
+                SystemParametersInfoW, SPI_GETHIGHCONTRAST,
             },
         },
     };
@@ -375,7 +421,7 @@ pub(crate) fn open(
     let bounds = placement(
         point(px(physical.0 as f32 / scale), px(physical.1 as f32 / scale)),
         work,
-        menu_size(cx),
+        menu_size_at_scale(cx, scale),
     );
     let handle = cx
         .open_window(
@@ -409,12 +455,21 @@ pub(crate) fn open(
             };
             let hwnd = native.hwnd.get() as *mut _;
             let mut rect = RECT::default();
-            if GetClientRect(hwnd, &mut rect) == 0 {
+            let mut window_rect = RECT::default();
+            let mut client_origin = POINT { x: 0, y: 0 };
+            if GetClientRect(hwnd, &mut rect) == 0
+                || GetWindowRect(hwnd, &mut window_rect) == 0
+                || ClientToScreen(hwnd, &mut client_origin) == 0
+            {
                 return false;
             }
+            let (left, top, right, bottom) = client_region_box(
+                (window_rect.left, window_rect.top),
+                (client_origin.x, client_origin.y),
+                (rect.right - rect.left, rect.bottom - rect.top),
+            );
             let diameter = (RADIUS * 2. * window.scale_factor()).round() as i32;
-            let region =
-                CreateRoundRectRgn(0, 0, rect.right + 1, rect.bottom + 1, diameter, diameter);
+            let region = CreateRoundRectRgn(left, top, right, bottom, diameter, diameter);
             if region.is_null() {
                 return false;
             }
@@ -523,7 +578,7 @@ mod tests {
         cx.update(gpui::init);
         for mode in [crate::theme::Theme::Dark, crate::theme::Theme::Light] {
             for font_size in [10, 14, 16, 24] {
-                for scale_factor in [1., 1.25, 1.5, 1.75, 2.] {
+                for scale_factor in [1., 110. / 96., 1.15, 1.25, 1.5, 1.75, 2.] {
                     cx.update(|cx| theme::apply(mode, cx));
                     let mut workspace = None;
                     let main = cx.open_window(size(px(850.), px(800.)), |window, cx| {
@@ -533,7 +588,7 @@ mod tests {
                     });
                     let workspace = workspace.unwrap();
                     cx.update(|cx| theme::set_font_size(font_size, cx));
-                    let dimensions = cx.update(|cx| menu_size(cx));
+                    let dimensions = cx.update(|cx| menu_size_at_scale(cx, scale_factor));
                     let (sender, _receiver) = mpsc::channel();
                     let mut menu = None;
                     let popup = cx.open_window(dimensions, |window, cx| {
@@ -580,7 +635,8 @@ mod tests {
                             let bottom = surface.bottom() - last.bottom();
                             assert!((top - bottom).abs() <= tolerance,
                                 "{mode:?}/{font_size}px/{scale_factor}x: 上下留白不对称：{top:?}/{bottom:?}");
-                            assert!((top - expected_y).abs() <= tolerance && (bottom - expected_y).abs() <= tolerance);
+                            assert!((top - expected_y).abs() <= tolerance && (bottom - expected_y).abs() <= tolerance,
+                                "{mode:?}/{font_size}px/{scale_factor}x: 上下留白 {top:?}/{bottom:?}, 期望 {expected_y:?}, inset={}", menu_vertical_inset(cx, window.viewport_size().height,window.scale_factor()));
                             assert!(menu.read(cx).scroll.offset().y.abs() <= tolerance,
                                 "内容可完整显示时 hover 不得触发滚动");
                         }
@@ -606,7 +662,7 @@ mod tests {
     #[gpui::test]
     fn slightly_reduced_client_area_does_not_jump_when_selecting_last_row(cx: &mut TestAppContext) {
         cx.update(gpui::init);
-        for scale_factor in [1., 1.25, 1.5, 2.] {
+        for scale_factor in [1., 110. / 96., 1.15, 1.25, 1.5, 2.] {
             cx.update(|cx| {
                 theme::apply(crate::theme::Theme::Dark, cx);
                 theme::set_font_size(14, cx);
@@ -617,7 +673,7 @@ mod tests {
                 workspace = Some(view.clone());
                 Root::new(view, window, cx)
             });
-            let requested = cx.update(|cx| menu_size(cx));
+            let requested = cx.update(|cx| menu_size_at_scale(cx, scale_factor));
             let dimensions = size(requested.width - px(1.), requested.height - px(2.));
             let (sender, _receiver) = mpsc::channel();
             let mut menu = None;
@@ -662,7 +718,7 @@ mod tests {
     ) {
         cx.update(gpui::init);
         for font_size in [14, 24] {
-            for scale_factor in [1., 1.25, 1.5, 1.75, 2.] {
+            for scale_factor in [1., 110. / 96., 1.15, 1.25, 1.5, 1.75, 2.] {
                 cx.update(|cx| theme::apply(crate::theme::Theme::Dark, cx));
                 let mut workspace = None;
                 let main = cx.open_window(size(px(850.), px(800.)), |window, cx| {
@@ -712,6 +768,19 @@ mod tests {
                     .unwrap();
             }
         }
+    }
+
+    #[test]
+    fn rounded_window_region_is_offset_to_the_actual_client_origin() {
+        assert_eq!(
+            client_region_box((0, 0), (0, 0), (323, 357)),
+            (0, 0, 324, 358)
+        );
+        assert_eq!(
+            client_region_box((-1500, -300), (-1492, -297), (323, 357)),
+            (8, 3, 332, 361),
+            "client-relative region coordinates would clip 8px from the right"
+        );
     }
 
     #[test]
