@@ -1597,7 +1597,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "easy-command-runner-gpui-prototype"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "embed-resource",
  "futures",

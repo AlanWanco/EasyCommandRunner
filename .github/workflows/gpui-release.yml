@@ -7,7 +7,7 @@ on:
         description: "New GPUI Release tag (must match Cargo version)"
         required: true
         type: string
-        default: v1.0.0
+        default: v1.0.1
       source_ref:
         description: "Optional source ref; defaults to selected workflow branch"
         type: string

@@ -4,7 +4,7 @@
 
 ## 发布入口
 
-在 GitHub Actions 选择 **GPUI Release**（`gpui-release.yml`），手动输入 `v1.0.0`；`source_ref` 留空使用选中的 workflow 分支，或指定已有源码 ref。入口将 ref 固定为完整 Git SHA，检查 tag 等于 Cargo 版本，再调用独立 `gpui.yml` 五架构构建。
+在 GitHub Actions 选择 **GPUI Release**（`gpui-release.yml`），手动输入 `v1.0.1`；`source_ref` 留空使用选中的 workflow 分支，或指定已有源码 ref。入口将 ref 固定为完整 Git SHA，检查 tag 等于 Cargo 版本，再调用独立 `gpui.yml` 五架构构建。
 
 全部平台构建、测试、审计、打包及 artifact 上传成功后，发布 job 校验五个包的文件名、版本、源码 SHA 和 SHA256；先创建草稿并上传完整包集，再公开 Release。上传失败留下草稿，不公开部分产物。已发布 Release 永不覆盖，已有 tag 不允许指向另一份源码；同提交的中断草稿可手动重试。
 
@@ -28,14 +28,14 @@ cargo fmt -- --check
 cargo test --all-targets --locked --features ui-test -- --test-threads=1
 python3 scripts/test_release_support.py
 cargo build --release --locked
-export RELEASE_VERSION=1.0.0
+export RELEASE_VERSION=1.0.1
 export SOURCE_SHA="$(git rev-parse HEAD)"
 # Apple Silicon/macOS:
 bash scripts/package-macos.sh
 # 原生 Linux x86_64 / ARM64:
 bash scripts/package-linux.sh x86_64  # 或 arm64
 # Windows PowerShell（相应原生架构）:
-# $env:RELEASE_VERSION='1.0.0'; $env:SOURCE_SHA=(git rev-parse HEAD)
+# $env:RELEASE_VERSION='1.0.1'; $env:SOURCE_SHA=(git rev-parse HEAD)
 # pwsh -File scripts/package-windows.ps1 -Arch x86_64
 ```
 

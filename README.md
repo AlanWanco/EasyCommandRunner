@@ -8,13 +8,13 @@
 
 正式包以 [GitHub Releases](https://github.com/AlanWanco/EasyCommandRunner/releases) 中明确标注 **GPUI** 的版本为准；GPUI 版本线从 **`v1.0.0`** 开始。若页面尚无 GPUI Release，请勿将 Qt `v0.9.x` 或 CI 调试产物当作正式 GPUI 包。只有独立手动发布流程会创建 Release。
 
-| 平台 | GPUI 发布包命名（以 v1.0.0 为例） | 使用方法 |
+| 平台 | GPUI 发布包命名（以 v1.0.1 为例；发布后以 Releases 为准） | 使用方法 |
 | --- | --- | --- |
-| Windows x86_64 | `EasyCommandRunner-GPUI-v1.0.0-windows-x86_64.zip` | 完整解压，运行 `EasyCommandRunner.exe` |
-| Windows ARM64 | `EasyCommandRunner-GPUI-v1.0.0-windows-arm64.zip` | 原生 ARM64 Windows，完整解压运行 |
-| macOS ARM64 | `EasyCommandRunner-GPUI-v1.0.0-macos-arm64.dmg` | 将 `.app` 拖到 Applications |
-| Linux x86_64 | `EasyCommandRunner-GPUI-v1.0.0-linux-x86_64.AppImage` | `chmod +x` 后运行 |
-| Linux ARM64 | `EasyCommandRunner-GPUI-v1.0.0-linux-arm64.AppImage` | 原生 ARM64 Linux，`chmod +x` 后运行 |
+| Windows x86_64 | `EasyCommandRunner-GPUI-v1.0.1-windows-x86_64.zip` | 完整解压，运行 `EasyCommandRunner.exe` |
+| Windows ARM64 | `EasyCommandRunner-GPUI-v1.0.1-windows-arm64.zip` | 原生 ARM64 Windows，完整解压运行 |
+| macOS ARM64 | `EasyCommandRunner-GPUI-v1.0.1-macos-arm64.dmg` | 将 `.app` 拖到 Applications |
+| Linux x86_64 | `EasyCommandRunner-GPUI-v1.0.1-linux-x86_64.AppImage` | `chmod +x` 后运行 |
+| Linux ARM64 | `EasyCommandRunner-GPUI-v1.0.1-linux-arm64.AppImage` | 原生 ARM64 Linux，`chmod +x` 后运行 |
 
 - Windows 包是免安装 Portable ZIP，不会安装 Qt；配置仍默认写入用户 APPDATA，不是自动写入 EXE 旁边。
 - macOS 当前测试基线为 Apple Silicon / macOS 14+。`.app` 使用一致的 bundle identifier 和原生图标，DMG 包含 `/Applications` 链接。没有 Developer ID 签名或公证，Gatekeeper 可能要求用户明确允许。
