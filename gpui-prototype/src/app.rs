@@ -2634,8 +2634,9 @@ impl CommandWorkspace {
             .w_full()
             .flex_1()
             .min_h_0()
-            // Rows and their highlight occupy the entire list viewport. The
-            // slim scrollbar overlays the right edge rather than taking width.
+            // Keep the overlay scrollbar's track clear of row hover/selection
+            // fills. The collapsed rail hides the scrollbar and stays centered.
+            .when(!folded, |items| items.pr(px(SIDEBAR_LIST_RIGHT_PADDING)))
             .on_scroll_wheel(cx.listener(|v, _, _, cx| {
                 // A wheel event scrolls rows beneath a stationary pointer without a MouseMove.
                 // Clear the old row before the next frame can paint it at a stale screen position.
@@ -2846,6 +2847,30 @@ impl CommandWorkspace {
                             cx.notify();
                         }),
                     )
+                    .when(show_details, |d| {
+                        d.child(
+                            frame(("sidebar-open-lane", id))
+                                .w(px(12.))
+                                .h(px(16.))
+                                .flex_shrink_0()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .when(self.open_tab_ids.contains(&id), |lane| {
+                                    lane.child(
+                                        frame(("sidebar-open-marker", id))
+                                            .w(px(2.))
+                                            .h(px(16.))
+                                            .rounded_full()
+                                            .bg(rgb(if selected_visible {
+                                                p.on_primary
+                                            } else {
+                                                p.focus
+                                            })),
+                                    )
+                                }),
+                        )
+                    })
                     .child(
                         frame(("sidebar-icon", id))
                             .size(px(24.))

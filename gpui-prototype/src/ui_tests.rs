@@ -189,6 +189,78 @@ fn closed_sidebar_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
     }
 }
 
+fn sidebar_scrollbar_clearance_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
+    use crate::state::{CommandTab, TabData};
+    use crate::tokens::{
+        SIDEBAR_HIGHLIGHT_SCROLL_GAP, SIDEBAR_LIST_RIGHT_PADDING, SIDEBAR_SCROLL_THUMB_INSET,
+        SIDEBAR_SCROLL_THUMB_MAX_WIDTH,
+    };
+    for mode in [Theme::Dark, Theme::Light] {
+        cx.update(|cx| {
+            theme::apply(mode, cx);
+            theme::set_font_size(14, cx);
+        });
+        let mut workspace = None;
+        let handle = cx
+            .open_window(size(px(850.), px(760.)), |w, cx| {
+                let view = cx.new(|cx| {
+                    let mut view = CommandWorkspace::new(w, cx);
+                    view.reduced_motion = true;
+                    for id in 1..24 {
+                        view.tabs.push(CommandTab::new(
+                            id,
+                            TabData {
+                                name: format!("Configuration {id}"),
+                                ..TabData::example()
+                            },
+                            w,
+                            cx,
+                        ));
+                    }
+                    view
+                });
+                workspace = Some(view.clone());
+                cx.new(|cx| Root::new(view, w, cx))
+            })
+            .unwrap();
+        let view = workspace.unwrap();
+        cx.update_window(handle.into(), |_, w, cx| {
+            view.update(cx, |view, cx| view.select_tab(22, w, cx));
+            w.render_frame(cx);
+            let viewport = w.find("sidebar-items").bounds();
+            let lane = w.find("sidebar-scrollbar-lane").bounds();
+            let row = w.find(("sidebar-tab", 22usize)).bounds();
+            let thumb_left =
+                lane.right() - px(SIDEBAR_SCROLL_THUMB_INSET + SIDEBAR_SCROLL_THUMB_MAX_WIDTH);
+            assert_eq!(
+                viewport.right() - row.right(),
+                px(SIDEBAR_LIST_RIGHT_PADDING)
+            );
+            assert_eq!(thumb_left - row.right(), px(SIDEBAR_HIGHLIGHT_SCROLL_GAP));
+            w.hover(("sidebar-tab", 22usize), cx);
+            assert_eq!(
+                w.find(("sidebar-hover-row-indicator", 22usize)).bounds(),
+                row
+            );
+            assert_eq!(
+                w.find(("sidebar-selection-row-indicator", 22usize))
+                    .bounds(),
+                row
+            );
+        })
+        .unwrap();
+        cx.capture_screenshot(handle.into())
+            .unwrap()
+            .save(format!(
+                "{directory}/sidebar-scrollbar-clearance-{mode:?}.png"
+            ))
+            .unwrap();
+        cx.update_window(handle.into(), |_, w, _| w.remove_window())
+            .unwrap();
+        println!("PASS sidebar-scrollbar-clearance-{mode:?}");
+    }
+}
+
 fn sidebar_resize_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
     use std::time::Duration;
     for mode in [Theme::Dark, Theme::Light] {
@@ -1288,6 +1360,92 @@ fn tray_popup_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
     }
 }
 
+fn sidebar_open_marker_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
+    for mode in [Theme::Dark, Theme::Light] {
+        cx.update(|cx| {
+            cx.set_global(theme::Accent::Blue);
+            theme::apply(mode, cx);
+            theme::set_font_size(14, cx);
+        });
+        let mut workspace = None;
+        let handle = cx
+            .open_window(size(px(850.), px(800.)), |w, cx| {
+                let view = cx.new(|cx| CommandWorkspace::new(w, cx));
+                workspace = Some(view.clone());
+                cx.new(|cx| Root::new(view, w, cx))
+            })
+            .unwrap();
+        let view = workspace.unwrap();
+        for folded in [false, true] {
+            let (selected, inactive) = cx
+                .update_window(handle.into(), |_, w, cx| {
+                    if !folded {
+                        view.update(cx, |v, cx| {
+                            v.reduced_motion = true;
+                            cx.notify();
+                        });
+                        w.click("add-tab-title", cx);
+                        w.click("add-tab-title", cx);
+                        w.click(("close-tab", 1usize), cx);
+                    } else {
+                        w.click("collapse-sidebar", cx);
+                    }
+                    w.render_frame(cx);
+                    assert_eq!(view.read(cx).open_tab_ids, vec![0, 2]);
+                    if folded {
+                        for id in 0..3usize {
+                            assert!(w.try_find(("sidebar-open-marker", id)).is_none());
+                            assert!(w.try_find(("sidebar-open-lane", id)).is_none());
+                            assert!(
+                                (w.find(("sidebar-icon", id)).bounds().center().x
+                                    - w.find(("sidebar-tab", id)).bounds().center().x)
+                                    .abs()
+                                    <= px(0.5)
+                            );
+                        }
+                        (None, None)
+                    } else {
+                        assert!(w.try_find(("sidebar-open-marker", 1usize)).is_none());
+                        (
+                            Some(w.find(("sidebar-open-marker", 2usize)).bounds()),
+                            Some(w.find(("sidebar-open-marker", 0usize)).bounds()),
+                        )
+                    }
+                })
+                .unwrap();
+            let image = cx.capture_screenshot(handle.into()).unwrap();
+            let scale = image.width() as f32 / 850.;
+            let sample = |b: gpui::Bounds<gpui::Pixels>| {
+                let x = ((f32::from(b.center().x) * scale).floor() as u32).min(image.width() - 1);
+                let y = ((f32::from(b.center().y) * scale).floor() as u32).min(image.height() - 1);
+                image.get_pixel(x, y).0
+            };
+            let p = cx.update(|cx| theme::palette(cx));
+            if let (Some(selected), Some(inactive)) = (selected, inactive) {
+                for (bounds, color, label) in [
+                    (selected, p.on_primary, "selected"),
+                    (inactive, p.focus, "inactive"),
+                ] {
+                    let expected = [(color >> 16) as u8, (color >> 8) as u8, color as u8];
+                    assert_eq!(
+                        &sample(bounds)[..3],
+                        expected,
+                        "{mode:?}/{label} 开放标记应真实绘制且有对比度"
+                    );
+                }
+            }
+            let name = format!(
+                "sidebar-open-{mode:?}-{}",
+                if folded { "collapsed" } else { "expanded" }
+            );
+            image.save(format!("{directory}/{name}.png")).unwrap();
+            println!("PASS {name}");
+        }
+        cx.update_window(handle.into(), |_, w, _| w.remove_window())
+            .unwrap();
+    }
+}
+
 pub fn snapshots(directory: &str) {
     std::fs::create_dir_all(directory).unwrap();
     let mut cx = HeadlessAppContext::with_platform(
@@ -1297,6 +1455,7 @@ pub fn snapshots(directory: &str) {
     );
     cx.update(gpui::init);
     closed_sidebar_snapshots(directory, &mut cx);
+    sidebar_scrollbar_clearance_snapshots(directory, &mut cx);
     sidebar_resize_snapshots(directory, &mut cx);
     parameter_drag_preview_snapshots(directory, &mut cx);
     compact_note_hover_snapshots(directory, &mut cx);
@@ -1305,6 +1464,7 @@ pub fn snapshots(directory: &str) {
     page_switch_snapshots(directory, &mut cx);
     close_button_hover_snapshots(directory, &mut cx);
     sidebar_icon_hover_snapshots(directory, &mut cx);
+    sidebar_open_marker_snapshots(directory, &mut cx);
     top_tab_drag_visual_snapshots(directory, &mut cx);
     detached_log_snapshots(directory, &mut cx);
     tray_popup_snapshots(directory, &mut cx);
@@ -3881,7 +4041,8 @@ mod tests {
     fn sidebar_hover_tracks_scrolled_configuration_rows(cx: &mut TestAppContext) {
         use crate::state::{CommandTab, TabData};
         use crate::tokens::{
-            SIDEBAR_SCROLL_LANE_RIGHT, SIDEBAR_SCROLL_THUMB_INSET, SIDEBAR_SCROLL_THUMB_MAX_WIDTH,
+            SIDEBAR_HIGHLIGHT_SCROLL_GAP, SIDEBAR_LIST_RIGHT_PADDING, SIDEBAR_SCROLL_LANE_RIGHT,
+            SIDEBAR_SCROLL_THUMB_INSET, SIDEBAR_SCROLL_THUMB_MAX_WIDTH,
         };
         use gpui::{PlatformInput, ScrollDelta, ScrollWheelEvent};
         cx.update(|cx| {
@@ -3925,8 +4086,16 @@ mod tests {
                 lane.right() - px(SIDEBAR_SCROLL_THUMB_INSET + SIDEBAR_SCROLL_THUMB_MAX_WIDTH);
             for id in [25usize, 26usize] {
                 let row = w.find(("sidebar-tab", id)).bounds();
-                assert_eq!(row.right(), viewport.right(), "滚动条不得预留高亮宽度");
-                assert!(widest_thumb_left < row.right(), "细滑块在高亮上层重叠绘制");
+                assert_eq!(
+                    viewport.right() - row.right(),
+                    px(SIDEBAR_LIST_RIGHT_PADDING),
+                    "展开列表只为滚动条留固定窄槽，不让高亮延伸到滑块下面"
+                );
+                assert_eq!(
+                    widest_thumb_left - row.right(),
+                    px(SIDEBAR_HIGHLIGHT_SCROLL_GAP),
+                    "行高亮与最宽滚动滑块之间保持3px可见间隔"
+                );
                 let delete = w.find(("sidebar-close-tab", id)).bounds();
                 assert!(
                     delete.right() <= widest_thumb_left,
@@ -4528,6 +4697,108 @@ mod tests {
             w.remove_window();
         })
         .unwrap();
+    }
+
+    #[gpui::test]
+    fn sidebar_markers_follow_all_open_editors_without_shifting_icons(cx: &mut TestAppContext) {
+        cx.update(gpui::init);
+        for mode in [Theme::Dark, Theme::Light] {
+            cx.update(|cx| theme::apply(mode, cx));
+            let mut workspace = None;
+            let handle = cx.open_window(size(px(850.), px(800.)), |w, cx| {
+                let view = cx.new(|cx| CommandWorkspace::new(w, cx));
+                workspace = Some(view.clone());
+                Root::new(view, w, cx)
+            });
+            let view = workspace.unwrap();
+            cx.update_window(handle.into(), |_, w, cx| {
+                view.update(cx, |v, cx| {
+                    v.reduced_motion = true;
+                    cx.notify();
+                });
+                w.click("add-tab-title", cx);
+                w.click("add-tab-title", cx);
+                w.click(("close-tab", 1usize), cx); // closed configuration remains in the sidebar.
+                assert_eq!(view.read(cx).open_tab_ids, vec![0, 2]);
+                let icons = (0..3usize)
+                    .map(|id| w.find(("sidebar-icon", id)).bounds())
+                    .collect::<Vec<_>>();
+                for id in [0usize, 2] {
+                    let marker = w.find(("sidebar-open-marker", id)).bounds();
+                    let lane = w.find(("sidebar-open-lane", id)).bounds();
+                    let row = w.find(("sidebar-tab", id)).bounds();
+                    assert_eq!(lane.size, size(px(12.), px(16.)));
+                    assert!(marker.left() >= lane.left() && marker.right() <= lane.right());
+                    assert!(
+                        icons[id].left() - marker.right() >= px(8.),
+                        "展开时竖条必须独立占位而不是贴住 SVG"
+                    );
+                    assert_eq!(marker.size, size(px(2.), px(16.)));
+                    assert_eq!(marker.center().y, row.center().y);
+                }
+                assert!(w.try_find(("sidebar-open-marker", 1usize)).is_none());
+                assert_eq!(
+                    w.find(("sidebar-open-lane", 1usize)).bounds().size,
+                    size(px(12.), px(16.)),
+                    "关闭的配置也应保留同宽前导槽"
+                );
+                w.click(("close-tab", 2usize), cx);
+                assert_eq!(view.read(cx).open_tab_ids, vec![0]);
+                assert!(w.try_find(("sidebar-open-marker", 2usize)).is_none());
+                w.click(("sidebar-tab", 1usize), cx);
+                assert_eq!(view.read(cx).open_tab_ids, vec![0, 1]);
+                assert!(w.try_find(("sidebar-open-marker", 1usize)).is_some());
+                for id in 0..3usize {
+                    assert_eq!(
+                        w.find(("sidebar-icon", id)).bounds(),
+                        icons[id],
+                        "仅改变打开状态不能挤动图标"
+                    );
+                }
+                w.click("collapse-sidebar", cx);
+                assert_eq!(w.find("tab-sidebar").bounds().size.width, px(56.));
+                for id in 0..3usize {
+                    assert!(
+                        w.try_find(("sidebar-open-marker", id)).is_none(),
+                        "折叠时只显示居中的图标，不显示竖条"
+                    );
+                    assert!(w.try_find(("sidebar-open-lane", id)).is_none());
+                    let icon = w.find(("sidebar-icon", id)).bounds();
+                    let row = w.find(("sidebar-tab", id)).bounds();
+                    assert!((icon.center().x - row.center().x).abs() <= px(0.5));
+                }
+                w.hover("program", cx); // A manual collapse suppresses hover until the pointer exits.
+                w.hover(("sidebar-tab", 1usize), cx);
+                assert!(
+                    w.try_find(("sidebar-open-marker", 1usize)).is_some(),
+                    "重新进入后悬停展开侧栏时标记应恢复"
+                );
+                w.hover("program", cx);
+                assert!(w.try_find(("sidebar-open-marker", 1usize)).is_none());
+                w.click(("close-tab", 1usize), cx);
+                w.click(("close-tab", 0usize), cx);
+                assert!(view.read(cx).open_tab_ids.is_empty());
+                for id in 0..3usize {
+                    assert!(
+                        w.try_find(("sidebar-open-marker", id)).is_none(),
+                        "全部顶部标签关闭时不能残留已打开标记"
+                    );
+                }
+                w.click(("sidebar-tab", 2usize), cx);
+                assert_eq!(view.read(cx).open_tab_ids, vec![2]);
+                assert!(
+                    w.try_find(("sidebar-open-marker", 2usize)).is_some(),
+                    "悬停浮层展开时标记恢复"
+                );
+                w.hover("program", cx);
+                assert!(
+                    w.try_find(("sidebar-open-marker", 2usize)).is_none(),
+                    "回到折叠状态仍然只显示图标"
+                );
+                w.remove_window();
+            })
+            .unwrap();
+        }
     }
 
     #[gpui::test]

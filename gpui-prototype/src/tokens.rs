@@ -28,6 +28,11 @@ pub const COMMAND_NAME_HEIGHT: f32 = 48.;
 pub const SIDEBAR_SCROLL_LANE_RIGHT: f32 = 2.;
 pub const SIDEBAR_SCROLL_THUMB_INSET: f32 = 1.;
 pub const SIDEBAR_SCROLL_THUMB_MAX_WIDTH: f32 = 4.;
+pub const SIDEBAR_HIGHLIGHT_SCROLL_GAP: f32 = 3.;
+pub const SIDEBAR_LIST_RIGHT_PADDING: f32 = SIDEBAR_SCROLL_LANE_RIGHT
+    + SIDEBAR_SCROLL_THUMB_INSET
+    + SIDEBAR_SCROLL_THUMB_MAX_WIDTH
+    + SIDEBAR_HIGHLIGHT_SCROLL_GAP;
 // Include the taller title in the fixed layout budget so small windows retain a usable preview.
 // The divider is painted inside the existing section gap, without consuming another row.
 pub const FORM_HEIGHT: f32 = COMMAND_NAME_HEIGHT + CONTROL * 2. + GAP * 2.;
