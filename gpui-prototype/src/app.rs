@@ -2906,6 +2906,25 @@ impl CommandWorkspace {
                             })
                             .child(icon),
                     )
+                    .when(folded && self.open_tab_ids.contains(&id), |d| {
+                        // Keep the SVG centered in the collapsed rail. The open
+                        // status mark rides the leading edge as an overlay so it
+                        // does not turn the narrow rail into a two-column layout.
+                        d.child(
+                            frame(("sidebar-open-marker", id))
+                                .absolute()
+                                .left(px(2.))
+                                .top(px(12.))
+                                .w(px(2.))
+                                .h(px(16.))
+                                .rounded_full()
+                                .bg(rgb(if selected_visible {
+                                    p.on_primary
+                                } else {
+                                    p.focus
+                                })),
+                        )
+                    })
                     .when(show_details, |d| {
                         let details = row()
                             .relative()

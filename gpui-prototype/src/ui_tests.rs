@@ -1392,20 +1392,30 @@ fn sidebar_open_marker_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
                     }
                     w.render_frame(cx);
                     assert_eq!(view.read(cx).open_tab_ids, vec![0, 2]);
+                    assert!(w.try_find(("sidebar-open-marker", 1usize)).is_none());
                     if folded {
                         for id in 0..3usize {
-                            assert!(w.try_find(("sidebar-open-marker", id)).is_none());
                             assert!(w.try_find(("sidebar-open-lane", id)).is_none());
+                            let row = w.find(("sidebar-tab", id)).bounds();
+                            let icon = w.find(("sidebar-icon", id)).bounds();
                             assert!(
-                                (w.find(("sidebar-icon", id)).bounds().center().x
-                                    - w.find(("sidebar-tab", id)).bounds().center().x)
-                                    .abs()
-                                    <= px(0.5)
+                                (icon.center().x - row.center().x).abs() <= px(0.5),
+                                "折叠时竖条不能把 SVG 挤离正中"
                             );
                         }
-                        (None, None)
+                        let selected = w.find(("sidebar-open-marker", 2usize)).bounds();
+                        let inactive = w.find(("sidebar-open-marker", 0usize)).bounds();
+                        for (id, marker) in [(2usize, selected), (0usize, inactive)] {
+                            let row = w.find(("sidebar-tab", id)).bounds();
+                            assert_eq!(marker.left(), row.left() + px(2.));
+                            assert_eq!(marker.size, size(px(2.), px(16.)));
+                            assert_eq!(marker.center().y, row.center().y);
+                        }
+                        (Some(selected), Some(inactive))
                     } else {
-                        assert!(w.try_find(("sidebar-open-marker", 1usize)).is_none());
+                        for id in [0usize, 2] {
+                            assert!(w.try_find(("sidebar-open-lane", id)).is_some());
+                        }
                         (
                             Some(w.find(("sidebar-open-marker", 2usize)).bounds()),
                             Some(w.find(("sidebar-open-marker", 0usize)).bounds()),
@@ -4759,13 +4769,24 @@ mod tests {
                 assert_eq!(w.find("tab-sidebar").bounds().size.width, px(56.));
                 for id in 0..3usize {
                     assert!(
-                        w.try_find(("sidebar-open-marker", id)).is_none(),
-                        "折叠时只显示居中的图标，不显示竖条"
+                        w.try_find(("sidebar-open-lane", id)).is_none(),
+                        "折叠时竖条不占宽度槽"
                     );
-                    assert!(w.try_find(("sidebar-open-lane", id)).is_none());
                     let icon = w.find(("sidebar-icon", id)).bounds();
                     let row = w.find(("sidebar-tab", id)).bounds();
-                    assert!((icon.center().x - row.center().x).abs() <= px(0.5));
+                    assert!(
+                        (icon.center().x - row.center().x).abs() <= px(0.5),
+                        "折叠时图标仍须居中"
+                    );
+                    if [0usize, 1].contains(&id) {
+                        let marker = w.find(("sidebar-open-marker", id)).bounds();
+                        assert_eq!(marker.left(), row.left() + px(2.));
+                        assert_eq!(marker.size, size(px(2.), px(16.)));
+                        assert_eq!(marker.center().y, row.center().y);
+                        assert!(marker.right() < icon.left(), "折叠态标记不能贴住居中 SVG");
+                    } else {
+                        assert!(w.try_find(("sidebar-open-marker", id)).is_none());
+                    }
                 }
                 w.hover("program", cx); // A manual collapse suppresses hover until the pointer exits.
                 w.hover(("sidebar-tab", 1usize), cx);
@@ -4774,7 +4795,14 @@ mod tests {
                     "重新进入后悬停展开侧栏时标记应恢复"
                 );
                 w.hover("program", cx);
-                assert!(w.try_find(("sidebar-open-marker", 1usize)).is_none());
+                let marker = w.find(("sidebar-open-marker", 1usize)).bounds();
+                let row = w.find(("sidebar-tab", 1usize)).bounds();
+                let icon = w.find(("sidebar-icon", 1usize)).bounds();
+                assert_eq!(marker.left(), row.left() + px(2.));
+                assert!(
+                    marker.right() < icon.left(),
+                    "折叠态标记必须保持在 SVG 左侧"
+                );
                 w.click(("close-tab", 1usize), cx);
                 w.click(("close-tab", 0usize), cx);
                 assert!(view.read(cx).open_tab_ids.is_empty());
@@ -4791,10 +4819,11 @@ mod tests {
                     "悬停浮层展开时标记恢复"
                 );
                 w.hover("program", cx);
-                assert!(
-                    w.try_find(("sidebar-open-marker", 2usize)).is_none(),
-                    "回到折叠状态仍然只显示图标"
-                );
+                let marker = w.find(("sidebar-open-marker", 2usize)).bounds();
+                let row = w.find(("sidebar-tab", 2usize)).bounds();
+                let icon = w.find(("sidebar-icon", 2usize)).bounds();
+                assert_eq!(marker.left(), row.left() + px(2.));
+                assert!(marker.right() < icon.left(), "折叠态竖条仍须避开居中 SVG");
                 w.remove_window();
             })
             .unwrap();
