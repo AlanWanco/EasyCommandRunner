@@ -1388,7 +1388,24 @@ fn sidebar_open_marker_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
                         w.click("add-tab-title", cx);
                         w.click(("close-tab", 1usize), cx);
                     } else {
+                        view.update(cx, |v, cx| {
+                            // Exercise the live fold animation: the collapsed marker should
+                            // replace the expanded leading lane immediately, not duplicate it.
+                            v.reduced_motion = false;
+                            cx.notify();
+                        });
                         w.click("collapse-sidebar", cx);
+                        w.render_frame(cx);
+                        for id in 0..3usize {
+                            assert!(
+                                w.try_find(("sidebar-open-lane", id)).is_none(),
+                                "折叠动画期间不能同时绘制展开标记和折叠标记"
+                            );
+                        }
+                        view.update(cx, |v, cx| {
+                            v.reduced_motion = true;
+                            cx.notify();
+                        });
                     }
                     w.render_frame(cx);
                     assert_eq!(view.read(cx).open_tab_ids, vec![0, 2]);

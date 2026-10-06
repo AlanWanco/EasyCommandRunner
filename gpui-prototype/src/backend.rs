@@ -854,7 +854,14 @@ mod tests {
         let dir = TestDir::new();
         let path = dir.0.join("config.json");
         let store = ConfigStore::at(&path, dir.0.join("backup"));
-        let config = serde_json::json!({"tabs":[{"name":"saved command","program":"echo safe"}],"gpui":{"show_log":true,"font_size":14}});
+        let config = serde_json::json!({
+            "tabs":[{"name":"saved command","program":"echo safe","gpui_group_id":7}],
+            "gpui":{
+                "show_log":true,
+                "font_size":14,
+                "sidebar_groups":[{"id":7,"name":"Tools","collapsed":false}]
+            }
+        });
         store.save(&config).unwrap();
         let source = dir.0.join("external.json");
         fs::write(&source, r#"{"tabs":[{"name":"external"}]}"#).unwrap();
@@ -881,6 +888,8 @@ mod tests {
         assert_eq!(saved["tabs"][0]["program"], "echo safe");
         assert_eq!(saved["gpui"]["show_log"], true);
         assert_eq!(saved["gpui"]["font_size"], 24);
+        assert_eq!(saved["gpui"]["sidebar_groups"][0]["name"], "Tools");
+        assert_eq!(saved["tabs"][0]["gpui_group_id"], 7);
         let output = dir.0.join("export.json");
         fs::write(&output, b"old export").unwrap();
         store.export_configuration(&output, &saved).unwrap();

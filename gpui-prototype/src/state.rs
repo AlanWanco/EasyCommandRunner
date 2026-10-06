@@ -188,6 +188,9 @@ pub struct TabData {
     /// Cached validated SVG: allows offline restore after a file moves or a URL goes offline.
     #[serde(rename = "gpui_icon_svg", skip_serializing_if = "Option::is_none")]
     pub icon_svg: Option<String>,
+    /// GPUI-only sidebar group membership; Qt ignores this extension field.
+    #[serde(rename = "gpui_group_id", skip_serializing_if = "Option::is_none")]
+    pub gpui_group_id: Option<u64>,
 }
 impl TabData {
     pub fn example() -> Self {
@@ -232,6 +235,7 @@ pub struct Parameter {
 pub struct CommandTab {
     pub id: usize,
     pub dirty: bool,
+    pub sidebar_group_id: Option<u64>,
     pub icon_source: Option<String>,
     pub icon_svg: Option<String>,
     /// 参数区期望显示的行数随标签页保留；临时空间不足不覆盖此偏好。
@@ -334,6 +338,7 @@ impl CommandTab {
         window: &mut Window,
         cx: &mut Context<CommandWorkspace>,
     ) -> Self {
+        let sidebar_group_id = data.gpui_group_id;
         let icon_source = data.icon_source.clone();
         let icon_svg = data
             .icon_svg
@@ -381,6 +386,7 @@ impl CommandTab {
         Self {
             id,
             dirty: false,
+            sidebar_group_id,
             icon_source,
             icon_svg,
             row_height_override: None,
@@ -434,6 +440,7 @@ impl CommandTab {
             description: self.description.read(cx).value().to_string(),
             icon_source: self.icon_source.clone(),
             icon_svg: self.icon_svg.clone(),
+            gpui_group_id: self.sidebar_group_id,
         }
     }
 }
@@ -524,6 +531,23 @@ mod query_url_tests {
         assert!(
             stderr.trim().is_empty(),
             "查询字段不应成为独立命令：{stderr:?}"
+        );
+    }
+
+    #[test]
+    fn gpui_sidebar_group_metadata_is_optional_and_round_trips() {
+        let legacy = serde_json::to_value(TabData::default()).unwrap();
+        assert!(legacy.get("gpui_group_id").is_none());
+
+        let data: TabData = serde_json::from_value(serde_json::json!({
+            "name": "视频",
+            "gpui_group_id": 42
+        }))
+        .unwrap();
+        assert_eq!(data.gpui_group_id, Some(42));
+        assert_eq!(
+            serde_json::to_value(data).unwrap()["gpui_group_id"],
+            serde_json::json!(42)
         );
     }
 }

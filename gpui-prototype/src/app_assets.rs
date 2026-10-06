@@ -34,6 +34,8 @@ mod tests {
             IconName::Moon,
             IconName::ChevronLeft,
             IconName::ChevronRight,
+            IconName::ChevronDown,
+            IconName::FolderPlus,
             IconName::ListIndentDecrease,
             IconName::ListIndentIncrease,
             IconName::MessageSquare,
