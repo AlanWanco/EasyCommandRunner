@@ -1,6 +1,6 @@
 //! Emoji-style icon browser: only visible rows are built, names live in tooltips/search.
 use crate::{
-    app::CommandWorkspace,
+    app::{CommandWorkspace, SidebarIconTarget},
     components::*,
     i18n::{self, tr},
     tab_icons::{self, Category},
@@ -42,7 +42,7 @@ fn random_catalog_index(results: &[usize], current: &str, draw: u64) -> Option<u
 
 pub struct IconPicker {
     owner: WeakEntity<CommandWorkspace>,
-    tab_id: usize,
+    target: SidebarIconTarget,
     current: String,
     search: Entity<InputState>,
     source: Entity<InputState>,
@@ -56,7 +56,7 @@ pub struct IconPicker {
 impl IconPicker {
     pub fn new(
         owner: WeakEntity<CommandWorkspace>,
-        tab_id: usize,
+        target: SidebarIconTarget,
         current: String,
         w: &mut Window,
         cx: &mut Context<Self>,
@@ -78,7 +78,7 @@ impl IconPicker {
         });
         Self {
             owner,
-            tab_id,
+            target,
             current,
             search,
             source,
@@ -110,8 +110,8 @@ impl IconPicker {
         };
         self.owner
             .update(cx, |v, cx| {
-                v.set_tab_icon_from_source(
-                    self.tab_id,
+                v.set_sidebar_icon_from_source(
+                    self.target,
                     format!("builtin:{}", tab_icons::CATALOG[*index].key),
                     cx,
                 )
@@ -142,7 +142,7 @@ impl IconPicker {
 
     fn choose(&self, source: String, w: &mut Window, cx: &mut Context<Self>) {
         let _ = self.owner.update(cx, |v, cx| {
-            v.set_tab_icon_from_source(self.tab_id, source, cx)
+            v.set_sidebar_icon_from_source(self.target, source, cx)
         });
         w.close_dialog(cx);
     }
@@ -168,7 +168,7 @@ impl Render for IconPicker {
         }
         let results = self.results.clone();
         let owner = self.owner.clone();
-        let tab_id = self.tab_id;
+        let target = self.target;
         let current = self.current.clone();
         let cursor = self.cursor;
         let grid_focused = self.focus.is_focused(w);
@@ -187,7 +187,7 @@ impl Render for IconPicker {
                             let source = format!("builtin:{}", icon.key);
                             let selected = current == source;
                             let name = icon.name.clone();
-                            let target = owner.clone();
+                            let target_owner = owner.clone();
                             row = row.child(
                                 frame(format!("icon-choice-{}", icon.key))
                                     .role(gpui::Role::Button)
@@ -223,8 +223,12 @@ impl Render for IconPicker {
                                             ),
                                     )
                                     .on_click(move |_, w, cx| {
-                                        let _ = target.update(cx, |v, cx| {
-                                            v.set_tab_icon_from_source(tab_id, source.clone(), cx)
+                                        let _ = target_owner.update(cx, |v, cx| {
+                                            v.set_sidebar_icon_from_source(
+                                                target,
+                                                source.clone(),
+                                                cx,
+                                            )
                                         });
                                         w.close_dialog(cx);
                                     }),

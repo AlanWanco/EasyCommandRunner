@@ -40,6 +40,10 @@ struct SidebarGroup {
     id: u64,
     name: String,
     collapsed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    icon_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    icon_svg: Option<String>,
 }
 
 impl Default for SidebarGroup {
@@ -48,8 +52,21 @@ impl Default for SidebarGroup {
             id: 0,
             name: String::new(),
             collapsed: false,
+            icon_source: None,
+            icon_svg: None,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum SidebarIconTarget {
+    Tab(usize),
+    Group(Option<u64>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SidebarGroupDrag {
+    group_id: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,6 +80,7 @@ enum SidebarGroupEdit {
     Create,
     CreateAndMove(usize),
     Rename(u64),
+    RenameUngrouped,
 }
 
 struct SessionLog {
@@ -115,6 +133,12 @@ pub struct CommandWorkspace {
     sidebar_groups: Vec<SidebarGroup>,
     next_sidebar_group_id: u64,
     sidebar_ungrouped_collapsed: bool,
+    sidebar_ungrouped_name: Option<String>,
+    sidebar_ungrouped_icon_source: Option<String>,
+    sidebar_ungrouped_icon_svg: Option<String>,
+    sidebar_group_menu: Option<(Option<u64>, f32, f32)>,
+    sidebar_tab_group_target: Option<Option<u64>>,
+    sidebar_group_drag_target: Option<(u64, bool)>,
     tab_group_options_open: bool,
     pub(crate) sidebar_collapsed: bool,
     /// Transient hover preview; never saved to config or treated as a manual width change.
@@ -133,7 +157,8 @@ pub struct CommandWorkspace {
     config_writable: bool,
     config_dirty: bool,
     sidebar_group_name_input: Option<Entity<InputState>>,
-    pending_icon_sources: std::collections::HashMap<usize, String>,
+    sidebar_group_editor_epoch: usize,
+    pending_icon_sources: std::collections::HashMap<SidebarIconTarget, String>,
     logs: Vec<SessionLog>,
     run_handles: std::collections::HashMap<usize, RunHandle>,
     pub(crate) selected_log_id: Option<usize>,
@@ -201,17 +226,59 @@ impl CommandWorkspace {
                 if !ids.insert(id) || !names.insert(name.to_lowercase()) {
                     return None;
                 }
+                let (icon_source, icon_svg) = Self::validated_sidebar_icon(
+                    item["icon_source"].as_str().map(str::to_owned),
+                    item["icon_svg"].as_str().map(str::to_owned),
+                );
                 Some(SidebarGroup {
                     id,
                     name: name.to_owned(),
                     collapsed: item["collapsed"].as_bool().unwrap_or(false),
+                    icon_source,
+                    icon_svg,
                 })
             })
             .collect()
     }
 
+    fn validated_sidebar_icon(
+        source: Option<String>,
+        svg: Option<String>,
+    ) -> (Option<String>, Option<String>) {
+        if let Some(name) = source
+            .as_deref()
+            .and_then(|source| source.strip_prefix("builtin:"))
+        {
+            return if tab_icons::builtin(name).is_some() {
+                (Some(format!("builtin:{name}")), None)
+            } else {
+                (None, None)
+            };
+        }
+        match (source, svg) {
+            (Some(source), Some(svg)) => match tab_icons::validate_svg(svg.as_bytes()) {
+                Ok(svg) => (Some(source), Some(svg)),
+                Err(_) => (None, None),
+            },
+            _ => (None, None),
+        }
+    }
+
+    fn has_sidebar_groups(&self) -> bool {
+        !self.sidebar_groups.is_empty()
+            || self.sidebar_ungrouped_name.is_some()
+            || self.sidebar_ungrouped_icon_source.is_some()
+            || self.sidebar_ungrouped_icon_svg.is_some()
+    }
+
+    fn ungrouped_label(&self, cx: &App) -> String {
+        self.sidebar_ungrouped_name
+            .clone()
+            .unwrap_or_else(|| tr(cx, "未分组").to_string())
+    }
+
     fn sidebar_entries(&self) -> Vec<SidebarEntry> {
-        if self.sidebar_groups.is_empty() {
+        if !self.has_sidebar_groups() {
             return (0..self.tabs.len()).map(SidebarEntry::Tab).collect();
         }
         let ungrouped = self
@@ -220,12 +287,9 @@ impl CommandWorkspace {
             .enumerate()
             .filter_map(|(index, tab)| tab.sidebar_group_id.is_none().then_some(index))
             .collect::<Vec<_>>();
-        let mut entries = Vec::new();
-        if !ungrouped.is_empty() {
-            entries.push(SidebarEntry::Section(None));
-            if !self.sidebar_ungrouped_collapsed {
-                entries.extend(ungrouped.into_iter().map(SidebarEntry::Tab));
-            }
+        let mut entries = vec![SidebarEntry::Section(None)];
+        if !self.sidebar_ungrouped_collapsed {
+            entries.extend(ungrouped.into_iter().map(SidebarEntry::Tab));
         }
         for group in &self.sidebar_groups {
             entries.push(SidebarEntry::Section(Some(group.id)));
@@ -306,6 +370,25 @@ impl CommandWorkspace {
     ) -> Self {
         let settings = config.as_ref().and_then(|value| value.get("gpui"));
         let sidebar_groups = Self::load_sidebar_groups(settings);
+        let default_ungrouped_name = settings
+            .and_then(|settings| settings["sidebar_ungrouped_name"].as_str())
+            .map(str::trim)
+            .filter(|name| !name.is_empty() && name.chars().count() <= 48)
+            .filter(|name| {
+                !sidebar_groups
+                    .iter()
+                    .any(|group| group.name.eq_ignore_ascii_case(name))
+            })
+            .map(str::to_owned);
+        let (default_ungrouped_icon_source, default_ungrouped_icon_svg) =
+            Self::validated_sidebar_icon(
+                settings
+                    .and_then(|settings| settings["sidebar_ungrouped_icon_source"].as_str())
+                    .map(str::to_owned),
+                settings
+                    .and_then(|settings| settings["sidebar_ungrouped_icon_svg"].as_str())
+                    .map(str::to_owned),
+            );
         let sidebar_group_ids = sidebar_groups
             .iter()
             .map(|group| group.id)
@@ -482,6 +565,12 @@ impl CommandWorkspace {
             sidebar_ungrouped_collapsed: settings
                 .and_then(|settings| settings["sidebar_ungrouped_collapsed"].as_bool())
                 .unwrap_or(false),
+            sidebar_ungrouped_name: default_ungrouped_name,
+            sidebar_ungrouped_icon_source: default_ungrouped_icon_source,
+            sidebar_ungrouped_icon_svg: default_ungrouped_icon_svg,
+            sidebar_group_menu: None,
+            sidebar_tab_group_target: None,
+            sidebar_group_drag_target: None,
             tab_group_options_open: false,
             sidebar_collapsed: settings
                 .and_then(|s| s["sidebar_collapsed"].as_bool())
@@ -500,6 +589,7 @@ impl CommandWorkspace {
             config_writable: load_error.is_none(),
             config_dirty: false,
             sidebar_group_name_input: None,
+            sidebar_group_editor_epoch: 0,
             pending_icon_sources: std::collections::HashMap::new(),
             logs: Vec::new(),
             run_handles: std::collections::HashMap::new(),
@@ -707,6 +797,9 @@ impl CommandWorkspace {
                 "sidebar_collapsed": self.sidebar_collapsed,
                 "sidebar_width": self.sidebar_expanded_width,
                 "sidebar_ungrouped_collapsed": self.sidebar_ungrouped_collapsed,
+                "sidebar_ungrouped_name": self.sidebar_ungrouped_name,
+                "sidebar_ungrouped_icon_source": self.sidebar_ungrouped_icon_source,
+                "sidebar_ungrouped_icon_svg": self.sidebar_ungrouped_icon_svg,
                 "sidebar_groups": serde_json::to_value(&self.sidebar_groups).expect("groups serialize"),
                 "open_tabs": self.open_tab_ids.iter().filter_map(|id| self.tabs.iter().position(|tab| tab.id == *id)).collect::<Vec<_>>(),
                 "log_height": self.log_height_override,
@@ -1453,6 +1546,7 @@ impl CommandWorkspace {
         self.active = index;
         self.resizing = None; // 切页时终止拖动，不能把上一页的拖动继续写入新页。
         self.tab_menu = None;
+        self.sidebar_group_menu = None;
         self.tab_group_options_open = false;
         self.drag_target = None;
         self.stop_row_drag_auto_scroll();
@@ -1896,6 +1990,7 @@ impl CommandWorkspace {
         let outgoing = (self.active == index).then(|| self.page_visual(window, cx));
         self.open_tab_ids.remove(position);
         self.tab_menu = None;
+        self.sidebar_group_menu = None;
         self.tab_group_options_open = false;
         if self.active == index {
             if let Some(next_id) = self
@@ -1976,6 +2071,7 @@ impl CommandWorkspace {
         self.config_dirty = true;
         self.resizing = None;
         self.tab_menu = None;
+        self.sidebar_group_menu = None;
         self.tab_group_options_open = false;
         let removed_id = self.tabs[index].id;
         self.open_tab_ids.retain(|id| *id != removed_id);
@@ -2545,37 +2641,76 @@ impl CommandWorkspace {
         )
     }
 
-    fn set_tab_icon(
+    fn sidebar_icon_source(&self, target: SidebarIconTarget) -> Option<String> {
+        match target {
+            SidebarIconTarget::Tab(id) => self
+                .tabs
+                .iter()
+                .find(|tab| tab.id == id)
+                .and_then(|tab| tab.icon_source.clone()),
+            SidebarIconTarget::Group(None) => self.sidebar_ungrouped_icon_source.clone(),
+            SidebarIconTarget::Group(Some(id)) => self
+                .sidebar_groups
+                .iter()
+                .find(|group| group.id == id)
+                .and_then(|group| group.icon_source.clone()),
+        }
+    }
+
+    fn set_sidebar_icon(
         &mut self,
-        id: usize,
+        target: SidebarIconTarget,
         source: Option<String>,
         svg: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) else {
-            return;
+        let changed = match target {
+            SidebarIconTarget::Tab(id) => {
+                let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) else {
+                    return;
+                };
+                self.pending_icon_sources.remove(&target);
+                tab.icon_source = source;
+                tab.icon_svg = svg;
+                tab.dirty = true;
+                true
+            }
+            SidebarIconTarget::Group(None) => {
+                self.pending_icon_sources.remove(&target);
+                self.sidebar_ungrouped_icon_source = source;
+                self.sidebar_ungrouped_icon_svg = svg;
+                true
+            }
+            SidebarIconTarget::Group(Some(id)) => {
+                let Some(group) = self.sidebar_groups.iter_mut().find(|group| group.id == id)
+                else {
+                    return;
+                };
+                self.pending_icon_sources.remove(&target);
+                group.icon_source = source;
+                group.icon_svg = svg;
+                true
+            }
         };
-        self.pending_icon_sources.remove(&id);
-        tab.icon_source = source;
-        tab.icon_svg = svg;
-        tab.dirty = true;
-        self.config_dirty = true;
-        self.status = tr(cx, "标签图标已更改；保存配置后持久化");
-        cx.notify();
+        if changed {
+            self.config_dirty = true;
+            self.status = tr(cx, "分组或标签图标已更改；保存配置后持久化");
+            cx.notify();
+        }
     }
 
-    pub(crate) fn set_tab_icon_from_source(
+    pub(crate) fn set_sidebar_icon_from_source(
         &mut self,
-        id: usize,
+        target: SidebarIconTarget,
         source: String,
         cx: &mut Context<Self>,
     ) {
         let source = source.trim().to_owned();
         if source.is_empty() {
-            self.set_tab_icon(id, None, None, cx);
+            self.set_sidebar_icon(target, None, None, cx);
         } else if let Some(name) = source.strip_prefix("builtin:") {
             if tab_icons::builtin(name).is_some() {
-                self.set_tab_icon(id, Some(format!("builtin:{name}")), None, cx);
+                self.set_sidebar_icon(target, Some(format!("builtin:{name}")), None, cx);
             } else {
                 self.status = tr(cx, "找不到该内置图标");
                 cx.notify();
@@ -2586,7 +2721,7 @@ impl CommandWorkspace {
                 cx.notify();
                 return;
             }
-            self.pending_icon_sources.insert(id, source.clone());
+            self.pending_icon_sources.insert(target, source.clone());
             let owner = cx.entity().downgrade();
             let client = cx.http_client();
             let timeout = cx
@@ -2619,12 +2754,12 @@ impl CommandWorkspace {
                         futures::future::Either::Right(_) => Err("SVG 下载超时（15 秒）。".into()),
                     };
                 let _ = owner.update(cx, |view, cx| {
-                    if view.pending_icon_sources.get(&id) != Some(&source) {
+                    if view.pending_icon_sources.get(&target) != Some(&source) {
                         return;
                     }
-                    view.pending_icon_sources.remove(&id);
+                    view.pending_icon_sources.remove(&target);
                     match result {
-                        Ok(data) => view.set_tab_icon(id, Some(source), Some(data), cx),
+                        Ok(data) => view.set_sidebar_icon(target, Some(source), Some(data), cx),
                         Err(error) => {
                             view.status = error;
                             cx.notify();
@@ -2648,7 +2783,7 @@ impl CommandWorkspace {
                 return;
             };
             match tab_icons::read_local(&local) {
-                Ok(data) => self.set_tab_icon(id, Some(local), Some(data), cx),
+                Ok(data) => self.set_sidebar_icon(target, Some(local), Some(data), cx),
                 Err(error) => {
                     self.status = error;
                     cx.notify();
@@ -2657,18 +2792,48 @@ impl CommandWorkspace {
         }
     }
 
-    fn open_icon_picker(&mut self, id: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(tab) = self.tabs.iter().find(|tab| tab.id == id) else {
-            return;
-        };
-        let current = tab.icon_source.clone().unwrap_or_default();
+    #[cfg(any(test, feature = "ui-test"))]
+    pub(crate) fn set_tab_icon_from_source(
+        &mut self,
+        id: usize,
+        source: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_sidebar_icon_from_source(SidebarIconTarget::Tab(id), source, cx);
+    }
+
+    fn open_icon_picker(
+        &mut self,
+        target: SidebarIconTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match target {
+            SidebarIconTarget::Tab(id) if !self.tabs.iter().any(|tab| tab.id == id) => return,
+            SidebarIconTarget::Group(Some(id))
+                if !self.sidebar_groups.iter().any(|group| group.id == id) =>
+            {
+                return;
+            }
+            SidebarIconTarget::Group(None) if !self.has_sidebar_groups() => return,
+            _ => {}
+        }
+        let current = self.sidebar_icon_source(target).unwrap_or_default();
+        let title = tr(
+            cx,
+            if matches!(target, SidebarIconTarget::Tab(_)) {
+                "选择标签图标"
+            } else {
+                "选择分组图标"
+            },
+        );
         let owner = cx.entity().downgrade();
         let picker =
-            cx.new(|cx| crate::icon_picker::IconPicker::new(owner, id, current, window, cx));
-        window.open_dialog(cx, move |dialog, _, cx| {
+            cx.new(|cx| crate::icon_picker::IconPicker::new(owner, target, current, window, cx));
+        window.open_dialog(cx, move |dialog, _, _| {
             let selected = picker.clone();
             dialog
-                .title(tr(cx, "选择标签图标"))
+                .title(title.clone())
                 .w(px(510.))
                 .on_ok(move |_, w, cx| {
                     selected.update(cx, |picker, cx| picker.confirm_selection(w, cx))
@@ -2694,6 +2859,7 @@ impl CommandWorkspace {
         if ["未分组", "Unassigned"]
             .iter()
             .any(|reserved| normalized == reserved.to_lowercase())
+            || normalized == self.ungrouped_label(cx).to_lowercase()
         {
             return Err(tr(cx, "这个名称保留给未分组区域").to_string());
         }
@@ -2722,12 +2888,44 @@ impl CommandWorkspace {
             id,
             name,
             collapsed: false,
+            icon_source: None,
+            icon_svg: None,
         });
         self.sidebar_ungrouped_collapsed = false;
         self.config_dirty = true;
         self.status = tr(cx, "已创建分组；保存配置后生效");
         cx.notify();
         Ok(id)
+    }
+
+    fn rename_ungrouped_section_named(
+        &mut self,
+        name: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(tr(cx, "分组名称不能为空").to_string());
+        }
+        if name.chars().count() > 48 {
+            return Err(tr(cx, "分组名称不能超过 48 个字符").to_string());
+        }
+        if self
+            .sidebar_groups
+            .iter()
+            .any(|group| group.name.eq_ignore_ascii_case(name))
+        {
+            return Err(tr(cx, "已有同名分组").to_string());
+        }
+        let default_name = tr(cx, "未分组");
+        let next_name = (name != default_name).then(|| name.to_owned());
+        if self.sidebar_ungrouped_name != next_name {
+            self.sidebar_ungrouped_name = next_name;
+            self.config_dirty = true;
+            self.status = tr(cx, "分组名称已修改；保存配置后生效");
+            cx.notify();
+        }
+        Ok(())
     }
 
     fn rename_sidebar_group_named(
@@ -2766,6 +2964,7 @@ impl CommandWorkspace {
             return;
         };
         if self.tabs[index].sidebar_group_id == group_id {
+            self.sidebar_tab_group_target = None;
             self.tab_menu = None;
             self.tab_group_options_open = false;
             return;
@@ -2780,6 +2979,8 @@ impl CommandWorkspace {
         }
         self.config_dirty = true;
         self.sidebar_hovered = None;
+        self.sidebar_tab_group_target = None;
+        self.sidebar_group_menu = None;
         self.tab_menu = None;
         self.tab_group_options_open = false;
         self.scroll_sidebar_to_tab(index);
@@ -2803,6 +3004,7 @@ impl CommandWorkspace {
             SidebarGroupEdit::Rename(group_id) => {
                 self.rename_sidebar_group_named(group_id, name, cx)
             }
+            SidebarGroupEdit::RenameUngrouped => self.rename_ungrouped_section_named(name, cx),
         }
     }
 
@@ -2829,6 +3031,7 @@ impl CommandWorkspace {
                 .find(|group| group.id == group_id)
                 .map(|group| group.name.clone())
                 .unwrap_or_default(),
+            SidebarGroupEdit::RenameUngrouped => self.ungrouped_label(cx),
         };
         let group_name = cx.new(|cx| {
             InputState::new(window, cx)
@@ -2836,13 +3039,19 @@ impl CommandWorkspace {
                 .placeholder(tr(cx, "分组名称"))
         });
         let group_name_focus = group_name.focus_handle(cx);
+        let editor_id = self.sidebar_group_editor_epoch;
+        self.sidebar_group_editor_epoch = self.sidebar_group_editor_epoch.wrapping_add(1);
+        let input_id = ("sidebar-group-name-input", editor_id);
+        let cancel_id = ("cancel-sidebar-group", editor_id);
+        let save_id = ("save-sidebar-group", editor_id);
+        let group_name_entity_id = group_name.entity_id();
         self.sidebar_group_name_input = Some(group_name.clone());
         let group_name_for_dialog = group_name.clone();
         let owner = cx.entity().downgrade();
         let title = tr(
             cx,
             match edit {
-                SidebarGroupEdit::Rename(_) => "重命名分组",
+                SidebarGroupEdit::Rename(_) | SidebarGroupEdit::RenameUngrouped => "重命名分组",
                 _ => "新建分组",
             },
         );
@@ -2854,13 +3063,19 @@ impl CommandWorkspace {
             dialog
                 .on_close(move |_, _, cx| {
                     let _ = close_owner.update(cx, |view, _| {
-                        view.sidebar_group_name_input = None;
+                        if view
+                            .sidebar_group_name_input
+                            .as_ref()
+                            .is_some_and(|input| input.entity_id() == group_name_entity_id)
+                        {
+                            view.sidebar_group_name_input = None;
+                        }
                     });
                 })
                 .title(title.clone())
                 .w(px(400.))
                 .child(input(
-                    "sidebar-group-name-input",
+                    input_id,
                     &group_name_for_dialog,
                     "分组名称",
                     false,
@@ -2870,37 +3085,42 @@ impl CommandWorkspace {
                     row()
                         .justify_end()
                         .py(px(GAP))
-                        .child(button("cancel-sidebar-group", "取消", None, cx).on_click(
+                        .child(button(cancel_id, "取消", None, cx).on_click(
                             move |_, window, cx| {
                                 let _ = cancel_owner.update(cx, |view, _| {
-                                    view.sidebar_group_name_input = None;
+                                    if view.sidebar_group_name_input.as_ref().is_some_and(|input| {
+                                        input.entity_id() == group_name_entity_id
+                                    }) {
+                                        view.sidebar_group_name_input = None;
+                                    }
                                 });
                                 window.close_dialog(cx);
                             },
                         ))
-                        .child(
-                            button("save-sidebar-group", "确定", None, cx)
-                                .primary()
-                                .on_click(move |_, window, cx| {
-                                    let name = save_name.read(cx).value().trim().to_owned();
-                                    match save_owner.update(cx, |view, cx| {
-                                        let result =
-                                            view.commit_sidebar_group_edit(edit, &name, cx);
-                                        view.sidebar_group_name_input = None;
-                                        result
+                        .child(button(save_id, "确定", None, cx).primary().on_click(
+                            move |_, window, cx| {
+                                let name = save_name.read(cx).value().trim().to_owned();
+                                match save_owner.update(cx, |view, cx| {
+                                    let result = view.commit_sidebar_group_edit(edit, &name, cx);
+                                    if view.sidebar_group_name_input.as_ref().is_some_and(|input| {
+                                        input.entity_id() == group_name_entity_id
                                     }) {
-                                        Ok(Ok(())) => window.close_dialog(cx),
-                                        Ok(Err(error)) => {
-                                            let _ = save_owner.update(cx, |view, cx| {
-                                                view.status = error;
-                                                cx.notify();
-                                            });
-                                            window.close_dialog(cx);
-                                        }
-                                        Err(_) => window.close_dialog(cx),
+                                        view.sidebar_group_name_input = None;
                                     }
-                                }),
-                        ),
+                                    result
+                                }) {
+                                    Ok(Ok(())) => window.close_dialog(cx),
+                                    Ok(Err(error)) => {
+                                        let _ = save_owner.update(cx, |view, cx| {
+                                            view.status = error;
+                                            cx.notify();
+                                        });
+                                        window.close_dialog(cx);
+                                    }
+                                    Err(_) => window.close_dialog(cx),
+                                }
+                            },
+                        )),
                 )
         });
         window.focus(&group_name_focus, cx);
@@ -2974,6 +3194,11 @@ impl CommandWorkspace {
         }
         self.sidebar_ungrouped_collapsed = false;
         self.config_dirty = true;
+        self.pending_icon_sources
+            .remove(&SidebarIconTarget::Group(Some(group_id)));
+        self.sidebar_group_menu = None;
+        self.sidebar_group_drag_target = None;
+        self.sidebar_tab_group_target = None;
         self.tab_menu = None;
         self.tab_group_options_open = false;
         self.status = i18n::format(
@@ -2982,6 +3207,87 @@ impl CommandWorkspace {
             &[&name],
         );
         self.scroll_sidebar_to_tab(self.active);
+        cx.notify();
+    }
+
+    fn reorder_sidebar_group(
+        &mut self,
+        source_id: u64,
+        target_id: u64,
+        after: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.sidebar_group_drag_target = None;
+        if source_id == target_id {
+            cx.notify();
+            return;
+        }
+        let (Some(source), Some(target)) = (
+            self.sidebar_groups
+                .iter()
+                .position(|group| group.id == source_id),
+            self.sidebar_groups
+                .iter()
+                .position(|group| group.id == target_id),
+        ) else {
+            return;
+        };
+        let mut insert = target + usize::from(after);
+        if source < insert {
+            insert -= 1;
+        }
+        if source == insert {
+            cx.notify();
+            return;
+        }
+        let group = self.sidebar_groups.remove(source);
+        self.sidebar_groups.insert(insert, group);
+        self.config_dirty = true;
+        self.sidebar_group_menu = None;
+        self.sidebar_scroll.scroll_to_item(0);
+        self.status = tr(cx, "分组顺序已调整；保存配置后生效");
+        cx.notify();
+    }
+
+    fn move_sidebar_group(&mut self, group_id: u64, direction: isize, cx: &mut Context<Self>) {
+        let Some(index) = self
+            .sidebar_groups
+            .iter()
+            .position(|group| group.id == group_id)
+        else {
+            return;
+        };
+        let target = index as isize + direction;
+        if target < 0 || target >= self.sidebar_groups.len() as isize {
+            return;
+        }
+        let neighbor = self.sidebar_groups[target as usize].id;
+        self.reorder_sidebar_group(group_id, neighbor, direction > 0, cx);
+    }
+
+    fn show_sidebar_group_menu(
+        &mut self,
+        group_id: Option<u64>,
+        x: f32,
+        y: f32,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        if group_id.is_some_and(|id| !self.sidebar_groups.iter().any(|group| group.id == id))
+            || (group_id.is_none() && !self.has_sidebar_groups())
+        {
+            return;
+        }
+        let viewport = window.viewport_size();
+        let width = 224.;
+        let height = 280.;
+        self.sidebar_group_menu = Some((
+            group_id,
+            x.min(f32::from(viewport.width) - width - 8.).max(8.),
+            y.min(f32::from(viewport.height) - height - 8.).max(8.),
+        ));
+        self.tab_menu = None;
+        self.tab_group_options_open = false;
         cx.notify();
     }
 
@@ -2997,7 +3303,7 @@ impl CommandWorkspace {
             } else {
                 false
             }
-        } else if !self.sidebar_groups.is_empty() {
+        } else if self.has_sidebar_groups() {
             self.sidebar_ungrouped_collapsed = !self.sidebar_ungrouped_collapsed;
             true
         } else {
@@ -3114,7 +3420,9 @@ impl CommandWorkspace {
                 )
                 .ghost()
                 .w_full()
+                .justify_start()
                 .on_click(cx.listener(move |view, _, window, cx| {
+                    view.sidebar_group_menu = None;
                     view.tab_menu = None;
                     view.tab_group_options_open = false;
                     view.open_sidebar_group_editor(
@@ -3125,19 +3433,31 @@ impl CommandWorkspace {
                 })),
             );
         } else {
+            let ungrouped_name = self.ungrouped_label(cx);
             options = options.child(
-                button(
-                    "context-group-ungrouped",
-                    "未分组",
-                    current_group.is_none().then_some(IconName::Check),
-                    cx,
-                )
-                .ghost()
-                .w_full()
-                .disabled(current_group.is_none())
-                .on_click(cx.listener(move |view, _, _, cx| {
-                    view.assign_tab_to_group(tab_id, None, cx);
-                })),
+                Button::new("context-group-ungrouped")
+                    .accessibility_label(ungrouped_name.clone())
+                    .with_size(Size::Medium)
+                    .h(px(CONTROL))
+                    .flex_shrink_0()
+                    .px(px(BUTTON_PADDING))
+                    .gap(px(GAP))
+                    .when(current_group.is_none(), |button| {
+                        button.icon(Icon::new(IconName::Check).size(px(ICON)))
+                    })
+                    .child(
+                        div()
+                            .text_size(px(theme::font_size(cx)))
+                            .font_weight(theme::font_weight(cx))
+                            .child(ungrouped_name),
+                    )
+                    .ghost()
+                    .w_full()
+                    .justify_start()
+                    .disabled(current_group.is_none())
+                    .on_click(cx.listener(move |view, _, _, cx| {
+                        view.assign_tab_to_group(tab_id, None, cx);
+                    })),
             );
             for group in &self.sidebar_groups {
                 let group_id = group.id;
@@ -3163,6 +3483,7 @@ impl CommandWorkspace {
                     .tooltip(full_name)
                     .ghost()
                     .w_full()
+                    .justify_start()
                     .disabled(selected)
                     .on_click(cx.listener(move |view, _, _, cx| {
                         view.assign_tab_to_group(tab_id, Some(group_id), cx);
@@ -3178,7 +3499,9 @@ impl CommandWorkspace {
                 )
                 .ghost()
                 .w_full()
+                .justify_start()
                 .on_click(cx.listener(move |view, _, window, cx| {
+                    view.sidebar_group_menu = None;
                     view.tab_menu = None;
                     view.tab_group_options_open = false;
                     view.open_sidebar_group_editor(
@@ -3198,21 +3521,69 @@ impl CommandWorkspace {
             .child(options)
     }
 
+    fn sidebar_section_icon(
+        &self,
+        group_id: Option<u64>,
+        expanded: bool,
+        size: f32,
+        foreground: u32,
+    ) -> gpui::AnyElement {
+        let (source, svg) = match group_id {
+            None => (
+                self.sidebar_ungrouped_icon_source.as_deref(),
+                self.sidebar_ungrouped_icon_svg.as_deref(),
+            ),
+            Some(id) => self
+                .sidebar_groups
+                .iter()
+                .find(|group| group.id == id)
+                .map(|group| (group.icon_source.as_deref(), group.icon_svg.as_deref()))
+                .unwrap_or((None, None)),
+        };
+        if let Some(bytes) = source
+            .and_then(|source| source.strip_prefix("builtin:"))
+            .and_then(tab_icons::builtin)
+        {
+            gpui::svg()
+                .data(bytes)
+                .size(px(size))
+                .text_color(rgb(foreground))
+                .into_any_element()
+        } else if let Some(svg) = svg {
+            gpui::svg()
+                .data(svg.as_bytes())
+                .size(px(size))
+                .text_color(rgb(foreground))
+                .into_any_element()
+        } else {
+            Icon::new(if expanded {
+                IconName::FolderOpen
+            } else {
+                IconName::Folder
+            })
+            .size(px(size))
+            .text_color(rgb(foreground))
+            .into_any_element()
+        }
+    }
+
     fn sidebar_section_header(
         &self,
         group_id: Option<u64>,
         show_details: bool,
+        folded: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let key = group_id.unwrap_or(u64::MAX);
         let group = group_id.and_then(|id| self.sidebar_groups.iter().find(|group| group.id == id));
         let name = group
             .map(|group| group.name.clone())
-            .unwrap_or_else(|| tr(cx, "未分组").to_string());
+            .unwrap_or_else(|| self.ungrouped_label(cx));
         let collapsed = group
             .map(|group| group.collapsed)
             .unwrap_or(self.sidebar_ungrouped_collapsed);
         let active_in_section = collapsed && self.tabs[self.active].sidebar_group_id == group_id;
+        let p = palette(cx);
         let toggle_label = format!(
             "{}：{}",
             tr(
@@ -3230,6 +3601,8 @@ impl CommandWorkspace {
         } else {
             IconName::ChevronDown
         };
+        let section_icon = self.sidebar_section_icon(group_id, !collapsed, 18., p.focus);
+        let label_color = if active_in_section { p.focus } else { p.muted };
         let toggle = Button::new(("sidebar-group-toggle", key))
             .icon(Icon::new(toggle_icon).size(px(ICON)))
             .accessibility_label(toggle_label.clone())
@@ -3242,22 +3615,60 @@ impl CommandWorkspace {
             .gap(px(GAP))
             .justify_start()
             .child(
-                div()
+                row()
                     .flex_1()
                     .min_w_0()
-                    .truncate()
-                    .text_size(px(theme::font_size(cx)))
-                    .font_weight(theme::font_weight(cx))
-                    .text_color(rgb(if active_in_section {
-                        palette(cx).focus
-                    } else {
-                        palette(cx).muted
-                    }))
-                    .child(name.clone()),
+                    .items_center()
+                    .gap(px(GAP))
+                    .child(
+                        frame(("sidebar-group-icon-slot", key))
+                            .size(px(20.))
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(section_icon),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(theme::font_size(cx)))
+                            .font_weight(theme::font_weight(cx))
+                            .text_color(rgb(label_color))
+                            .child(name.clone()),
+                    ),
             )
             .on_click(cx.listener(move |view, _, _, cx| {
                 view.toggle_sidebar_group(group_id, cx);
             }));
+        let folded_icon = self.sidebar_section_icon(group_id, !collapsed, 18., p.focus);
+        let folded_badge = frame(("sidebar-group-icon-badge", key))
+            .relative()
+            .size(px(30.))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(8.))
+            .border_1()
+            .border_color(gpui::Hsla::from(rgb(p.focus)).opacity(0.72))
+            .bg(gpui::Hsla::from(rgb(p.focus)).opacity(0.16))
+            .child(folded_icon)
+            .child(
+                frame(("sidebar-group-state", key))
+                    .absolute()
+                    .right(px(0.))
+                    .bottom(px(0.))
+                    .size(px(9.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .bg(rgb(p.sidebar))
+                    .child(Icon::new(toggle_icon).size(px(7.)).text_color(rgb(p.focus))),
+            );
         let mut header = row()
             .w_full()
             .h(px(CONTROL))
@@ -3268,63 +3679,442 @@ impl CommandWorkspace {
             .child(if show_details {
                 toggle.into_any_element()
             } else {
-                icon_button(
-                    ("sidebar-group-toggle", key),
-                    &toggle_label,
-                    IconName::FolderOpen,
-                    cx,
-                )
-                .on_click(cx.listener(move |view, _, _, cx| {
-                    view.toggle_sidebar_group(group_id, cx);
-                }))
-                .into_any_element()
+                Button::new(("sidebar-group-toggle", key))
+                    .accessibility_label(toggle_label.clone())
+                    .tooltip(toggle_label.clone())
+                    .ghost()
+                    .with_size(Size::Medium)
+                    .size(px(CONTROL))
+                    .p_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(folded_badge)
+                    .on_click(cx.listener(move |view, _, _, cx| {
+                        view.toggle_sidebar_group(group_id, cx);
+                    }))
+                    .into_any_element()
             });
         if show_details {
             if let Some(group_id) = group_id {
-                let owner = cx.entity().downgrade();
-                let group_name = name.clone();
-                let menu_label = i18n::format(cx, "分组操作：{}", &[&group_name]);
+                let drag_label = tr(cx, "拖动以重新排序分组");
+                let drag_preview_label = i18n::format(cx, "移动分组「{}」", &[&name]);
+                let drag_tooltip = drag_label.clone();
                 header = header.child(
-                    icon_button(
-                        ("sidebar-group-menu", group_id),
-                        &menu_label,
-                        IconName::Ellipsis,
-                        cx,
-                    )
-                    .dropdown_menu(move |mut menu, _, _| {
-                        let rename_owner = owner.clone();
-                        let rename = menu_item("重命名分组")
-                            .icon(Icon::new(IconName::Settings2))
-                            .on_click(move |_, window, cx| {
-                                let _ = rename_owner.update(cx, |view, cx| {
-                                    view.open_sidebar_group_editor(
-                                        SidebarGroupEdit::Rename(group_id),
-                                        window,
-                                        cx,
-                                    );
-                                });
-                            });
-                        let delete_owner = owner.clone();
-                        let delete = menu_item("删除分组…")
-                            .icon(Icon::new(IconName::Trash))
-                            .on_click(move |_, window, cx| {
-                                let _ = delete_owner.update(cx, |view, cx| {
-                                    view.request_delete_sidebar_group(group_id, window, cx);
-                                });
-                            });
-                        menu = menu.item(rename).separator().item(delete);
-                        menu
-                    }),
+                    frame(("sidebar-group-drag-handle", group_id))
+                        .role(gpui::Role::Button)
+                        .aria_label(drag_label)
+                        .tooltip(move |window, cx| {
+                            gpui::component::tooltip::Tooltip::new(drag_tooltip.clone())
+                                .build(window, cx)
+                        })
+                        .size(px(CONTROL))
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(RADIUS))
+                        .cursor(gpui::CursorStyle::PointingHand)
+                        .hover(|style| style.bg(rgb(p.hover)))
+                        .child(
+                            Icon::new(IconName::GripVertical)
+                                .size(px(ICON))
+                                .text_color(rgb(p.muted)),
+                        )
+                        .on_drag(SidebarGroupDrag { group_id }, move |_, _, _, cx| {
+                            let label = drag_preview_label.clone();
+                            cx.new(move |_| RowDragPreview { label })
+                        }),
                 );
             }
+            let menu_label = i18n::format(cx, "分组操作：{}", &[&name]);
+            header = header.child(
+                Button::new(("sidebar-group-menu", key))
+                    .icon(Icon::new(IconName::Ellipsis).size(px(ICON)))
+                    .ghost()
+                    .tooltip(menu_label.clone())
+                    .accessibility_label(menu_label)
+                    .with_size(Size::Medium)
+                    .size(px(CONTROL))
+                    .flex_shrink_0()
+                    .on_click(cx.listener(move |view, _, window, cx| {
+                        cx.stop_propagation();
+                        let point = window.mouse_position();
+                        view.show_sidebar_group_menu(
+                            group_id,
+                            f32::from(point.x),
+                            f32::from(point.y),
+                            window,
+                            cx,
+                        );
+                    })),
+            );
         }
-        frame(("sidebar-group-header", key))
+        let group_drop_target = self.sidebar_tab_group_target == Some(group_id);
+        let members = self
+            .tabs
+            .iter()
+            .filter(|tab| tab.sidebar_group_id == group_id)
+            .count();
+        let mut section = frame(("sidebar-group-header", key))
+            .relative()
             .w_full()
             .h(px(CONTROL))
             .flex_shrink_0()
             .flex()
-            .items_center()
-            .child(header)
+            .items_center();
+        if folded && !collapsed {
+            let cluster_height = CONTROL + members as f32 * (40. + GAP) + 4.;
+            section = section.child(
+                frame(("sidebar-group-rail-wrap", key))
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .top(px(-2.))
+                    .h(px(cluster_height))
+                    .rounded(px(RADIUS + 2.))
+                    .border_1()
+                    .border_color(gpui::Hsla::from(rgb(p.focus)).opacity(0.28))
+                    .bg(gpui::Hsla::from(rgb(p.focus)).opacity(0.09)),
+            );
+        }
+        section = section.child(header);
+        section = section
+            .when(group_drop_target, |section| {
+                section
+                    .bg(gpui::Hsla::from(rgb(p.focus)).opacity(0.18))
+                    .border_1()
+                    .border_color(rgb(p.focus))
+            })
+            .when_some(
+                self.sidebar_group_drag_target
+                    .filter(|(target_id, _)| Some(*target_id) == group_id),
+                |section, (_, after)| {
+                    section.child(
+                        frame(("sidebar-group-drop-indicator", key))
+                            .absolute()
+                            .left_0()
+                            .right_0()
+                            .h(px(2.))
+                            .when(after, |line| line.bottom_0())
+                            .when(!after, |line| line.top_0())
+                            .bg(rgb(p.focus)),
+                    )
+                },
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |view, event: &gpui::MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    view.show_sidebar_group_menu(
+                        group_id,
+                        f32::from(event.position.x),
+                        f32::from(event.position.y),
+                        window,
+                        cx,
+                    );
+                }),
+            )
+            .on_drag_move::<TabDrag>({
+                let owner = cx.entity().downgrade();
+                move |event, _, cx| {
+                    let drag = event.drag(cx).clone();
+                    let inside = event.bounds.contains(&event.event.position);
+                    let _ = owner.update(cx, |view, cx| {
+                        if !inside {
+                            if view.sidebar_tab_group_target == Some(group_id) {
+                                view.sidebar_tab_group_target = None;
+                                cx.notify();
+                            }
+                            return;
+                        }
+                        let source_group = view
+                            .tabs
+                            .iter()
+                            .find(|tab| tab.id == drag.tab_id)
+                            .and_then(|tab| tab.sidebar_group_id);
+                        let target = (drag.area == TabArea::Sidebar && source_group != group_id)
+                            .then_some(group_id);
+                        if view.sidebar_tab_group_target != target {
+                            view.sidebar_tab_group_target = target;
+                            cx.notify();
+                        }
+                    });
+                }
+            })
+            .on_drop::<TabDrag>({
+                let owner = cx.entity().downgrade();
+                move |drag, _, cx| {
+                    if drag.area != TabArea::Sidebar {
+                        return;
+                    }
+                    let _ = owner.update(cx, |view, cx| {
+                        view.assign_tab_to_group(drag.tab_id, group_id, cx);
+                        view.sidebar_tab_group_target = None;
+                    });
+                }
+            })
+            .on_drag_move::<SidebarGroupDrag>({
+                let owner = cx.entity().downgrade();
+                move |event, _, cx| {
+                    let drag = event.drag(cx).clone();
+                    let inside = event.bounds.contains(&event.event.position);
+                    let _ = owner.update(cx, |view, cx| {
+                        if !inside {
+                            if view
+                                .sidebar_group_drag_target
+                                .is_some_and(|(target_id, _)| Some(target_id) == group_id)
+                            {
+                                view.sidebar_group_drag_target = None;
+                                cx.notify();
+                            }
+                            return;
+                        }
+                        let (Some(source), Some(target_id)) = (
+                            view.sidebar_groups
+                                .iter()
+                                .position(|group| group.id == drag.group_id),
+                            group_id,
+                        ) else {
+                            return;
+                        };
+                        let Some(destination) = view
+                            .sidebar_groups
+                            .iter()
+                            .position(|group| group.id == target_id)
+                        else {
+                            return;
+                        };
+                        let pointer = f32::from(event.event.position.y);
+                        let center = f32::from(event.bounds.center().y);
+                        let after = if (pointer - center).abs() <= 6. {
+                            source < destination
+                        } else {
+                            pointer > center
+                        };
+                        let target = (drag.group_id != target_id).then_some((target_id, after));
+                        if view.sidebar_group_drag_target != target {
+                            view.sidebar_group_drag_target = target;
+                            cx.notify();
+                        }
+                    });
+                }
+            })
+            .on_drop::<SidebarGroupDrag>({
+                let owner = cx.entity().downgrade();
+                move |drag, _, cx| {
+                    let Some(target_id) = group_id else {
+                        return;
+                    };
+                    let _ = owner.update(cx, |view, cx| {
+                        if let Some((active_target, after)) = view.sidebar_group_drag_target {
+                            if active_target == target_id {
+                                view.reorder_sidebar_group(drag.group_id, target_id, after, cx);
+                            }
+                        }
+                    });
+                }
+            });
+        section
+    }
+
+    fn sidebar_group_context_menu(
+        &self,
+        group_id: Option<u64>,
+        x: f32,
+        y: f32,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let key = group_id.unwrap_or(u64::MAX);
+        let is_default = group_id.is_none();
+        let group_index =
+            group_id.and_then(|id| self.sidebar_groups.iter().position(|group| group.id == id));
+        let mut actions = column().gap(px(2.));
+
+        let rename_owner = cx.entity().downgrade();
+        actions = actions.child(
+            button(
+                ("sidebar-group-context-rename", key),
+                if is_default {
+                    "重命名未分组"
+                } else {
+                    "重命名分组"
+                },
+                Some(IconName::Settings2),
+                cx,
+            )
+            .ghost()
+            .w_full()
+            .justify_start()
+            .on_click(move |_, window, cx| {
+                let _ = rename_owner.update(cx, |view, cx| {
+                    view.sidebar_group_menu = None;
+                    view.open_sidebar_group_editor(
+                        group_id
+                            .map_or(SidebarGroupEdit::RenameUngrouped, SidebarGroupEdit::Rename),
+                        window,
+                        cx,
+                    );
+                });
+            }),
+        );
+
+        let icon_owner = cx.entity().downgrade();
+        actions = actions.child(
+            button(
+                ("sidebar-group-context-icon", key),
+                "选择分组图标",
+                Some(IconName::FolderOpen),
+                cx,
+            )
+            .ghost()
+            .w_full()
+            .justify_start()
+            .on_click(move |_, window, cx| {
+                let _ = icon_owner.update(cx, |view, cx| {
+                    view.sidebar_group_menu = None;
+                    view.open_icon_picker(SidebarIconTarget::Group(group_id), window, cx);
+                });
+            }),
+        );
+
+        if is_default {
+            if self.sidebar_ungrouped_name.is_some() {
+                let reset_owner = cx.entity().downgrade();
+                actions = actions.child(
+                    button(
+                        ("sidebar-group-context-reset-name", key),
+                        "恢复默认分组名称",
+                        Some(IconName::RotateCcw),
+                        cx,
+                    )
+                    .ghost()
+                    .w_full()
+                    .justify_start()
+                    .on_click(move |_, _, cx| {
+                        let _ = reset_owner.update(cx, |view, cx| {
+                            view.sidebar_group_menu = None;
+                            view.sidebar_ungrouped_name = None;
+                            view.config_dirty = true;
+                            view.status = tr(cx, "分组名称已修改；保存配置后生效");
+                            cx.notify();
+                        });
+                    }),
+                );
+            }
+            if self.sidebar_ungrouped_icon_source.is_some()
+                || self.sidebar_ungrouped_icon_svg.is_some()
+            {
+                let reset_owner = cx.entity().downgrade();
+                actions = actions.child(
+                    button(
+                        ("sidebar-group-context-reset-icon", key),
+                        "恢复默认分组图标",
+                        Some(IconName::RotateCcw),
+                        cx,
+                    )
+                    .ghost()
+                    .w_full()
+                    .justify_start()
+                    .on_click(move |_, _, cx| {
+                        let _ = reset_owner.update(cx, |view, cx| {
+                            view.sidebar_group_menu = None;
+                            view.set_sidebar_icon(SidebarIconTarget::Group(None), None, None, cx);
+                        });
+                    }),
+                );
+            }
+        } else if let Some(group_id) = group_id {
+            actions = actions.child(
+                frame("sidebar-group-context-separator")
+                    .h(px(1.))
+                    .my(px(3.))
+                    .bg(rgb(palette(cx).divider)),
+            );
+            let up_owner = cx.entity().downgrade();
+            actions = actions.child(
+                button(
+                    ("sidebar-group-context-move-up", group_id),
+                    "上移分组",
+                    Some(IconName::ArrowUp),
+                    cx,
+                )
+                .ghost()
+                .w_full()
+                .justify_start()
+                .disabled(group_index == Some(0))
+                .on_click(move |_, _, cx| {
+                    let _ = up_owner.update(cx, |view, cx| {
+                        view.move_sidebar_group(group_id, -1, cx);
+                    });
+                }),
+            );
+            let down_owner = cx.entity().downgrade();
+            actions = actions.child(
+                button(
+                    ("sidebar-group-context-move-down", group_id),
+                    "下移分组",
+                    Some(IconName::ArrowDown),
+                    cx,
+                )
+                .ghost()
+                .w_full()
+                .justify_start()
+                .disabled(group_index.is_some_and(|index| index + 1 >= self.sidebar_groups.len()))
+                .on_click(move |_, _, cx| {
+                    let _ = down_owner.update(cx, |view, cx| {
+                        view.move_sidebar_group(group_id, 1, cx);
+                    });
+                }),
+            );
+            actions = actions.child(
+                frame("sidebar-group-context-separator-delete")
+                    .h(px(1.))
+                    .my(px(3.))
+                    .bg(rgb(palette(cx).divider)),
+            );
+            let delete_owner = cx.entity().downgrade();
+            actions = actions.child(
+                button(
+                    ("sidebar-group-context-delete", group_id),
+                    "删除分组…",
+                    Some(IconName::Trash),
+                    cx,
+                )
+                .ghost()
+                .w_full()
+                .justify_start()
+                .on_click(move |_, window, cx| {
+                    let _ = delete_owner.update(cx, |view, cx| {
+                        view.sidebar_group_menu = None;
+                        view.request_delete_sidebar_group(group_id, window, cx);
+                    });
+                }),
+            );
+        }
+
+        frame("sidebar-group-context-menu")
+            .absolute()
+            .left(px(x))
+            .top(px(y))
+            .w(px(224.))
+            .max_h(px(
+                (f32::from(window.viewport_size().height) - y - 8.).max(120.)
+            ))
+            .overflow_y_scroll()
+            .p(px(GAP))
+            .rounded(px(RADIUS))
+            .bg(rgb(palette(cx).panel))
+            .border_1()
+            .border_color(rgb(palette(cx).border))
+            .shadow_md()
+            .occlude()
+            .on_mouse_down_out(cx.listener(|view, _, _, cx| {
+                view.sidebar_group_menu = None;
+                cx.notify();
+            }))
+            .child(actions)
     }
 
     fn sidebar(
@@ -3429,7 +4219,12 @@ impl CommandWorkspace {
         for entry in &entries {
             let index = match *entry {
                 SidebarEntry::Section(group_id) => {
-                    items = items.child(self.sidebar_section_header(group_id, show_details, cx));
+                    items = items.child(self.sidebar_section_header(
+                        group_id,
+                        show_details,
+                        folded,
+                        cx,
+                    ));
                     continue;
                 }
                 SidebarEntry::Tab(index) => index,
@@ -3647,6 +4442,7 @@ impl CommandWorkspace {
                             let y = f32::from(event.position.y)
                                 .min(f32::from(w.viewport_size().height) - 148.)
                                 .max(8.);
+                            v.sidebar_group_menu = None;
                             v.tab_group_options_open = false;
                             v.tab_menu = Some((id, x, y));
                             cx.notify();
@@ -3706,7 +4502,7 @@ impl CommandWorkspace {
                                     })
                                     .on_click(cx.listener(move |v, _, w, cx| {
                                         cx.stop_propagation();
-                                        v.open_icon_picker(id, w, cx);
+                                        v.open_icon_picker(SidebarIconTarget::Tab(id), w, cx);
                                     }))
                             })
                             .child(icon),
@@ -4093,6 +4889,7 @@ impl CommandWorkspace {
                                     let y = (f32::from(event.position.y) + 8.)
                                         .min(f32::from(w.viewport_size().height) - 88.)
                                         .max(8.);
+                                    v.sidebar_group_menu = None;
                                     v.tab_group_options_open = false;
                                     v.tab_menu = Some((tab_id, x, y));
                                     cx.notify();
@@ -5641,18 +6438,26 @@ impl Render for CommandWorkspace {
                 cx.listener(|v, _, _, cx| {
                     v.stop_row_drag_auto_scroll();
                     v.resizing = None;
-                    // on_drop runs after mouse_up; defer cleanup so its insertion side survives.
-                    if v.tab_drag_target.is_none() && v.tab_drag_centers.is_empty() {
+                    // on_drop runs after mouse_up; defer cleanup so insertion targets survive.
+                    if v.tab_drag_target.is_none()
+                        && v.tab_drag_centers.is_empty()
+                        && v.sidebar_tab_group_target.is_none()
+                        && v.sidebar_group_drag_target.is_none()
+                    {
                         return;
                     }
                     let owner = cx.entity().downgrade();
                     cx.defer(move |cx| {
                         let _ = owner.update(cx, |v, cx| {
-                            let had_target = v.tab_drag_target.take().is_some();
-                            let had_centers = !v.tab_drag_centers.is_empty();
+                            let had_transient = v.tab_drag_target.take().is_some()
+                                || !v.tab_drag_centers.is_empty()
+                                || v.sidebar_tab_group_target.is_some()
+                                || v.sidebar_group_drag_target.is_some();
                             v.tab_drag_centers.clear();
+                            v.sidebar_tab_group_target = None;
+                            v.sidebar_group_drag_target = None;
                             v.tab_drop_x = None;
-                            if had_target || had_centers {
+                            if had_transient {
                                 cx.notify();
                             }
                         });
@@ -5664,17 +6469,25 @@ impl Render for CommandWorkspace {
                 cx.listener(|v, _, _, cx| {
                     v.stop_row_drag_auto_scroll();
                     v.resizing = None;
-                    if v.tab_drag_target.is_none() && v.tab_drag_centers.is_empty() {
+                    if v.tab_drag_target.is_none()
+                        && v.tab_drag_centers.is_empty()
+                        && v.sidebar_tab_group_target.is_none()
+                        && v.sidebar_group_drag_target.is_none()
+                    {
                         return;
                     }
                     let owner = cx.entity().downgrade();
                     cx.defer(move |cx| {
                         let _ = owner.update(cx, |v, cx| {
-                            let had_target = v.tab_drag_target.take().is_some();
-                            let had_centers = !v.tab_drag_centers.is_empty();
+                            let had_transient = v.tab_drag_target.take().is_some()
+                                || !v.tab_drag_centers.is_empty()
+                                || v.sidebar_tab_group_target.is_some()
+                                || v.sidebar_group_drag_target.is_some();
                             v.tab_drag_centers.clear();
+                            v.sidebar_tab_group_target = None;
+                            v.sidebar_group_drag_target = None;
                             v.tab_drop_x = None;
-                            if had_target || had_centers {
+                            if had_transient {
                                 cx.notify();
                             }
                         });
@@ -5775,6 +6588,9 @@ impl Render for CommandWorkspace {
                     )
                 },
             )
+            .when_some(self.sidebar_group_menu, |d, (group_id, x, y)| {
+                d.child(self.sidebar_group_context_menu(group_id, x, y, window, cx))
+            })
             .when_some(self.tab_menu, |d, (tab_id, x, y)| {
                 let group_options = self.sidebar_group_options(tab_id, y, window, cx);
                 let menu = frame("tab-context-menu")
@@ -5801,6 +6617,7 @@ impl Render for CommandWorkspace {
                                 button("context-copy", "复制此标签", Some(IconName::Copy), cx)
                                     .ghost()
                                     .w_full()
+                                    .justify_start()
                                     .on_click(cx.listener(move |v, _, w, cx| {
                                         v.tab_menu = None;
                                         if let Some(i) = v.tabs.iter().position(|t| t.id == tab_id)
@@ -5818,10 +6635,11 @@ impl Render for CommandWorkspace {
                                 )
                                 .ghost()
                                 .w_full()
+                                .justify_start()
                                 .on_click(cx.listener(
                                     move |v, _, w, cx| {
                                         v.tab_menu = None;
-                                        v.open_icon_picker(tab_id, w, cx);
+                                        v.open_icon_picker(SidebarIconTarget::Tab(tab_id), w, cx);
                                     },
                                 )),
                             )
@@ -5834,6 +6652,7 @@ impl Render for CommandWorkspace {
                                 )
                                 .ghost()
                                 .w_full()
+                                .justify_start()
                                 .on_click(cx.listener(
                                     |view, _, window, cx| {
                                         view.tab_group_options_open = !view.tab_group_options_open;
@@ -5856,6 +6675,7 @@ impl Render for CommandWorkspace {
                                 button("context-close", "关闭上部标签", Some(IconName::X), cx)
                                     .ghost()
                                     .w_full()
+                                    .justify_start()
                                     .disabled(!self.open_tab_ids.contains(&tab_id))
                                     .on_click(cx.listener(move |v, _, w, cx| {
                                         v.tab_menu = None;
@@ -5869,6 +6689,7 @@ impl Render for CommandWorkspace {
                                 button("context-delete", "删除配置", Some(IconName::Trash), cx)
                                     .ghost()
                                     .w_full()
+                                    .justify_start()
                                     .disabled(self.tabs.len() == 1)
                                     .on_click(cx.listener(move |v, _, w, cx| {
                                         v.tab_menu = None;
@@ -7300,19 +8121,63 @@ mod sidebar_group_tests {
                 assert!(window.try_find("sidebar-add-group").is_some());
                 window.click("sidebar-add-group", cx);
                 window.render_frame(cx);
+                let create_editor_id = view.read(cx).sidebar_group_editor_epoch - 1;
                 window.input("媒体工具", cx);
                 window.render_frame(cx);
                 assert_eq!(
-                    window.find("sidebar-group-name-input").value(),
+                    window
+                        .find(("sidebar-group-name-input", create_editor_id))
+                        .value(),
                     Some("媒体工具")
                 );
-                window.click("save-sidebar-group", cx);
+                window.click(("save-sidebar-group", create_editor_id), cx);
                 window.render_frame(cx);
                 let group_id = view.read(cx).sidebar_groups[0].id;
+                assert!(!window.has_active_dialog(cx), "创建分组后对话框应关闭");
                 assert!(window
                     .try_find(("sidebar-group-header", group_id))
                     .is_some());
                 assert!(window.try_find(("sidebar-tab", 0usize)).is_some());
+
+                // The virtual default group exposes rename and SVG actions in its context menu.
+                window.right_click(("sidebar-group-header", u64::MAX), cx);
+                assert!(window
+                    .try_find(("sidebar-group-context-rename", u64::MAX))
+                    .is_some());
+                assert!(window
+                    .try_find(("sidebar-group-context-icon", u64::MAX))
+                    .is_some());
+                window.right_click(("sidebar-group-header", group_id), cx);
+                assert!(window
+                    .try_find(("sidebar-group-context-rename", group_id))
+                    .is_some());
+                assert!(window
+                    .try_find(("sidebar-group-context-icon", group_id))
+                    .is_some());
+                view.update(cx, |view, cx| {
+                    view.rename_ungrouped_section_named("常用", cx).unwrap();
+                    view.set_sidebar_icon_from_source(
+                        SidebarIconTarget::Group(None),
+                        "builtin:lucide/folder".into(),
+                        cx,
+                    );
+                    view.set_sidebar_icon_from_source(
+                        SidebarIconTarget::Group(Some(group_id)),
+                        "builtin:lucide/folder-open".into(),
+                        cx,
+                    );
+                    view.sidebar_group_menu = None;
+                });
+                window.render_frame(cx);
+                assert_eq!(view.read(cx).ungrouped_label(cx), "常用");
+                assert_eq!(
+                    view.read(cx).sidebar_groups[0].icon_source.as_deref(),
+                    Some("builtin:lucide/folder-open")
+                );
+                assert_eq!(
+                    view.read(cx).sidebar_ungrouped_icon_source.as_deref(),
+                    Some("builtin:lucide/folder")
+                );
 
                 // Move an existing configuration using its row context menu.
                 window.right_click(("sidebar-tab", 0usize), cx);
@@ -7355,6 +8220,17 @@ mod sidebar_group_tests {
                 window.click(("sidebar-group-toggle", group_id), cx);
                 window.render_frame(cx);
                 assert!(window.try_find(("sidebar-tab", 0usize)).is_some());
+                window.click("collapse-sidebar", cx);
+                window.render_frame(cx);
+                let rail_group = window.find(("sidebar-group-rail-wrap", group_id)).bounds();
+                let group_header = window.find(("sidebar-group-header", group_id)).bounds();
+                let group_badge = window.find(("sidebar-group-icon-badge", group_id)).bounds();
+                let grouped_row = window.find(("sidebar-tab", 0usize)).bounds();
+                assert!(rail_group.top() <= group_header.top());
+                assert!(rail_group.bottom() >= grouped_row.bottom());
+                assert!(group_badge.size.width > window.find(("sidebar-icon", 1usize)).bounds().size.width);
+                window.click("collapse-sidebar", cx);
+                window.render_frame(cx);
                 window.click(("sidebar-group-toggle", group_id), cx);
                 view.update(cx, |view, cx| view.save_configuration(cx).unwrap());
                 assert_eq!(
@@ -7366,6 +8242,8 @@ mod sidebar_group_tests {
                 let header = window.find(("sidebar-group-header", group_id)).bounds();
                 let disclosure = window.find(("sidebar-group-toggle", group_id)).bounds();
                 assert_eq!(disclosure.center().x, header.center().x);
+                assert!(window.try_find(("sidebar-group-icon-badge", group_id)).is_some());
+                assert!(window.try_find(("sidebar-group-rail-wrap", group_id)).is_none());
                 assert!(window.try_find("sidebar-scrollbar-lane").is_none());
                 window.remove_window();
                 group_id
@@ -7375,6 +8253,15 @@ mod sidebar_group_tests {
         let saved = store.load().unwrap().unwrap();
         assert_eq!(saved["gpui"]["sidebar_groups"][0]["name"], "媒体工具");
         assert_eq!(saved["gpui"]["sidebar_groups"][0]["collapsed"], true);
+        assert_eq!(
+            saved["gpui"]["sidebar_groups"][0]["icon_source"],
+            "builtin:lucide/folder-open"
+        );
+        assert_eq!(saved["gpui"]["sidebar_ungrouped_name"], "常用");
+        assert_eq!(
+            saved["gpui"]["sidebar_ungrouped_icon_source"],
+            "builtin:lucide/folder"
+        );
         let mut restored = None;
         let restored_window = cx.open_window(size(px(850.), px(800.)), |window, cx| {
             let view = cx.new(|cx| {
@@ -7413,5 +8300,248 @@ mod sidebar_group_tests {
         })
         .unwrap();
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[gpui::test]
+    fn sidebar_groups_drag_reorder_and_move_configurations(cx: &mut TestAppContext) {
+        use gpui::point;
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let handle = cx.open_window(size(px(850.), px(800.)), |window, cx| {
+            let view = cx.new(|cx| {
+                let mut view = CommandWorkspace::new(window, cx);
+                view.reduced_motion = true;
+                view
+            });
+            workspace = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let view = workspace.unwrap();
+        let (media_group, tools_group) = view.update(cx, |view, cx| {
+            (
+                view.create_sidebar_group_named("媒体", cx).unwrap(),
+                view.create_sidebar_group_named("工具", cx).unwrap(),
+            )
+        });
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let from = window
+                .find(("sidebar-group-drag-handle", tools_group))
+                .bounds();
+            let to = window.find(("sidebar-group-header", media_group)).bounds();
+            window.drag(from.center(), point(to.center().x, to.top() + px(2.)), cx);
+            assert_eq!(
+                view.read(cx)
+                    .sidebar_groups
+                    .iter()
+                    .map(|group| group.id)
+                    .collect::<Vec<_>>(),
+                vec![tools_group, media_group],
+                "分组标题把手可拖动调整分组顺序"
+            );
+
+            // The context-menu alternative works when dragging is unavailable.
+            window.right_click(("sidebar-group-header", tools_group), cx);
+            window.click(("sidebar-group-context-move-down", tools_group), cx);
+            assert_eq!(
+                view.read(cx)
+                    .sidebar_groups
+                    .iter()
+                    .map(|group| group.id)
+                    .collect::<Vec<_>>(),
+                vec![media_group, tools_group]
+            );
+
+            let tab_id = view.read(cx).tabs[0].id;
+            window.drag_to(
+                ("sidebar-tab", tab_id),
+                ("sidebar-group-header", media_group),
+                cx,
+            );
+            assert_eq!(
+                view.read(cx).tabs[0].sidebar_group_id,
+                Some(media_group),
+                "配置可直接拖到分组标题改变归属"
+            );
+            window.drag_to(
+                ("sidebar-tab", tab_id),
+                ("sidebar-group-header", u64::MAX),
+                cx,
+            );
+            assert_eq!(view.read(cx).tabs[0].sidebar_group_id, None);
+            let config = view.read(cx).configuration(cx);
+            assert_eq!(config["gpui"]["sidebar_groups"][0]["id"], media_group);
+            window.remove_window();
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    fn ungrouped_context_menu_can_rename_the_default_section(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let handle = cx.open_window(size(px(850.), px(800.)), |window, cx| {
+            let view = cx.new(|cx| {
+                let mut view = CommandWorkspace::new(window, cx);
+                view.reduced_motion = true;
+                view
+            });
+            workspace = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let view = workspace.unwrap();
+        view.update(cx, |view, cx| {
+            view.create_sidebar_group_named("工具", cx).unwrap();
+        });
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.right_click(("sidebar-group-header", u64::MAX), cx);
+            assert!(window
+                .try_find(("sidebar-group-context-rename", u64::MAX))
+                .is_some());
+            view.update(cx, |view, cx| {
+                view.commit_sidebar_group_edit(SidebarGroupEdit::RenameUngrouped, "常用", cx)
+                    .unwrap();
+            });
+            window.render_frame(cx);
+            assert_eq!(view.read(cx).ungrouped_label(cx), "常用");
+
+            window.right_click(("sidebar-group-header", u64::MAX), cx);
+            assert!(window
+                .try_find(("sidebar-group-context-reset-name", u64::MAX))
+                .is_some());
+            window.click(("sidebar-group-context-reset-name", u64::MAX), cx);
+            assert_eq!(view.read(cx).ungrouped_label(cx), "未分组");
+            window.right_click(("sidebar-group-header", u64::MAX), cx);
+            window.click(("sidebar-group-context-rename", u64::MAX), cx);
+            window.render_frame(cx);
+            let editor_id = view.read(cx).sidebar_group_editor_epoch - 1;
+            assert!(window.has_active_dialog(cx));
+            assert_eq!(
+                window.find(("sidebar-group-name-input", editor_id)).value(),
+                Some("未分组")
+            );
+            window.remove_window();
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    fn sidebar_group_icon_picker_and_collapsed_rail_distinguish_groups(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let handle = cx.open_window(size(px(850.), px(800.)), |window, cx| {
+            let view = cx.new(|cx| {
+                let mut view = CommandWorkspace::new(window, cx);
+                view.reduced_motion = true;
+                view
+            });
+            workspace = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let view = workspace.unwrap();
+        let group_id = view.update(cx, |view, cx| {
+            let group_id = view.create_sidebar_group_named("视频", cx).unwrap();
+            view.assign_tab_to_group(0, Some(group_id), cx);
+            group_id
+        });
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.right_click(("sidebar-group-header", group_id), cx);
+            window.click(("sidebar-group-context-icon", group_id), cx);
+            window.render_frame(cx);
+            assert!(window.has_active_dialog(cx));
+        })
+        .unwrap();
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_millis(350));
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window.click("icon-search", cx);
+            window.input("火箭", cx);
+            window.render_frame(cx);
+            assert_eq!(window.find("icon-search").value(), Some("火箭"));
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert!(
+                window.try_find("icon-choice-lucide/rocket").is_some(),
+                "filtered SVG choice should be visible in the icon picker"
+            );
+            assert!(window.find("icon-choice-lucide/rocket").visible());
+            window.click("icon-choice-lucide/rocket", cx);
+            window.render_frame(cx);
+            assert_eq!(
+                view.read(cx).sidebar_groups[0].icon_source.as_deref(),
+                Some("builtin:lucide/rocket")
+            );
+        })
+        .unwrap();
+
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.click("collapse-sidebar", cx);
+            window.render_frame(cx);
+            assert!(
+                window
+                    .try_find(("sidebar-group-icon-badge", group_id))
+                    .is_some(),
+                "folded group must use its framed SVG badge"
+            );
+            assert!(window.try_find(("sidebar-icon", 0usize)).is_some());
+            assert!(
+                window
+                    .try_find(("sidebar-group-rail-wrap", group_id))
+                    .is_some(),
+                "expanded group contents need the rail cluster background"
+            );
+            let badge = window.find(("sidebar-group-icon-badge", group_id)).bounds();
+            let regular_icon = window.find(("sidebar-icon", 0usize)).bounds();
+            let cluster = window.find(("sidebar-group-rail-wrap", group_id)).bounds();
+            assert!(window
+                .try_find(("sidebar-group-header", group_id))
+                .is_some());
+            assert!(window.try_find(("sidebar-tab", 0usize)).is_some());
+            let header = window.find(("sidebar-group-header", group_id)).bounds();
+            let member = window.find(("sidebar-tab", 0usize)).bounds();
+            assert!(badge.size.width > regular_icon.size.width);
+            assert!(cluster.top() <= header.top());
+            assert!(cluster.bottom() >= member.bottom());
+            theme::apply(Theme::Light, cx);
+            window.render_frame(cx);
+            assert_eq!(
+                window.find(("sidebar-group-icon-badge", group_id)).bounds(),
+                badge,
+                "group badge geometry must remain stable in light mode"
+            );
+            assert_eq!(
+                window.find(("sidebar-group-rail-wrap", group_id)).bounds(),
+                cluster,
+                "group membership wrap must remain stable in light mode"
+            );
+            theme::apply(Theme::Dark, cx);
+            window.render_frame(cx);
+            window.click(("sidebar-group-toggle", group_id), cx);
+            window.render_frame(cx);
+            assert!(window
+                .try_find(("sidebar-group-icon-badge", group_id))
+                .is_some());
+            assert!(window
+                .try_find(("sidebar-group-rail-wrap", group_id))
+                .is_none());
+            window.remove_window();
+        })
+        .unwrap();
     }
 }
