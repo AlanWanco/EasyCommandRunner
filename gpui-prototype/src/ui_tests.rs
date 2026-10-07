@@ -242,11 +242,7 @@ fn sidebar_scrollbar_clearance_snapshots(directory: &str, cx: &mut HeadlessAppCo
                 w.find(("sidebar-hover-row-indicator", 22usize)).bounds(),
                 row
             );
-            assert_eq!(
-                w.find(("sidebar-selection-row-indicator", 22usize))
-                    .bounds(),
-                row
-            );
+            assert_eq!(w.find("sidebar-selection-indicator").bounds(), row);
         })
         .unwrap();
         cx.capture_screenshot(handle.into())
@@ -4151,8 +4147,7 @@ mod tests {
             }
             let selected_row = w.find(("sidebar-tab", 26usize)).bounds();
             assert_eq!(
-                w.find(("sidebar-selection-row-indicator", 26usize))
-                    .bounds(),
+                w.find("sidebar-selection-indicator").bounds(),
                 selected_row,
                 "长列表选中背景必须绑定到实际行"
             );
@@ -4188,7 +4183,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn sidebar_selection_stays_on_row_while_hover_highlight_slides(cx: &mut TestAppContext) {
+    fn sidebar_highlights_stay_bound_to_their_rows_without_scrolling(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui::init(cx);
             theme::apply(Theme::Light, cx);
@@ -4201,28 +4196,29 @@ mod tests {
         });
         let view = workspace.unwrap();
         cx.update_window(handle.into(), |_, w, cx| {
-            view.update(cx, |v, _| v.reduced_motion = true);
             w.click("add-tab-title", cx);
             w.click("add-tab-title", cx);
             w.click(("sidebar-tab", 0usize), cx);
-            view.update(cx, |v, cx| {
-                v.reduced_motion = false;
-                cx.notify();
-            });
             w.render_frame(cx);
-            w.hover(("sidebar-tab", 2usize), cx);
             let first = w.find(("sidebar-tab", 0usize)).bounds();
+            w.hover(("sidebar-tab", 2usize), cx);
+            let last = w.find(("sidebar-tab", 2usize)).bounds();
             assert_eq!(
-                w.find("sidebar-hover-indicator").bounds().top(),
-                first.top(),
-                "悬停高亮不应瞬移"
+                w.find(("sidebar-hover-row-indicator", 2usize)).bounds(),
+                last,
+                "无滚动条时悬停高亮也必须绑定实际行"
+            );
+            assert_eq!(
+                w.find("sidebar-selection-indicator").bounds(),
+                first,
+                "选中高亮必须留在当前行"
             );
             w.click(("sidebar-tab", 2usize), cx);
             assert_eq!(view.read(cx).active, 2);
             assert_eq!(
                 w.find("sidebar-selection-indicator").bounds(),
-                w.find(("sidebar-tab", 2usize)).bounds(),
-                "选中高亮必须立即贴合目标配置行"
+                last,
+                "选中高亮必须贴合目标配置行"
             );
         })
         .unwrap();
@@ -4232,31 +4228,25 @@ mod tests {
         cx.update_window(handle.into(), |_, w, cx| {
             w.render_frame(cx);
             let first = w.find(("sidebar-tab", 0usize)).bounds();
+            let middle = w.find(("sidebar-tab", 1usize)).bounds();
             let last = w.find(("sidebar-tab", 2usize)).bounds();
-            let hover = w.find("sidebar-hover-indicator").bounds();
-            assert!(
-                hover.top() > first.top() && hover.top() < last.top(),
-                "悬停高亮仍应在两行之间平滑移动: {hover:?}"
+            assert_eq!(
+                w.find(("sidebar-hover-row-indicator", 2usize)).bounds(),
+                last,
+                "等待后悬停高亮仍必须精确贴合行边界"
             );
             assert_eq!(
                 w.find("sidebar-selection-indicator").bounds(),
                 last,
                 "选中高亮不能脱离当前配置行"
             );
-            w.click(("sidebar-tab", 0usize), cx); // reverse while moving
-            view.update(cx, |v, cx| {
-                v.reduced_motion = true;
-                cx.notify();
-            });
+            w.click(("sidebar-tab", 0usize), cx);
             w.render_frame(cx);
-            assert_eq!(
-                w.find("sidebar-selection-indicator").bounds().top(),
-                first.top()
-            );
+            assert_eq!(w.find("sidebar-selection-indicator").bounds(), first);
             w.hover(("sidebar-tab", 1usize), cx);
             assert_eq!(
-                w.find("sidebar-hover-indicator").bounds().top(),
-                w.find(("sidebar-tab", 1usize)).bounds().top()
+                w.find(("sidebar-hover-row-indicator", 1usize)).bounds(),
+                middle
             );
             assert_eq!(view.read(cx).active, 0, "hover 不应切换页面");
             w.remove_window();
