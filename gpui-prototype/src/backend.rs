@@ -101,16 +101,20 @@ impl ConfigStore {
         open: &[usize],
         active: usize,
     ) -> Result<(), String> {
-        let Some(digest) = expected_digest.filter(|digest| Some(*digest) == self.config_digest())
-        else {
-            // No saved file, or Qt/another process replaced it: never apply stale indices.
+        let Some(digest) = expected_digest else {
             return Ok(());
         };
+        // The digest is checked against the current config on load. Re-reading and hashing
+        // the full config on every tab selection needlessly blocks the UI; if another app
+        // changed it, this session is still rejected by load_tab_session().
         let value =
             serde_json::json!({"version":1,"digest":digest,"open_tabs":open,"active":active});
-        write_json_atomically(
+        // This disposable view-state file is atomic but does not force storage to flush
+        // synchronously on the UI thread; losing it can never lose configuration data.
+        write_json_atomically_with_sync(
             &self.session_path(),
             &serde_json::to_string(&value).unwrap(),
+            false,
         )
     }
 
@@ -325,6 +329,14 @@ pub fn read_configuration(path: &Path) -> Result<serde_json::Value, String> {
 }
 
 fn write_json_atomically(path: &Path, serialized: &str) -> Result<(), String> {
+    write_json_atomically_with_sync(path, serialized, true)
+}
+
+fn write_json_atomically_with_sync(
+    path: &Path,
+    serialized: &str,
+    sync_to_disk: bool,
+) -> Result<(), String> {
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -342,7 +354,9 @@ fn write_json_atomically(path: &Path, serialized: &str) -> Result<(), String> {
             .create_new(true)
             .open(&temporary)?;
         file.write_all(serialized.as_bytes())?;
-        file.sync_all()?;
+        if sync_to_disk {
+            file.sync_all()?;
+        }
         drop(file);
         // std::fs::rename replaces an existing file on Windows as well; never unlink first.
         fs::rename(&temporary, path)
@@ -951,6 +965,28 @@ mod tests {
         store.save(&second).unwrap();
         assert_eq!(store.load().unwrap(), Some(second));
         assert_eq!(fs::read_dir(dir.0.join("backup")).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn stale_tab_session_is_rejected_after_external_config_change() {
+        let dir = TestDir::new();
+        let config_path = dir.0.join("config.json");
+        let store = ConfigStore::at(&config_path, dir.0.join("backup"));
+        store
+            .save(&serde_json::json!({"tabs":[{"name":"original"}]}))
+            .unwrap();
+        let digest = store.config_digest().unwrap();
+        fs::write(
+            &config_path,
+            serde_json::to_vec(&serde_json::json!({"tabs":[{"name":"external"}]})).unwrap(),
+        )
+        .unwrap();
+
+        // Selection persistence can trust the cached digest without blocking on a full
+        // config read; stale indices remain unusable because loading verifies the digest.
+        store.save_tab_session(Some(digest), &[0], 0).unwrap();
+        assert!(store.has_tab_session());
+        assert!(store.load_tab_session().is_none());
     }
 
     #[test]

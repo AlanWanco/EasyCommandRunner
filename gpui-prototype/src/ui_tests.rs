@@ -953,6 +953,7 @@ fn page_switch_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
             (panel & 255) as u8,
         ];
         let scale = middle.width() as f32 / 850.;
+        let mut visible_content_pixels = 0;
         for y in ((f32::from(editor.top()) + 16.) * scale) as u32
             ..((f32::from(editor.top()) + 260.) * scale) as u32
         {
@@ -960,22 +961,25 @@ fn page_switch_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
                 ..((f32::from(editor.left()) + 520.) * scale) as u32
             {
                 let pixel = middle.get_pixel(x, y).0;
-                assert!(
-                    pixel[..3]
-                        .iter()
-                        .zip(background)
-                        .all(|(actual, expected)| actual.abs_diff(expected) <= 2),
-                    "{mode:?} 过渡中点应只露出编辑区底色，不可仍有全亮页面：{x},{y}={pixel:?}"
-                );
+                if pixel[..3]
+                    .iter()
+                    .zip(background)
+                    .any(|(actual, expected)| actual.abs_diff(expected) > 2)
+                {
+                    visible_content_pixels += 1;
+                }
             }
         }
+        assert!(
+            visible_content_pixels > 100,
+            "{mode:?} 过渡中点应交叉显示新旧页面内容，不应闪成空白"
+        );
         cx.background_executor()
             .advance_clock(Duration::from_millis(300));
         cx.run_until_parked();
         cx.update_window(handle.into(), |_, window, cx| {
             window.render_frame(cx);
             assert!(window.try_find("page-slide-outgoing").is_none());
-            assert!(window.try_find("page-slide-incoming").is_none());
             assert_eq!(window.find("command-editor").bounds(), editor);
             assert_eq!(window.find("status-bar").bounds(), status_bar);
         })
@@ -995,7 +999,6 @@ fn page_switch_snapshots(directory: &str, cx: &mut HeadlessAppContext) {
             });
             window.render_frame(cx);
             assert!(window.try_find("page-slide-outgoing").is_none());
-            assert!(window.try_find("page-slide-incoming").is_none());
             assert_eq!(window.find("command-editor").bounds(), editor);
             assert_eq!(window.find("status-bar").bounds(), status_bar);
         })

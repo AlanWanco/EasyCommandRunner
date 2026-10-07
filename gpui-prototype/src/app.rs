@@ -72,7 +72,7 @@ struct SidebarGroupDrag {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SidebarEntry {
-    Section(u64),
+    Section(usize),
     Tab(usize),
 }
 
@@ -201,6 +201,7 @@ pub struct CommandWorkspace {
     page_switch_epoch: usize,
     page_switch: Option<(usize, i8)>,
     page_transition: Option<PageTransition>,
+    finish_page_switch_on_next_render: bool,
     pub preview: Entity<TextareaState>,
     tab_scroll: ScrollHandle,
     sidebar_scroll: ScrollHandle,
@@ -316,8 +317,8 @@ impl CommandWorkspace {
             .into_iter()
             .map(SidebarEntry::Tab)
             .collect::<Vec<_>>();
-        for group in &self.sidebar_groups {
-            entries.push(SidebarEntry::Section(group.id));
+        for (group_index, group) in self.sidebar_groups.iter().enumerate() {
+            entries.push(SidebarEntry::Section(group_index));
             if !group.collapsed {
                 entries.extend(
                     grouped_tabs
@@ -346,9 +347,16 @@ impl CommandWorkspace {
         else {
             return tab_index.min(entries.len().saturating_sub(1));
         };
-        entries
+        let group_index = self
+            .sidebar_groups
             .iter()
-            .position(|entry| *entry == SidebarEntry::Section(group_id))
+            .position(|group| group.id == group_id);
+        group_index
+            .and_then(|group_index| {
+                entries
+                    .iter()
+                    .position(|entry| *entry == SidebarEntry::Section(group_index))
+            })
             .unwrap_or(tab_index)
     }
 
@@ -603,6 +611,7 @@ impl CommandWorkspace {
             page_switch_epoch: 0,
             page_switch: None,
             page_transition: None,
+            finish_page_switch_on_next_render: false,
             preview,
             tab_scroll: ScrollHandle::new(),
             sidebar_scroll: ScrollHandle::new(),
@@ -1435,7 +1444,10 @@ impl CommandWorkspace {
                 .saturating_duration_since(transition.started_at)
                 .as_secs_f32()
                 / page_transition::DURATION.as_secs_f32();
-            return transition.freeze(direction, progress);
+            let incoming = transition
+                .incoming_painted
+                .then(|| self.page_snapshot(window, cx));
+            return transition.freeze(incoming, direction, progress);
         }
         if self.open_position().is_none() {
             Rc::new(PageVisual::Empty)
@@ -1447,6 +1459,7 @@ impl CommandWorkspace {
     fn finish_page_switch(&mut self) {
         self.page_switch = None;
         self.page_transition = None;
+        self.finish_page_switch_on_next_render = false;
     }
 
     fn start_page_switch_from(&mut self, direction: i8, outgoing: Rc<PageVisual>, cx: &App) {
@@ -1458,7 +1471,7 @@ impl CommandWorkspace {
             self.page_transition = Some(PageTransition {
                 started_at: cx.background_executor().now(),
                 outgoing,
-                incoming: None,
+                incoming_painted: false,
             });
         }
     }
@@ -1476,7 +1489,7 @@ impl CommandWorkspace {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<(Rc<PageVisual>, Rc<PageSnapshot>, f32, i8)> {
+    ) -> Option<(Rc<PageVisual>, f32, i8)> {
         if self.reduced_motion || cx.reduce_motion() || self.open_tab_ids.is_empty() {
             self.finish_page_switch();
             return None;
@@ -1492,17 +1505,9 @@ impl CommandWorkspace {
             self.finish_page_switch();
             return None;
         }
-        if self.page_transition.as_ref()?.incoming.is_none() {
-            let incoming = self.page_snapshot(window, cx);
-            self.page_transition.as_mut()?.incoming = Some(incoming);
-        }
-        let transition = self.page_transition.as_ref()?;
-        let layers = (
-            transition.outgoing.clone(),
-            transition.incoming.as_ref()?.clone(),
-            progress,
-            direction,
-        );
+        let transition = self.page_transition.as_mut()?;
+        transition.incoming_painted = true;
+        let layers = (transition.outgoing.clone(), progress, direction);
         cx.on_next_frame(window, |view, _, cx| {
             if view.page_switch.is_some() {
                 cx.notify();
@@ -3690,9 +3695,9 @@ impl CommandWorkspace {
             );
         }
         let group_drop_target = self.sidebar_tab_group_target == Some(group_id);
-        let group_reorder_drop_target = self
+        let reorder_target = self
             .sidebar_group_drag_target
-            .is_some_and(|(target_id, _)| target_id == group_id);
+            .filter(|(target_id, _)| *target_id == group_id);
         let mut section = frame(("sidebar-group-header", key))
             .relative()
             .w_full()
@@ -3716,31 +3721,37 @@ impl CommandWorkspace {
                     .bg(gpui::Hsla::from(rgb(p.focus)).opacity(0.09)),
             );
         }
-        section = section.child(header);
-        section = section
-            .when(group_drop_target || group_reorder_drop_target, |section| {
-                section
-                    .bg(gpui::Hsla::from(rgb(p.focus)).opacity(0.18))
+        if group_drop_target {
+            // Moving a configuration into a folder highlights its destination row.
+            // Reordering folders uses only an insertion line below, never this fill.
+            section = section.child(
+                frame(("sidebar-group-membership-target", key))
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .top_0()
+                    .bottom_0()
+                    .rounded(px(RADIUS))
                     .border_1()
                     .border_color(rgb(p.focus))
-                    .rounded(px(RADIUS))
+                    .bg(gpui::Hsla::from(rgb(p.focus)).opacity(0.18)),
+            );
+        }
+        section = section.child(header);
+        section = section
+            .when_some(reorder_target, |section, (_, after)| {
+                section.child(
+                    frame(("sidebar-group-drop-indicator", key))
+                        .absolute()
+                        .left(px(6.))
+                        .right(px(6.))
+                        .h(px(2.))
+                        .rounded_full()
+                        .when(after, |line| line.bottom_0())
+                        .when(!after, |line| line.top_0())
+                        .bg(rgb(p.focus)),
+                )
             })
-            .when_some(
-                self.sidebar_group_drag_target
-                    .filter(|(target_id, _)| *target_id == group_id),
-                |section, (_, after)| {
-                    section.child(
-                        frame(("sidebar-group-drop-indicator", key))
-                            .absolute()
-                            .left_0()
-                            .right_0()
-                            .h(px(2.))
-                            .when(after, |line| line.bottom_0())
-                            .when(!after, |line| line.top_0())
-                            .bg(rgb(p.focus)),
-                    )
-                },
-            )
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |view, event: &gpui::MouseDownEvent, window, cx| {
@@ -3980,32 +3991,36 @@ impl CommandWorkspace {
         let progress = ((width - 56.) / (expanded_width - 56.)).clamp(0., 1.);
         let show_details = progress > 0.015 || !folded;
         let entries = self.sidebar_entries();
-        let groups_by_id = self
-            .sidebar_groups
-            .iter()
-            .enumerate()
-            .map(|(index, group)| (group.id, (index, group)))
-            .collect::<std::collections::HashMap<_, _>>();
+        let open_tab_set = (self.open_tab_ids.len() > 4).then(|| {
+            self.open_tab_ids
+                .iter()
+                .copied()
+                .collect::<std::collections::HashSet<_>>()
+        });
+        let is_open_tab = |id| {
+            open_tab_set
+                .as_ref()
+                .map_or_else(|| self.open_tab_ids.contains(&id), |ids| ids.contains(&id))
+        };
         let group_header_height = if folded { 40. } else { CONTROL };
         let mut row_tops = vec![None; self.tabs.len()];
-        let mut section_tops = std::collections::HashMap::new();
-        let mut section_member_counts = std::collections::HashMap::new();
+        let mut section_tops = vec![None; self.sidebar_groups.len()];
+        let mut section_member_counts = vec![0usize; self.sidebar_groups.len()];
         let mut current_group = None;
         let mut content_height = 0.;
         let mut first_tab_index = None;
         for entry in &entries {
             match entry {
-                SidebarEntry::Section(group_id) => {
-                    current_group = Some(*group_id);
-                    section_tops.insert(*group_id, content_height);
-                    section_member_counts.insert(*group_id, 0usize);
+                SidebarEntry::Section(group_index) => {
+                    current_group = Some(*group_index);
+                    section_tops[*group_index] = Some(content_height);
                     content_height += group_header_height + 4.;
                 }
                 SidebarEntry::Tab(index) => {
                     first_tab_index.get_or_insert(*index);
                     row_tops[*index] = Some(content_height);
-                    if let Some(group_id) = current_group {
-                        *section_member_counts.entry(group_id).or_default() += 1;
+                    if let Some(group_index) = current_group {
+                        section_member_counts[group_index] += 1;
                     }
                     content_height += 40. + 4.;
                 }
@@ -4032,7 +4047,12 @@ impl CommandWorkspace {
             .or_else(|| {
                 self.tabs[self.active]
                     .sidebar_group_id
-                    .and_then(|group_id| section_tops.get(&group_id).copied())
+                    .and_then(|group_id| {
+                        self.sidebar_groups
+                            .iter()
+                            .position(|group| group.id == group_id)
+                    })
+                    .and_then(|group_index| section_tops[group_index])
             })
             .unwrap_or(first_tab_top);
         let selected_y =
@@ -4083,25 +4103,17 @@ impl CommandWorkspace {
             .track_scroll(&self.sidebar_scroll);
         for entry in &entries {
             let index = match *entry {
-                SidebarEntry::Section(group_id) => {
-                    let (group_index, group) = groups_by_id
-                        .get(&group_id)
-                        .copied()
-                        .expect("sidebar entry references a loaded group");
-                    items = items.child(
-                        self.sidebar_section_header(
-                            group,
-                            group_index,
-                            show_details,
-                            folded,
-                            group_header_height,
-                            section_member_counts
-                                .get(&group_id)
-                                .copied()
-                                .unwrap_or_default(),
-                            cx,
-                        ),
-                    );
+                SidebarEntry::Section(group_index) => {
+                    let group = &self.sidebar_groups[group_index];
+                    items = items.child(self.sidebar_section_header(
+                        group,
+                        group_index,
+                        show_details,
+                        folded,
+                        group_header_height,
+                        section_member_counts[group_index],
+                        cx,
+                    ));
                     continue;
                 }
                 SidebarEntry::Tab(index) => index,
@@ -4329,7 +4341,7 @@ impl CommandWorkspace {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .when(self.open_tab_ids.contains(&id), |lane| {
+                                .when(is_open_tab(id), |lane| {
                                     lane.child(
                                         frame(("sidebar-open-marker", id))
                                             .w(px(2.))
@@ -4379,7 +4391,7 @@ impl CommandWorkspace {
                             })
                             .child(icon),
                     )
-                    .when(folded && self.open_tab_ids.contains(&id), |d| {
+                    .when(folded && is_open_tab(id), |d| {
                         // Keep the SVG centered in the collapsed rail. The open
                         // status mark rides the leading edge as an overlay so it
                         // does not turn the narrow rail into a two-column layout.
@@ -4645,20 +4657,23 @@ impl CommandWorkspace {
                     }
                 }
             }));
+        let tab_indices_by_id = self
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(index, tab)| (tab.id, index))
+            .collect::<std::collections::HashMap<_, _>>();
         for tab_id in &self.open_tab_ids {
-            let Some((index, tab)) = self
-                .tabs
-                .iter()
-                .enumerate()
-                .find(|(_, tab)| tab.id == *tab_id)
-            else {
+            let Some(index) = tab_indices_by_id.get(tab_id).copied() else {
                 continue;
             };
+            let tab = &self.tabs[index];
             let tab_id = *tab_id;
+            let label = tab.label(cx);
             tabs = tabs.child(
                 Tab::new()
                     .with_variant(TabVariant::Pill)
-                    .aria_label(tab.label(cx))
+                    .aria_label(label.clone())
                     // Drop on the entire pill, including the blank padding and close-button side.
                     // Only the label starts a drag, so pressing X still closes the tab.
                     .on_drag_move::<TabDrag>({
@@ -4744,11 +4759,10 @@ impl CommandWorkspace {
                                     sidebar_group_id: tab.sidebar_group_id,
                                 },
                                 {
-                                    let label = tab.label(cx);
+                                    let label = label.clone();
                                     move |_, _, _, cx| {
-                                        cx.new(|_| TopTabDragPreview {
-                                            label: label.clone(),
-                                        })
+                                        let label = label.clone();
+                                        cx.new(move |_| TopTabDragPreview { label })
                                     }
                                 },
                             )
@@ -4790,7 +4804,7 @@ impl CommandWorkspace {
                                         ),
                                 )
                             })
-                            .child(tab.label(cx)),
+                            .child(label),
                     )
                     .suffix(
                         icon_button(("close-tab", tab_id), "关闭标签", IconName::X, cx)
@@ -5611,6 +5625,9 @@ impl Render for RowDragPreview {
 
 impl Render for CommandWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.finish_page_switch_on_next_render {
+            self.finish_page_switch();
+        }
         // Win32 WM_MOUSELEAVE updates the platform hover flag but does not emit
         // GPUI MouseExitEvent. A platform refresh is enough to dismiss the preview.
         // The headless Windows test window does not simulate this flag.
@@ -5996,9 +6013,14 @@ impl Render for CommandWorkspace {
                     .flex_col()
                     .child(preview_section),
             );
-        // Render the live editor throughout the transition so focus, selection, input
-        // handlers and IME remain bound to its original entities. Only the plain-text
-        // visual sheets slide; interacting with the editor reveals it immediately.
+        // Keep the live editor's inputs, hitboxes and IME geometry stable. During a
+        // transition only the outgoing immutable snapshot is painted; the incoming page
+        // is the live tree, faded in at its final position instead of rendering a second
+        // full PageSnapshot on every animation frame.
+        let live_page_opacity = slide_layers
+            .as_ref()
+            .map(|(_, progress, _)| page_transition::opacities(*progress).1)
+            .unwrap_or(1.);
         let editor = frame("command-editor")
             .relative()
             .flex()
@@ -6008,11 +6030,16 @@ impl Render for CommandWorkspace {
             .overflow_hidden()
             .capture_any_mouse_down(cx.listener(|view, _, _, cx| {
                 if view.page_switch.is_some() {
-                    view.finish_page_switch();
-                    cx.notify();
+                    // Do not rebuild the hit-test tree until the current click reaches
+                    // its live editor target; the next render ends the transition.
+                    view.finish_page_switch_on_next_render = true;
+                    let owner = cx.entity().downgrade();
+                    cx.defer(move |cx| {
+                        let _ = owner.update(cx, |_, cx| cx.notify());
+                    });
                 }
             }))
-            .child(page.opacity(if slide_layers.is_some() { 0. } else { 1. }));
+            .child(page.opacity(live_page_opacity));
         // Sheets fill the editor viewport; titlebar, sidebar, status and log do not slide.
         let editor = if self.open_tab_ids.is_empty() {
             frame("empty-editor")
@@ -6023,11 +6050,11 @@ impl Render for CommandWorkspace {
                 .text_color(rgb(p.muted))
                 .child(tr(cx, "从左侧配置列表打开一个标签，或新建配置"))
                 .into_any_element()
-        } else if let Some((outgoing, incoming, progress, direction)) = slide_layers {
-            let (old_x, new_x) = page_transition::offsets(content_width, direction, progress);
-            let (old_alpha, new_alpha) = page_transition::opacities(progress);
-            editor
-                .child(
+        } else if let Some((outgoing, progress, direction)) = slide_layers {
+            let (old_x, _) = page_transition::offsets(content_width, direction, progress);
+            let (old_alpha, _) = page_transition::opacities(progress);
+            let editor = if old_alpha > 0.01 {
+                editor.child(
                     frame("page-slide-outgoing")
                         .absolute()
                         .top_0()
@@ -6039,19 +6066,10 @@ impl Render for CommandWorkspace {
                         .bg(rgb(p.panel))
                         .child(outgoing.render(content_width, compact, compact_actions, cx)),
                 )
-                .child(
-                    frame("page-slide-incoming")
-                        .absolute()
-                        .top_0()
-                        .bottom_0()
-                        .left(px(new_x))
-                        .w(px(content_width))
-                        .opacity(new_alpha)
-                        .overflow_hidden()
-                        .bg(rgb(p.panel))
-                        .child(incoming.render(content_width, compact, compact_actions, cx)),
-                )
-                .into_any_element()
+            } else {
+                editor
+            };
+            editor.into_any_element()
         } else {
             editor.into_any_element()
         };
@@ -7658,11 +7676,11 @@ mod page_switch_tests {
             assert_eq!(view.read(cx).page_switch, Some((1, 1)));
             window.render_frame(cx);
             let outgoing = window.find("page-slide-outgoing").bounds();
-            let incoming = window.find("page-slide-incoming").bounds();
+            let live_page = window.find("page-switch-content").bounds();
             assert_eq!(outgoing.left(), editor.left());
-            assert_eq!(incoming.left(), editor.right());
             assert_eq!(outgoing.size, editor.size);
-            assert_eq!(incoming.size, editor.size);
+            assert_eq!(live_page.left(), editor.left());
+            assert_eq!(live_page.size, editor.size);
             assert!(window.try_find("page-switch-swipe").is_none());
             assert!(window.try_find("page-switch-cue").is_none());
             assert_eq!(
@@ -7673,9 +7691,10 @@ mod page_switch_tests {
             assert_eq!(window.find("command-editor").bounds(), editor);
             assert_eq!(window.find("status-bar").bounds(), status_bar);
             window.click("program", cx);
+            window.render_frame(cx); // Finish the transition after the click has reached its live target.
             assert!(
                 view.read(cx).page_switch.is_none(),
-                "点击编辑区应立即结束滑动并保留本次点击"
+                "点击编辑区应在本帧结束滑动并保留本次点击"
             );
             window.input("echo new page", cx);
             assert_eq!(
@@ -7697,9 +7716,9 @@ mod page_switch_tests {
             assert_eq!(view.read(cx).page_switch, Some((epoch + 1, -1)));
             window.render_frame(cx);
             assert_eq!(
-                window.find("page-slide-incoming").bounds().left(),
-                editor.left() - editor.size.width,
-                "前一页应从左侧整页滑入"
+                window.find("page-switch-content").bounds().left(),
+                editor.left(),
+                "淡入的真实编辑页必须保持输入控件几何位置稳定"
             );
             assert_eq!(
                 window.find("page-switch-content").bounds().left(),
@@ -7772,9 +7791,9 @@ mod page_switch_tests {
                 PageVisual::Page(page) => assert_eq!(page.data.program, "旧页中文草稿"),
                 _ => panic!("首次滑出必须是实际旧页内容"),
             }
-            assert_eq!(
-                transition.incoming.as_ref().unwrap().data.program,
-                "新页中文草稿"
+            assert!(
+                transition.incoming_painted,
+                "动画帧只标记真实编辑页可见，不复制传入页快照"
             );
         })
         .unwrap();
@@ -7784,11 +7803,10 @@ mod page_switch_tests {
         cx.update_window(handle.into(), |_, w, cx| {
             w.render_frame(cx);
             let viewport = w.find("command-editor").bounds();
+            let live_page = w.find("page-switch-content").bounds();
             let old = w.find("page-slide-outgoing").bounds();
-            let new = w.find("page-slide-incoming").bounds();
             assert!(old.left() < viewport.left() && old.right() > viewport.left());
-            assert!(new.left() > viewport.left() && new.left() < viewport.right());
-            assert!((old.right() - new.left()).abs() <= px(1.));
+            assert_eq!(w.find("page-switch-content").bounds(), live_page);
             view.update(cx, |v, cx| v.select_tab(0, w, cx));
             assert!(matches!(
                 view.read(cx)
@@ -7820,7 +7838,6 @@ mod page_switch_tests {
             assert!(view.read(cx).page_switch.is_none());
             assert!(view.read(cx).page_transition.is_none());
             assert!(w.try_find("page-slide-outgoing").is_none());
-            assert!(w.try_find("page-slide-incoming").is_none());
             w.click("program", cx);
             w.input("追加", cx);
             assert!(view.read(cx).tabs[0]
@@ -7913,7 +7930,6 @@ mod page_switch_tests {
             window.render_frame(cx);
             assert!(view.read(cx).page_switch.is_none());
             assert!(window.try_find("page-slide-outgoing").is_none());
-            assert!(window.try_find("page-slide-incoming").is_none());
             assert!(view.read(cx).page_transition.is_none());
             assert_eq!(
                 window.find("page-switch-content").bounds().left(),
@@ -7931,7 +7947,6 @@ mod page_switch_tests {
             window.render_frame(cx);
             assert!(view.read(cx).page_switch.is_none());
             assert!(view.read(cx).page_transition.is_none());
-            assert!(window.try_find("page-slide-incoming").is_none());
             assert_eq!(view.read(cx).active, 1);
             window.remove_window();
         })
@@ -8185,6 +8200,47 @@ mod sidebar_group_tests {
             )
         });
         cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            view.update(cx, |view, cx| {
+                view.sidebar_group_drag_target = Some((media_group, false));
+                view.sidebar_tab_group_target = None;
+                cx.notify();
+            });
+            window.render_frame(cx);
+            assert!(
+                window
+                    .try_find(("sidebar-group-drop-indicator", media_group))
+                    .is_some(),
+                "reordering folders shows an insertion line"
+            );
+            assert!(
+                window
+                    .try_find(("sidebar-group-membership-target", media_group))
+                    .is_none(),
+                "reordering folders must not look like dropping a config into one"
+            );
+            view.update(cx, |view, cx| {
+                view.sidebar_group_drag_target = None;
+                view.sidebar_tab_group_target = Some(media_group);
+                cx.notify();
+            });
+            window.render_frame(cx);
+            assert!(
+                window
+                    .try_find(("sidebar-group-membership-target", media_group))
+                    .is_some(),
+                "moving a config into a folder highlights its destination"
+            );
+            assert!(
+                window
+                    .try_find(("sidebar-group-drop-indicator", media_group))
+                    .is_none(),
+                "moving a config must not show a folder reorder marker"
+            );
+            view.update(cx, |view, cx| {
+                view.sidebar_tab_group_target = None;
+                cx.notify();
+            });
             window.render_frame(cx);
             let from = window.find(("sidebar-group-toggle", tools_group)).bounds();
             let to = window.find(("sidebar-group-header", media_group)).bounds();

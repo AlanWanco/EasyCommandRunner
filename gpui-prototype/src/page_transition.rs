@@ -15,11 +15,12 @@ use std::{
 };
 
 pub const DURATION: Duration = Duration::from_millis(260);
+const MAX_FROZEN_LAYER_DEPTH: usize = 2;
 
 pub struct PageTransition {
     pub started_at: Instant,
     pub outgoing: Rc<PageVisual>,
-    pub incoming: Option<Rc<PageSnapshot>>,
+    pub incoming_painted: bool,
 }
 
 pub enum PageVisual {
@@ -40,20 +41,34 @@ pub enum PageVisual {
 }
 
 impl PageTransition {
-    pub fn freeze(&self, direction: i8, progress: f32) -> Rc<PageVisual> {
-        let Some(incoming) = &self.incoming else {
-            return self.outgoing.clone(); // A target not painted yet never needs an outgoing copy.
+    pub fn freeze(
+        &self,
+        incoming: Option<Rc<PageSnapshot>>,
+        direction: i8,
+        progress: f32,
+    ) -> Rc<PageVisual> {
+        let Some(incoming) = incoming else {
+            return self.outgoing.clone();
         };
+        self.freeze_with(incoming, direction, progress)
+    }
+
+    pub fn freeze_with(
+        &self,
+        incoming: Rc<PageSnapshot>,
+        direction: i8,
+        progress: f32,
+    ) -> Rc<PageVisual> {
         let depth = match self.outgoing.as_ref() {
             PageVisual::Empty | PageVisual::Page(_) | PageVisual::Limited { .. } => 0,
             PageVisual::Composite { depth, .. } => *depth,
         };
         if progress >= 1. {
-            return Rc::new(PageVisual::Page(incoming.clone()));
+            return Rc::new(PageVisual::Page(incoming));
         }
-        if depth >= 8 {
-            // Drop old nested visuals under extreme repeat clicks, without restoring
-            // a fully bright destination before the fade-in has reached it.
+        if depth >= MAX_FROZEN_LAYER_DEPTH {
+            // Keep rapid repeated switches from recursively painting many full-page
+            // snapshots, without restoring a bright destination before it fades in.
             return Rc::new(PageVisual::Limited {
                 incoming: incoming.clone(),
                 opacity: opacities(progress).1,
@@ -62,7 +77,7 @@ impl PageTransition {
         }
         Rc::new(PageVisual::Composite {
             outgoing: self.outgoing.clone(),
-            incoming: incoming.clone(),
+            incoming,
             direction,
             progress,
             depth: depth + 1,
@@ -169,16 +184,12 @@ pub fn offsets(width: f32, direction: i8, progress: f32) -> (f32, f32) {
     (-direction * width * eased, direction * width * (1. - eased))
 }
 
-/// Fade through the editor background, rather than keeping both sheets opaque.
-/// Smoothstep flattens the opacity velocity at the start, midpoint, and end.
+/// Crossfade the outgoing snapshot into the live page without a blank midpoint.
+/// Smoothstep flattens the opacity velocity at both ends of the transition.
 pub fn opacities(progress: f32) -> (f32, f32) {
     let progress = progress.clamp(0., 1.);
-    let smooth = |t: f32| t * t * (3. - 2. * t);
-    if progress <= 0.5 {
-        (1. - smooth(progress * 2.), 0.)
-    } else {
-        (0., smooth((progress - 0.5) * 2.))
-    }
+    let incoming = progress * progress * (3. - 2. * progress);
+    (1. - incoming, incoming)
 }
 
 fn symbol(icon: IconName, cx: &App) -> Div {
@@ -707,59 +718,60 @@ mod tests {
         let mut transition = PageTransition {
             started_at: Instant::now(),
             outgoing: Rc::new(PageVisual::Empty),
-            incoming: None,
+            incoming_painted: false,
         };
-        assert!(Rc::ptr_eq(&transition.freeze(1, 0.), &transition.outgoing));
-        transition.incoming = Some(incoming.clone());
-        match transition.freeze(-1, 0.25).as_ref() {
+        assert!(Rc::ptr_eq(
+            &transition.freeze(None, 1, 0.),
+            &transition.outgoing
+        ));
+        transition.incoming_painted = true;
+        match transition.freeze(Some(incoming.clone()), -1, 0.25).as_ref() {
             PageVisual::Composite {
                 progress,
                 direction,
                 ..
             } => {
                 assert_eq!(*direction, -1);
-                assert_eq!(opacities(*progress), (0.5, 0.));
+                assert_eq!(opacities(*progress), (0.84375, 0.15625));
             }
             _ => panic!("快速反向时须冻结当前渐隐画面"),
         }
-        for _ in 0..8 {
-            transition.outgoing = transition.freeze(1, 0.5);
+        for _ in 0..MAX_FROZEN_LAYER_DEPTH {
+            transition.outgoing = transition.freeze(Some(incoming.clone()), 1, 0.5);
         }
         assert!(matches!(
             transition.outgoing.as_ref(),
-            PageVisual::Composite { depth: 8, .. }
+            PageVisual::Composite { depth: 2, .. }
         ));
-        match transition.freeze(1, 0.5).as_ref() {
-            PageVisual::Limited { opacity, .. } => assert_eq!(*opacity, 0.),
+        match transition.freeze(Some(incoming.clone()), 1, 0.5).as_ref() {
+            PageVisual::Limited { opacity, .. } => assert_eq!(*opacity, 0.5),
             _ => panic!("缓存限额不能把中点还原成全亮页面"),
         }
-        match transition.freeze(1, 0.75).as_ref() {
-            PageVisual::Limited { opacity, .. } => assert_eq!(*opacity, 0.5),
+        match transition.freeze(Some(incoming.clone()), 1, 0.75).as_ref() {
+            PageVisual::Limited { opacity, .. } => assert_eq!(*opacity, 0.84375),
             _ => panic!("缓存限额仍须保留淡入透明度"),
         }
         assert!(matches!(
-            transition.freeze(1, 1.).as_ref(),
+            transition.freeze(Some(incoming), 1, 1.).as_ref(),
             PageVisual::Page(_)
         ));
     }
 
     #[test]
-    fn sheets_fade_out_then_in_with_the_midpoint_transparent() {
+    fn sheets_crossfade_monotonically_without_a_blank_midpoint() {
         assert_eq!(opacities(-1.), (1., 0.));
         assert_eq!(opacities(0.), (1., 0.));
-        assert_eq!(opacities(0.25), (0.5, 0.));
-        assert_eq!(opacities(0.5), (0., 0.));
-        assert_eq!(opacities(0.75), (0., 0.5));
+        assert_eq!(opacities(0.25), (0.84375, 0.15625));
+        assert_eq!(opacities(0.5), (0.5, 0.5));
+        assert_eq!(opacities(0.75), (0.15625, 0.84375));
         assert_eq!(opacities(1.), (0., 1.));
         assert_eq!(opacities(2.), (0., 1.));
         let mut previous = (1., 0.);
         for step in 0..=100 {
             let alpha = opacities(step as f32 / 100.);
             assert!(alpha.0 <= previous.0 && alpha.1 >= previous.1);
-            assert!(
-                alpha.0 == 0. || alpha.1 == 0.,
-                "两页不能同时不透明地交叉覆盖"
-            );
+            assert!((alpha.0 + alpha.1 - 1.).abs() < 0.0001);
+            assert!(alpha.0 < 1. || alpha.1 < 1.);
             previous = alpha;
         }
     }
