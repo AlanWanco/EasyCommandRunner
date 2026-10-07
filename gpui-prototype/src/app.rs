@@ -183,6 +183,7 @@ pub struct CommandWorkspace {
     /// when GPUI replaces the hovered rail with the overlay in the same frame.
     sidebar_overlay_display_width: f32,
     sidebar_hovered: Option<usize>,
+    sidebar_hover_position: Cell<Option<(usize, f32)>>,
     next_tab_id: usize,
     store: Option<ConfigStore>,
     config_writable: bool,
@@ -594,6 +595,7 @@ impl CommandWorkspace {
             sidebar_display_width: 0.,
             sidebar_overlay_display_width: 56.,
             sidebar_hovered: None,
+            sidebar_hover_position: Cell::new(None),
             next_tab_id,
             store: store.clone(),
             config_writable: load_error.is_none(),
@@ -4039,9 +4041,6 @@ impl CommandWorkspace {
             - GAP * 3.
             - 16.;
         let overflowing = content_height + 16. > list_height;
-        let motion = gpui::base::Spring::new(std::time::Duration::from_millis(240))
-            .with_epsilon(0.2)
-            .with_travel(!self.reduced_motion && !overflowing);
         let active_visible = row_tops[self.active].is_some();
         let selected_target = row_tops[self.active]
             .or_else(|| {
@@ -4055,8 +4054,6 @@ impl CommandWorkspace {
                     .and_then(|group_index| section_tops[group_index])
             })
             .unwrap_or(first_tab_top);
-        let selected_y =
-            gpui::base::spring("sidebar-selection-y", selected_target, motion, window, cx);
         let hovered_index = self
             .sidebar_hovered
             .and_then(|id| self.tabs.iter().position(|t| t.id == id))
@@ -4064,7 +4061,23 @@ impl CommandWorkspace {
         let hover_target = hovered_index
             .and_then(|index| row_tops[index])
             .unwrap_or(selected_target);
-        let hover_y = gpui::base::spring("sidebar-hover-y", hover_target, motion, window, cx);
+        let hover_position_changed = hovered_index
+            .map(|index| (self.tabs[index].id, hover_target))
+            .map(|current| {
+                self.sidebar_hover_position
+                    .replace(Some(current))
+                    .is_some_and(|(previous_id, previous_top)| {
+                        previous_id == current.0 && (previous_top - current.1).abs() > 0.5
+                    })
+            })
+            .unwrap_or_else(|| {
+                self.sidebar_hover_position.set(None);
+                false
+            });
+        let hover_motion = gpui::base::Spring::new(std::time::Duration::from_millis(240))
+            .with_epsilon(0.2)
+            .with_travel(!self.reduced_motion && !overflowing && !hover_position_changed);
+        let hover_y = gpui::base::spring("sidebar-hover-y", hover_target, hover_motion, window, cx);
         let hover_opacity = gpui::base::transition(
             "sidebar-hover-opacity",
             if hovered_index.is_some() && !overflowing {
@@ -4122,13 +4135,9 @@ impl CommandWorkspace {
             let id = tab.id;
             let label = tab.label(cx);
             let hover_group = format!("sidebar-row-{id}");
-            // White only on the selected pill; all other glyphs follow the surface text.
-            // During travel keep the destination legible until the pill reaches it.
-            let row_top = row_tops[index].unwrap_or(first_tab_top);
-            let selected_visible = !self.open_tab_ids.is_empty()
-                && active_visible
-                && index == self.active
-                && (overflowing || (selected_y - row_top).abs() < 20.);
+            // White only on the selected row; all other glyphs follow the surface text.
+            let selected_visible =
+                !self.open_tab_ids.is_empty() && active_visible && index == self.active;
             let foreground = if selected_visible {
                 p.on_primary
             } else {
@@ -4179,9 +4188,8 @@ impl CommandWorkspace {
                         }
                         cx.notify();
                     }))
-                    // Animate short lists with one indicator anchored inside row zero.
-                    // In a scrollable list, paint each highlight inside its own row instead:
-                    // an absolute index-based marker can drift as rows move under a stationary pointer.
+                    // The hover pill travels in short lists; the selection fill below stays
+                    // attached to its row so active state never drifts during that motion.
                     .when(Some(index) == first_tab_index && !overflowing, |d| {
                         d.child(
                             frame("sidebar-hover-indicator")
@@ -4194,21 +4202,6 @@ impl CommandWorkspace {
                                 .bg(rgb(p.hover))
                                 .opacity(hover_opacity),
                         )
-                        .child(
-                            frame("sidebar-selection-indicator")
-                                .absolute()
-                                .left_0()
-                                .top(px((selected_y - first_tab_top).max(0.)))
-                                .w_full()
-                                .h(px(40.))
-                                .rounded(px(RADIUS))
-                                .bg(rgb(p.selected_tab))
-                                .opacity(if self.open_tab_ids.is_empty() || !active_visible {
-                                    0.
-                                } else {
-                                    1.
-                                }),
-                        )
                     })
                     .when(overflowing && hovered_index == Some(index), |d| {
                         d.child(
@@ -4220,6 +4213,18 @@ impl CommandWorkspace {
                                 .h_full()
                                 .rounded(px(RADIUS))
                                 .bg(rgb(p.hover)),
+                        )
+                    })
+                    .when(!overflowing && selected_visible, |d| {
+                        d.child(
+                            frame("sidebar-selection-indicator")
+                                .absolute()
+                                .left_0()
+                                .top_0()
+                                .w_full()
+                                .h(px(40.))
+                                .rounded(px(RADIUS))
+                                .bg(rgb(p.selected_tab)),
                         )
                     })
                     .when(overflowing && selected_visible, |d| {
@@ -8333,6 +8338,29 @@ mod sidebar_group_tests {
             let new_root_tab = window.find(("sidebar-tab", 1usize)).bounds();
             let group_header = window.find(("sidebar-group-header", group_id)).bounds();
             assert!(new_root_tab.top() < group_header.top());
+
+            view.update(cx, |view, cx| {
+                view.reduced_motion = false;
+                view.tabs[1].sidebar_group_id = Some(group_id);
+                view.select_tab(1, window, cx);
+                cx.notify();
+            });
+            window.render_frame(cx);
+            assert_eq!(
+                window.find("sidebar-selection-indicator").bounds(),
+                window.find(("sidebar-tab", 1usize)).bounds(),
+                "根目录配置之后的分组成员，其选中高亮也必须对齐本行"
+            );
+            view.update(cx, |view, cx| {
+                view.reduced_motion = true;
+                view.select_tab(0, window, cx);
+            });
+            window.render_frame(cx);
+            assert_eq!(
+                window.find("sidebar-selection-indicator").bounds(),
+                window.find(("sidebar-tab", 0usize)).bounds(),
+                "切回根目录配置时选中高亮必须同步回到根目录行"
+            );
 
             window.right_click(("sidebar-group-header", group_id), cx);
             let menu_bounds = window.find("sidebar-group-context-menu").bounds();

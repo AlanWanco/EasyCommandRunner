@@ -4188,7 +4188,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn sidebar_hover_and_selection_slide_and_reduced_motion_snaps(cx: &mut TestAppContext) {
+    fn sidebar_selection_stays_on_row_while_hover_highlight_slides(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui::init(cx);
             theme::apply(Theme::Light, cx);
@@ -4220,9 +4220,9 @@ mod tests {
             w.click(("sidebar-tab", 2usize), cx);
             assert_eq!(view.read(cx).active, 2);
             assert_eq!(
-                w.find("sidebar-selection-indicator").bounds().top(),
-                first.top(),
-                "点击高亮不应瞬移"
+                w.find("sidebar-selection-indicator").bounds(),
+                w.find(("sidebar-tab", 2usize)).bounds(),
+                "选中高亮必须立即贴合目标配置行"
             );
         })
         .unwrap();
@@ -4233,13 +4233,16 @@ mod tests {
             w.render_frame(cx);
             let first = w.find(("sidebar-tab", 0usize)).bounds();
             let last = w.find(("sidebar-tab", 2usize)).bounds();
-            for id in ["sidebar-selection-indicator", "sidebar-hover-indicator"] {
-                let indicator = w.find(id).bounds();
-                assert!(
-                    indicator.top() > first.top() && indicator.top() < last.top(),
-                    "{id} 应在两行之间滑动: {indicator:?}"
-                );
-            }
+            let hover = w.find("sidebar-hover-indicator").bounds();
+            assert!(
+                hover.top() > first.top() && hover.top() < last.top(),
+                "悬停高亮仍应在两行之间平滑移动: {hover:?}"
+            );
+            assert_eq!(
+                w.find("sidebar-selection-indicator").bounds(),
+                last,
+                "选中高亮不能脱离当前配置行"
+            );
             w.click(("sidebar-tab", 0usize), cx); // reverse while moving
             view.update(cx, |v, cx| {
                 v.reduced_motion = true;
