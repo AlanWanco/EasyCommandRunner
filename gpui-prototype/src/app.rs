@@ -121,7 +121,7 @@ fn sidebar_group_menu_button(
 struct SessionLog {
     id: usize,
     // Immutable command captured at launch, never the editor's subsequently changed preview.
-    // Drop it on completion; completed logs keep only output and metadata.
+    // Retain it in this in-memory log so the command remains copyable after completion.
     command: Option<String>,
     command_name: String,
     caption: String,
@@ -1401,7 +1401,14 @@ impl CommandWorkspace {
         };
 
         // Match Qt PathLineEdit: a file clipboard replaces the whole single-line value.
-        input.update(cx, |state, cx| state.set_value(path, window, cx));
+        // `set_value` intentionally resets single-line scrolling to the start. Re-place the
+        // caret and request the far-right offset; layout clamps it to this path's actual width.
+        let cursor = path.len();
+        input.update(cx, |state, cx| {
+            state.set_value(path, window, cx);
+            state.set_selected_range(cursor..cursor, cx);
+            state.set_scroll_offset(gpui::point(px(-1_000_000.), px(0.)), cx);
+        });
         self.changed(tab_id, window, cx);
         true
     }
@@ -1701,7 +1708,6 @@ impl CommandWorkspace {
                         cx.show_system_notification(notification);
                     }
                     self.run_handles.remove(&id);
-                    log.command = None;
                     self.status = if stopped {
                         tr(cx, "命令已停止")
                     } else {
@@ -1722,9 +1728,8 @@ impl CommandWorkspace {
         cx.notify();
     }
 
-    pub(crate) fn selected_running_command(&self) -> Option<&str> {
+    pub(crate) fn selected_log_command(&self) -> Option<&str> {
         let id = self.selected_log_id?;
-        self.run_handles.contains_key(&id).then_some(())?;
         self.logs
             .iter()
             .find(|log| log.id == id)?
@@ -1732,12 +1737,19 @@ impl CommandWorkspace {
             .as_deref()
     }
 
-    pub(crate) fn copy_selected_run_command(&mut self, cx: &mut Context<Self>) {
-        let Some(command) = self.selected_running_command() else {
+    #[cfg(test)]
+    pub(crate) fn selected_running_command(&self) -> Option<&str> {
+        let id = self.selected_log_id?;
+        self.run_handles.contains_key(&id).then_some(())?;
+        self.selected_log_command()
+    }
+
+    pub(crate) fn copy_selected_log_command(&mut self, cx: &mut Context<Self>) {
+        let Some(command) = self.selected_log_command() else {
             return;
         };
         cx.write_to_clipboard(ClipboardItem::new_string(command.to_owned()));
-        self.status = tr(cx, "当前运行命令已复制到剪贴板");
+        self.status = tr(cx, "本次运行命令已复制到剪贴板");
         cx.notify();
     }
 
@@ -1832,7 +1844,7 @@ impl CommandWorkspace {
             can_stop: self
                 .selected_log_id
                 .is_some_and(|id| self.run_handles.contains_key(&id)),
-            selected_command: self.selected_running_command().map(str::to_owned),
+            selected_command: self.selected_log_command().map(str::to_owned),
             font_size: self.log_font_size,
         }
     }
@@ -6061,24 +6073,22 @@ impl Render for CommandWorkspace {
                                 icon_button("stop-log", "停止当前运行", IconName::Square, cx)
                                     .on_click(cx.listener(|v, _, _, cx| v.stop_selected_run(cx))),
                             )
-                            .when_some(
-                                self.selected_running_command().map(str::to_owned),
-                                |row, command| {
-                                    row.child(
-                                        icon_button(
-                                            "copy-running-command",
-                                            "复制当前运行命令",
-                                            IconName::Copy,
-                                            cx,
-                                        )
-                                        .tooltip(command)
-                                        .on_click(
-                                            cx.listener(|v, _, _, cx| {
-                                                v.copy_selected_run_command(cx)
-                                            }),
-                                        ),
-                                    )
-                                },
+                        },
+                    )
+                    .when_some(
+                        self.selected_log_command().map(str::to_owned),
+                        |row, command| {
+                            row.child(
+                                icon_button(
+                                    "copy-running-command",
+                                    "复制本次运行命令",
+                                    IconName::Copy,
+                                    cx,
+                                )
+                                .tooltip(command)
+                                .on_click(
+                                    cx.listener(|v, _, _, cx| v.copy_selected_log_command(cx)),
+                                ),
                             )
                         },
                     )
@@ -6621,7 +6631,7 @@ mod tray_action_tests {
 
     #[cfg(unix)]
     #[gpui::test]
-    fn running_log_copy_uses_launch_snapshot_in_docked_and_detached_windows(
+    fn run_log_copy_uses_launch_snapshot_while_running_and_after_completion_in_docked_and_detached_windows(
         cx: &mut TestAppContext,
     ) {
         cx.update(|cx| {
@@ -6695,21 +6705,35 @@ mod tray_action_tests {
         cx.update(|cx| {
             let snapshot = view.read(cx).log_snapshot();
             assert!(!snapshot.can_stop);
-            assert!(snapshot.selected_command.is_none());
-            assert!(
-                view.read(cx).logs[0].command.is_none(),
-                "运行结束后清除命令快照"
+            assert_eq!(snapshot.selected_command.as_deref(), Some(running));
+            assert_eq!(
+                view.read(cx).logs[0].command.as_deref(),
+                Some(running),
+                "结束后的日志仍保留启动时的命令快照"
             );
         });
         cx.update_window(detached.into(), |_, window, cx| {
             window.render_frame(cx);
-            assert!(window.try_find("detached-copy-running-command").is_none());
+            assert!(window.try_find("detached-copy-running-command").is_some());
+            cx.write_to_clipboard(ClipboardItem::new_string("stale after completion".into()));
+            window.click("detached-copy-running-command", cx);
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|item| item.text()),
+                Some(running.into())
+            );
             window.remove_window();
         })
         .unwrap();
         cx.update_window(main.into(), |_, window, cx| {
             window.render_frame(cx);
-            assert!(window.try_find("copy-running-command").is_none());
+            assert!(window.try_find("stop-log").is_none());
+            assert!(window.try_find("copy-running-command").is_some());
+            cx.write_to_clipboard(ClipboardItem::new_string("stale after completion".into()));
+            window.click("copy-running-command", cx);
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|item| item.text()),
+                Some(running.into())
+            );
             window.remove_window();
         })
         .unwrap();

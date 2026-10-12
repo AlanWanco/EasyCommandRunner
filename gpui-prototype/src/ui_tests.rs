@@ -2814,7 +2814,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn pasting_a_file_into_single_line_input_replaces_old_value(cx: &mut TestAppContext) {
+    fn pasting_a_file_replaces_input_and_scrolls_caret_to_end(cx: &mut TestAppContext) {
         use gpui::{ClipboardEntry, ClipboardItem, ExternalPaths};
         cx.update(|cx| {
             gpui::init(cx);
@@ -2827,12 +2827,15 @@ mod tests {
             Root::new(view, window, cx)
         });
         let view = workspace.unwrap();
-        let path = r"C:\media\Lumina Charis 1-147\episode.ass";
+        let path = format!(
+            r"C:\media\{}\episode.ass",
+            "very-long-directory-name-1234567890\\".repeat(6)
+        );
         cx.update_window(handle.into(), |_, window, cx| {
             assert_eq!(window.find("program").value(), Some("ffmpeg"));
             window.click("program", cx);
             let mut paths = ExternalPaths::default();
-            paths.0.push(std::path::PathBuf::from(path));
+            paths.0.push(std::path::PathBuf::from(&path));
             cx.write_to_clipboard(ClipboardItem {
                 entries: vec![ClipboardEntry::ExternalPaths(paths)],
             });
@@ -2844,7 +2847,21 @@ mod tests {
                 },
                 cx,
             );
-            assert_eq!(window.find("program").value(), Some(path));
+            assert_eq!(window.find("program").value(), Some(path.as_str()));
+            window.render_frame(cx);
+            window.render_frame(cx);
+            let program = view.read(cx).tabs[0].program.clone();
+            assert_eq!(
+                program.read(cx).selected_range(),
+                path.len()..path.len(),
+                "文件路径粘贴后光标应位于文本末尾"
+            );
+            let scroll = program.read(cx).scroll_offset();
+            assert!(
+                scroll.x < px(0.),
+                "长路径粘贴后输入框应滚动到末尾光标: offset={scroll:?}, len={}",
+                path.len()
+            );
             assert!(view.read(cx).has_unsaved_edits_now(cx));
             window.remove_window();
         })

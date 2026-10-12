@@ -175,7 +175,7 @@ impl Render for DetachedLogWindow {
                                 row.child(
                                     icon_button(
                                         "detached-copy-running-command",
-                                        "复制当前运行命令",
+                                        "复制本次运行命令",
                                         IconName::Copy,
                                         cx,
                                     )
@@ -183,7 +183,7 @@ impl Render for DetachedLogWindow {
                                     .on_click(
                                         move |_, _, cx| {
                                             copy.update(cx, |workspace, cx| {
-                                                workspace.copy_selected_run_command(cx)
+                                                workspace.copy_selected_log_command(cx)
                                             });
                                         },
                                     ),

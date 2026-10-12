@@ -138,6 +138,8 @@
   "命令已复制到剪贴板": "Command copied to clipboard",
   "复制当前运行命令": "Copy running command",
   "当前运行命令已复制到剪贴板": "Running command copied to clipboard",
+  "复制本次运行命令": "Copy command for this run",
+  "本次运行命令已复制到剪贴板": "Command for this run copied to clipboard",
   "运行": "Run",
   "通过系统 Shell 执行预览中的命令": "Run the preview command using the system shell",
   "重新加载": "Reload",
