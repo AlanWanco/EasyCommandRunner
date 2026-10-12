@@ -223,27 +223,6 @@ impl ConfigStore {
         write_json_atomically(path, &serde_json::to_string_pretty(&value).unwrap())
     }
 
-    /// Persist only appearance preferences; unsaved command edits must stay unsaved.
-    pub fn save_preferences(&self, preferences: &serde_json::Value) -> Result<(), String> {
-        let mut config = self
-            .load()?
-            .unwrap_or_else(|| serde_json::json!({"tabs":[]}));
-        config["theme"] = preferences["theme"].clone();
-        if !config["gpui"].is_object() {
-            config["gpui"] = serde_json::json!({});
-        }
-        for key in [
-            "accent",
-            "font_size",
-            "font_weight",
-            "language",
-            "reduced_motion",
-        ] {
-            config["gpui"][key] = preferences["gpui"][key].clone();
-        }
-        self.save(&config)
-    }
-
     pub fn backups(&self) -> Result<Vec<String>, String> {
         if !self.backup_dir.exists() {
             return Ok(Vec::new());
@@ -864,7 +843,7 @@ mod tests {
     }
 
     #[test]
-    fn import_export_and_preferences_preserve_active_commands() {
+    fn import_export_and_full_configuration_save() {
         let dir = TestDir::new();
         let path = dir.0.join("config.json");
         let store = ConfigStore::at(&path, dir.0.join("backup"));
@@ -897,9 +876,9 @@ mod tests {
         preferences["gpui"]["accent"] = "teal".into();
         preferences["gpui"]["language"] = "en_US".into();
         preferences["gpui"]["reduced_motion"] = true.into();
-        store.save_preferences(&preferences).unwrap();
+        store.save(&preferences).unwrap();
         let saved = store.load().unwrap().unwrap();
-        assert_eq!(saved["tabs"][0]["program"], "echo safe");
+        assert_eq!(saved["tabs"][0]["program"], "UNSAVED");
         assert_eq!(saved["gpui"]["show_log"], true);
         assert_eq!(saved["gpui"]["font_size"], 24);
         assert_eq!(saved["gpui"]["sidebar_groups"][0]["name"], "Tools");

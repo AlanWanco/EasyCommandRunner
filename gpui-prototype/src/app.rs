@@ -34,6 +34,8 @@ use gpui::{
 };
 use std::{cell::Cell, rc::Rc};
 
+const AUTO_SAVE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(700);
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 struct SidebarGroup {
@@ -187,6 +189,7 @@ pub struct CommandWorkspace {
     store: Option<ConfigStore>,
     config_writable: bool,
     config_dirty: bool,
+    auto_save_generation: u64,
     sidebar_group_name_input: Option<Entity<InputState>>,
     sidebar_group_editor_epoch: usize,
     pending_icon_sources: std::collections::HashMap<SidebarIconTarget, String>,
@@ -385,7 +388,7 @@ impl CommandWorkspace {
         {
             if group.collapsed {
                 group.collapsed = false;
-                self.config_dirty = true;
+                self.mark_config_dirty(cx);
                 cx.notify();
             }
         }
@@ -598,6 +601,7 @@ impl CommandWorkspace {
             store: store.clone(),
             config_writable: load_error.is_none(),
             config_dirty: false,
+            auto_save_generation: 0,
             sidebar_group_name_input: None,
             sidebar_group_editor_epoch: 0,
             pending_icon_sources: std::collections::HashMap::new(),
@@ -695,6 +699,30 @@ impl CommandWorkspace {
             })
     }
 
+    fn mark_config_dirty(&mut self, cx: &mut Context<Self>) {
+        self.config_dirty = true;
+        self.auto_save_generation = self.auto_save_generation.wrapping_add(1);
+        let generation = self.auto_save_generation;
+        if !self.config_writable || self.store.is_none() {
+            return;
+        }
+
+        let owner = cx.entity().downgrade();
+        cx.spawn(async move |_, cx| {
+            cx.background_executor().timer(AUTO_SAVE_DEBOUNCE).await;
+            let _ = owner.update(cx, |view, cx| {
+                if view.auto_save_generation != generation || !view.has_unsaved_edits_now(cx) {
+                    return;
+                }
+                if let Err(error) = view.save_configuration(cx) {
+                    view.status = i18n::format(cx, "自动保存失败：{}", &[&error]);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
     pub(crate) fn tray_menu_state(&self, visible: bool, cx: &App) -> TrayMenuState {
         TrayMenuState {
             language: *cx.global::<Language>(),
@@ -727,7 +755,7 @@ impl CommandWorkspace {
                     self.toggle_log(cx);
                 } else {
                     if !self.show_log {
-                        self.config_dirty = true;
+                        self.mark_config_dirty(cx);
                     }
                     self.show_log = true;
                     self.log_auto_scroll.reopen();
@@ -816,6 +844,15 @@ impl CommandWorkspace {
     }
 
     fn save_configuration(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
+        let config = self.configuration(cx);
+        self.save_configuration_value(&config, cx)
+    }
+
+    fn save_configuration_value(
+        &mut self,
+        config: &serde_json::Value,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
         if !self.config_writable {
             return Err("现有配置读取失败，已禁止覆盖。请先修复文件或恢复备份。".into());
         }
@@ -823,7 +860,7 @@ impl CommandWorkspace {
             .store
             .clone()
             .ok_or_else(|| "配置存储尚未初始化。".to_string())?;
-        store.save(&self.configuration(cx))?;
+        store.save(config)?;
         self.saved_tab_data = Self::tab_data_snapshot(&self.tabs, cx);
         self.saved_slots = self
             .tabs
@@ -837,6 +874,7 @@ impl CommandWorkspace {
             tab.dirty = false;
         }
         self.config_dirty = false;
+        self.auto_save_generation = self.auto_save_generation.wrapping_add(1);
         self.status = i18n::format(
             cx,
             "配置已保存：{}",
@@ -1268,7 +1306,16 @@ impl CommandWorkspace {
         if self.exit_dialog_open.get() {
             return false;
         }
-        let has_changes = self.has_unsaved_edits_now(cx);
+        let mut has_changes = self.has_unsaved_edits_now(cx);
+        if has_changes && self.config_writable && self.store.is_some() {
+            match self.save_configuration(cx) {
+                Ok(()) => has_changes = false,
+                Err(error) => {
+                    self.status = error;
+                    cx.notify();
+                }
+            }
+        }
         let has_running = self.has_running_commands();
         if !has_changes && !has_running {
             // Let the main-window closed callback own GPUI shutdown. This also
@@ -1361,7 +1408,7 @@ impl CommandWorkspace {
         if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
             tab.dirty = true;
         }
-        self.config_dirty = true;
+        self.mark_config_dirty(cx);
         self.finish_page_switch(); // Never hide fresh text edits behind a frozen animation sheet.
         self.refresh(window, cx);
     }
@@ -1611,7 +1658,7 @@ impl CommandWorkspace {
                 self.log_auto_scroll.request_tail();
                 self.run_handles.insert(id, handle);
                 self.show_log = true;
-                self.config_dirty = true;
+                self.mark_config_dirty(cx);
                 self.sync_log_list(window, cx);
                 self.status = i18n::format(cx, "正在运行：{}", &[&tab_name]);
                 cx.notify();
@@ -1864,7 +1911,7 @@ impl CommandWorkspace {
             if self.show_log {
                 self.log_auto_scroll.reopen();
             }
-            self.config_dirty = true;
+            self.mark_config_dirty(cx);
             cx.notify();
         }
     }
@@ -2054,7 +2101,7 @@ impl CommandWorkspace {
                 .title(tr(cx, "从配置列表删除？"))
                 .child(i18n::format(
                     cx,
-                    "删除「{}」会移除配置和未保存修改；保存配置后才会从磁盘删除。",
+                    "删除「{}」会移除配置和未保存修改；更改将自动保存到磁盘。",
                     &[&title],
                 ))
                 .footer(
@@ -2083,7 +2130,7 @@ impl CommandWorkspace {
     fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let previous_id = self.current().id;
         let outgoing = self.page_visual(window, cx);
-        self.config_dirty = true;
+        self.mark_config_dirty(cx);
         self.resizing = None;
         self.tab_menu = None;
         self.sidebar_group_menu = None;
@@ -2195,7 +2242,7 @@ impl CommandWorkspace {
                     .iter()
                     .position(|tab| tab.id == active_id)
                     .unwrap();
-                self.config_dirty = true;
+                self.mark_config_dirty(cx);
                 self.scroll_sidebar_to_tab(insert);
             }
             TabArea::Top => {
@@ -2320,7 +2367,7 @@ impl CommandWorkspace {
     }
     fn toggle_enabled_first(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.enabled_first = !self.enabled_first;
-        self.config_dirty = true;
+        self.mark_config_dirty(cx);
         if self.enabled_first {
             for tab in &mut self.tabs {
                 tab.rows.sort_by_key(|r| !r.enabled);
@@ -2461,7 +2508,7 @@ impl CommandWorkspace {
     fn set_appearance(&mut self, mode: Theme, window: &mut Window, cx: &mut Context<Self>) {
         self.finish_page_switch();
         theme::apply(mode, cx);
-        self.config_dirty = true;
+        self.mark_config_dirty(cx);
         theme::set_font_size(self.font_size, cx);
         theme::set_font_weight(self.font_weight, cx);
         theme::set_reduced_motion(self.reduced_motion, cx);
@@ -2484,21 +2531,21 @@ impl CommandWorkspace {
         w: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
-        let mut config = self.configuration(cx);
-        config["theme"] = serde_json::json!(if p.theme == Theme::Dark {
-            "dark"
+        if self.store.is_some() {
+            let mut config = self.configuration(cx);
+            config["theme"] = serde_json::json!(if p.theme == Theme::Dark {
+                "dark"
+            } else {
+                "light"
+            });
+            config["gpui"]["accent"] = serde_json::json!(p.accent.key());
+            config["gpui"]["font_size"] = p.font_size.into();
+            config["gpui"]["font_weight"] = p.font_weight.into();
+            config["gpui"]["language"] = p.language.code().into();
+            config["gpui"]["reduced_motion"] = p.reduced_motion.into();
+            self.save_configuration_value(&config, cx)?;
         } else {
-            "light"
-        });
-        config["gpui"]["accent"] = serde_json::json!(p.accent.key());
-        config["gpui"]["font_size"] = p.font_size.into();
-        config["gpui"]["font_weight"] = p.font_weight.into();
-        config["gpui"]["language"] = p.language.code().into();
-        config["gpui"]["reduced_motion"] = p.reduced_motion.into();
-        if let Some(store) = &self.store {
-            store.save_preferences(&config)?;
-            self.saved_digest = store.config_digest();
-            self.persist_tab_session(cx);
+            self.mark_config_dirty(cx);
         }
         self.finish_page_switch();
         self.font_size = p.font_size;
@@ -2701,8 +2748,8 @@ impl CommandWorkspace {
             }
         };
         if changed {
-            self.config_dirty = true;
-            self.status = tr(cx, "分组或标签图标已更改；保存配置后持久化");
+            self.mark_config_dirty(cx);
+            self.status = tr(cx, "分组或标签图标已更改，正在自动保存");
             cx.notify();
         }
     }
@@ -2897,8 +2944,8 @@ impl CommandWorkspace {
             icon_source: None,
             icon_svg: None,
         });
-        self.config_dirty = true;
-        self.status = tr(cx, "已创建分组；保存配置后生效");
+        self.mark_config_dirty(cx);
+        self.status = tr(cx, "已创建分组，正在自动保存");
         cx.notify();
         Ok(id)
     }
@@ -2919,8 +2966,8 @@ impl CommandWorkspace {
         };
         if group.name != name {
             group.name = name;
-            self.config_dirty = true;
-            self.status = tr(cx, "分组名称已修改；保存配置后生效");
+            self.mark_config_dirty(cx);
+            self.status = tr(cx, "分组名称已修改，正在自动保存");
             cx.notify();
         }
         Ok(())
@@ -2950,14 +2997,14 @@ impl CommandWorkspace {
                 group.collapsed = false;
             }
         }
-        self.config_dirty = true;
+        self.mark_config_dirty(cx);
         self.sidebar_hovered = None;
         self.sidebar_tab_group_target = None;
         self.sidebar_group_menu = None;
         self.tab_menu = None;
         self.tab_group_options_open = false;
         self.scroll_sidebar_to_tab(index);
-        self.status = tr(cx, "配置已移动；保存配置后生效");
+        self.status = tr(cx, "配置已移动，正在自动保存");
         cx.notify();
     }
 
@@ -3163,7 +3210,7 @@ impl CommandWorkspace {
                 tab.sidebar_group_id = None;
             }
         }
-        self.config_dirty = true;
+        self.mark_config_dirty(cx);
         self.pending_icon_sources
             .remove(&SidebarIconTarget::Group(group_id));
         self.sidebar_group_menu = None;
@@ -3173,7 +3220,7 @@ impl CommandWorkspace {
         self.tab_group_options_open = false;
         self.status = i18n::format(
             cx,
-            "已删除分组「{}」；配置已移至未分组，保存后生效",
+            "已删除分组「{}」；配置已移至未分组，正在自动保存",
             &[&name],
         );
         self.scroll_sidebar_to_tab(self.active);
@@ -3212,10 +3259,10 @@ impl CommandWorkspace {
         }
         let group = self.sidebar_groups.remove(source);
         self.sidebar_groups.insert(insert, group);
-        self.config_dirty = true;
+        self.mark_config_dirty(cx);
         self.sidebar_group_menu = None;
         self.sidebar_scroll.scroll_to_item(0);
-        self.status = tr(cx, "分组顺序已调整；保存配置后生效");
+        self.status = tr(cx, "分组顺序已调整，正在自动保存");
         cx.notify();
     }
 
@@ -3271,7 +3318,7 @@ impl CommandWorkspace {
             false
         };
         if changed {
-            self.config_dirty = true;
+            self.mark_config_dirty(cx);
             self.scroll_sidebar_to_tab(self.active);
             cx.notify();
         }
@@ -3314,7 +3361,7 @@ impl CommandWorkspace {
         self.sidebar_auto_suppressed = self.sidebar_collapsed;
         self.sidebar_hovered = None;
         self.scroll_sidebar_to_top_of_tab(self.active);
-        self.config_dirty = true;
+        self.mark_config_dirty(cx);
         cx.notify();
     }
 
@@ -6112,7 +6159,7 @@ impl Render for CommandWorkspace {
                         icon_button("close-log", "收起日志", IconName::X, cx).on_click(
                             cx.listener(|v, _, _, cx| {
                                 v.show_log = false;
-                                v.config_dirty = true;
+                                v.mark_config_dirty(cx);
                                 cx.notify();
                             }),
                         ),
@@ -6206,12 +6253,12 @@ impl Render for CommandWorkspace {
                                 .round() as usize;
                             v.tabs[v.active].row_height_override =
                                 Some(rows.clamp(3, count.min(9)));
-                            v.config_dirty = true;
+                            v.mark_config_dirty(cx);
                         }
                     }
                     ResizeKind::Log => {
                         v.log_height_override = Some((drag.start_value - delta).max(32.));
-                        v.config_dirty = true;
+                        v.mark_config_dirty(cx);
                     }
                     ResizeKind::SidebarWidth => {
                         let movement = f32::from(event.position.x) - drag.start_x;
@@ -6223,7 +6270,7 @@ impl Render for CommandWorkspace {
                                 160.,
                                 Self::max_sidebar_width(f32::from(w.viewport_size().width)),
                             ));
-                            v.config_dirty = true;
+                            v.mark_config_dirty(cx);
                         }
                     }
                     ResizeKind::DescriptionWidth => {
@@ -6237,7 +6284,7 @@ impl Render for CommandWorkspace {
                             (drag.start_value - movement)
                                 .clamp(120., (available - PREVIEW_MIN).max(120.)),
                         );
-                        v.config_dirty = true;
+                        v.mark_config_dirty(cx);
                     }
                 }
                 w.refresh();
@@ -6740,9 +6787,7 @@ mod tray_action_tests {
     }
 
     #[gpui::test]
-    fn tray_actions_reuse_logs_settings_theme_and_explicit_save_without_autosave(
-        cx: &mut TestAppContext,
-    ) {
+    fn tray_actions_reuse_logs_settings_theme_and_explicit_save(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui::init(cx);
             theme::apply(Theme::Dark, cx);
@@ -6797,7 +6842,7 @@ mod tray_action_tests {
                 assert_eq!(
                     std::fs::read(store.config_path()).unwrap(),
                     original,
-                    "打开菜单／日志／设置及换主题都不可暗中保存命令"
+                    "这些操作不会立即保存命令编辑；更改由防抖自动保存或手动保存"
                 );
                 assert_eq!(program.read(cx).value().as_ref(), "echo unsaved draft");
                 view.perform_tray_action(TrayAction::Save, window, cx);

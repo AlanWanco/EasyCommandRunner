@@ -213,7 +213,10 @@ impl Render for SettingsPanel {
                             .child(field("settings-font-weight", "字重", &self.weight))
                             .child(field("settings-language", "语言", &self.language))
                             .child(field("settings-motion", "动效", &self.motion))
-                            .child(tr(cx, "应用后自动保存设置，不会保存尚未保存的命令编辑。"))
+                            .child(tr(
+                                cx,
+                                "配置修改会自动保存；设置草稿需点“应用”或“确定”生效。",
+                            ))
                             .child(
                                 row()
                                     .flex_wrap()

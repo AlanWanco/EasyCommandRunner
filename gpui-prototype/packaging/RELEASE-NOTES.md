@@ -1,20 +1,19 @@
-# EasyCommandRunner GPUI v1.0.1
+# EasyCommandRunner GPUI v1.1.0
 
-Maintenance update to the GPUI v1.0.0 release. The historical Qt/PyQt branches and Releases are unchanged.
+Quality-of-life update to the GPUI release. The historical Qt/PyQt branches and published GPUI v1.0.1 Release are unchanged.
 
-## Changes since v1.0.0
+## Changes since v1.0.1
 
-- Windows tray: theme-aware menu with a rounded popup, more actions (show/hide, run/stop, logs, save, settings, theme and quit), keyboard navigation and a native high-contrast fallback. Hover margins, painted borders and last-row scrolling have been adjusted for custom DPI; the rounded Win32 clipping region now uses the actual client-area origin. The Windows x86_64 tray at 115% scaling was manually accepted for the latest fix; other devices, scales and multiple-monitor setups remain subject to user validation.
-- Sidebar: in the expanded list, a short marker occupies its own leading slot for every configuration open in the top tab strip (not only the selected tab). All expanded rows reserve the same slot so closing a tab removes only its marker, without shifting icons or labels. In the collapsed rail, the marker overlays the far left edge while the SVG stays centered in its icon slot. Collapsed icons and highlights share a center axis. Hover temporarily opens a panel over the editor without shifting inputs or IME geometry; leaving closes it, while clicking the toggle pins it open. The thin scrollbar overlays the list edge rather than reserving row width.
-- Command editing: clicking the option header alphabetically sorts parameters, with enabled and disabled rows sorted separately when enabled-first is active. Sorting changes the command's argument order and does not silently save edits.
-- Run logs: while a run is active, an icon beside Stop previews and copies the exact command captured at launch in both docked and detached views. This is not a log export or log-text copy feature.
-- Windows shell: quote handling protects literal ampersands inside quoted arguments, including HLS URLs, without changing deliberate shell operators. Process-output decoding still assumes UTF-8; legacy-encoded output from third-party tools may display incorrectly.
-- Parameter dragging: fixes a panic when dragging above or below an overflowing parameter list and continues edge scrolling while the pointer is held there; scrolling stops on release.
+- Configuration editing now auto-saves the complete workspace after a short idle debounce, including all command tabs, sidebar groups, ordering, layout and applied preferences. Applying settings saves the complete configuration; pending edits are flushed before exit. Save failures remain visible and do not silently discard changes. The manual Save action remains available.
+- Sidebar organization: ungrouped configurations appear alongside folders; groups and configurations can be reordered or moved between groups. Row-local selection and hover highlights stay attached to their actual rows, including when the list does not scroll.
+- Drag-and-switch polish: clearer sidebar drop targets and lower-cost page switching.
+- Run logs retain each run's launch-command snapshot after completion, so it can still be copied from docked or detached logs without copying output text.
+- Pasting a file path into a command field places the caret at the end and scrolls long paths into view.
 
 ## Packages and caveats
 
-Five native packages: Windows x86_64/ARM64 Portable ZIP, macOS ARM64 DMG, Linux x86_64/ARM64 AppImage. Windows ZIP is not an installer; extract the whole folder. No external command-line tools (including N_m3u8DL-RE, ffmpeg or Python) are bundled. A source's `data:`/`skd:` key-handling errors are not fixed by this UI release.
+Five native packages: Windows x86_64/ARM64 Portable ZIP, macOS ARM64 DMG, Linux x86_64/ARM64 AppImage. Windows ZIP is not an installer; extract the whole folder. No external command-line tools (including N_m3u8DL-RE, ffmpeg or Python) are bundled.
 
-macOS requires Apple Silicon and the currently tested macOS 14+ baseline; its ad-hoc signature is not Developer ID signing or notarization. Linux requires Ubuntu 24.04-compatible glibc 2.39+, working display/GPU drivers and desktop tray support. Packages are not signed by a public publisher. Notifications depend on OS permissions and Do Not Disturb. CI tests on Windows ARM64/Linux are not exhaustive physical-device acceptance. Log-text copy and save-to-file controls are not yet implemented.
+Windows CI and offscreen UI tests are not a substitute for physical-device acceptance. Linux requires Ubuntu 24.04-compatible glibc 2.39+, working display/GPU drivers and desktop tray support. macOS requires Apple Silicon; its ad-hoc signature is not Developer ID signing or notarization. Packages are not signed by a public publisher. Notifications depend on OS permissions and Do Not Disturb.
 
-Back up `config.json` before switching between Qt and GPUI; Qt may discard GPUI-only settings/icons on save. Publication requires every native build, test and package check to pass. Verify downloads against `SHA256SUMS.txt`; each `build-info.json` records the immutable source commit and binary/package hashes. No debug binaries are published.
+Third-party tools that emit legacy-encoded output may still display incorrectly. N_m3u8DL-RE `data:`/`skd:` key-handling errors are unrelated to these UI changes and are not fixed here. Back up `config.json` before switching between Qt and GPUI; Qt may discard GPUI-only settings and icons when saving. Verify downloads against `SHA256SUMS.txt`; each `build-info.json` records the immutable source commit and binary/package hashes. No debug binaries are published.

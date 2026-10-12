@@ -114,12 +114,12 @@ class ReleaseContractTests(unittest.TestCase):
         current = release.tomllib.loads((release.ROOT / "Cargo.toml").read_text(encoding="utf-8"))[
             "package"
         ]["version"]
-        self.assertEqual(current, "1.0.1", "release tests must follow the reviewed Cargo version")
+        self.assertEqual(current, "1.1.0", "release tests must follow the reviewed Cargo version")
         names = {release.filename(current, p, a) for p, a in release.TARGETS}
         self.assertEqual(len(names), 5)
-        self.assertIn("EasyCommandRunner-GPUI-v1.0.1-windows-arm64.zip", names)
-        self.assertIn("EasyCommandRunner-GPUI-v1.0.1-linux-x86_64.AppImage", names)
-        self.assertIn("EasyCommandRunner-GPUI-v1.0.1-macos-arm64.dmg", names)
+        self.assertIn("EasyCommandRunner-GPUI-v1.1.0-windows-arm64.zip", names)
+        self.assertIn("EasyCommandRunner-GPUI-v1.1.0-linux-x86_64.AppImage", names)
+        self.assertIn("EasyCommandRunner-GPUI-v1.1.0-macos-arm64.dmg", names)
 
     def test_unsafe_versions_and_unknown_architectures_are_rejected(self) -> None:
         for value in ("../1.0.0", "1.0.0;echo", "v1.0.0", "01.0.0", "1.0.0-beta", ""):

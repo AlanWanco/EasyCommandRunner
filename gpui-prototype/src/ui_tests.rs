@@ -5769,6 +5769,86 @@ mod tests {
     }
 
     #[gpui::test]
+    fn auto_save_persists_all_tabs_and_flushes_pending_edits_on_exit(cx: &mut TestAppContext) {
+        use crate::backend::ConfigStore;
+        use std::time::{SystemTime, UNIX_EPOCH};
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let dir = std::env::temp_dir().join(format!(
+            "ecr-gpui-autosave-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = ConfigStore::at(dir.join("config.json"), dir.join("backup"));
+        store
+            .save(&serde_json::json!({
+                "tabs": [
+                    {"name":"first", "program":"echo first"},
+                    {"name":"second", "program":"echo second"}
+                ]
+            }))
+            .unwrap();
+
+        let mut workspace = None;
+        let handle = cx.open_window(size(px(1200.), px(1000.)), |w, cx| {
+            let view = cx.new(|cx| {
+                CommandWorkspace::new_with_backend(
+                    w,
+                    cx,
+                    Some(store.clone()),
+                    store.load().unwrap(),
+                    None,
+                )
+            });
+            workspace = Some(view.clone());
+            Root::new(view, w, cx)
+        });
+        let workspace = workspace.unwrap();
+        cx.update_window(handle.into(), |_, w, cx| {
+            workspace.update(cx, |view, cx| {
+                for (index, value) in [(0, "echo updated first"), (1, "echo updated second")] {
+                    let id = view.tabs[index].id;
+                    view.tabs[index]
+                        .program
+                        .update(cx, |state, cx| state.set_value(value, w, cx));
+                    view.changed(id, w, cx);
+                }
+                assert!(view.has_unsaved_edits());
+            });
+        })
+        .unwrap();
+
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_millis(800));
+        cx.run_until_parked();
+        let saved = store.load().unwrap().unwrap();
+        assert_eq!(saved["tabs"][0]["program"], "echo updated first");
+        assert_eq!(saved["tabs"][1]["program"], "echo updated second");
+        cx.update(|cx| assert!(!workspace.read(cx).has_unsaved_edits()));
+
+        cx.update_window(handle.into(), |_, w, cx| {
+            workspace.update(cx, |view, cx| {
+                let id = view.tabs[0].id;
+                view.tabs[0]
+                    .program
+                    .update(cx, |state, cx| state.set_value("echo saved on exit", w, cx));
+                view.changed(id, w, cx);
+                assert!(view.request_exit(w, cx));
+            });
+        })
+        .unwrap();
+        let saved = store.load().unwrap().unwrap();
+        assert_eq!(saved["tabs"][0]["program"], "echo saved on exit");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[gpui::test]
     fn backend_restores_last_tab_and_saves_qt_compatible_configuration(cx: &mut TestAppContext) {
         use crate::backend::ConfigStore;
         use std::time::{SystemTime, UNIX_EPOCH};
@@ -5885,15 +5965,15 @@ mod tests {
                 )
                 .unwrap();
                 assert!(
-                    v.has_unsaved_edits(),
-                    "applying settings must not mark command edits saved"
+                    !v.has_unsaved_edits(),
+                    "applying settings must save the complete configuration"
                 );
             });
             w.remove_window();
         })
         .unwrap();
         let saved = store.load().unwrap().unwrap();
-        assert_eq!(saved["tabs"][1]["program"], "printf saved");
+        assert_eq!(saved["tabs"][1]["program"], "unsaved command");
         let handle = cx.open_window(size(px(1200.), px(1000.)), |w, cx| {
             let v = cx.new(|cx| {
                 CommandWorkspace::new_with_backend(
