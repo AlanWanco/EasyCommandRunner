@@ -4365,7 +4365,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn collapsed_sidebar_can_open_icon_picker_from_context_menu(cx: &mut TestAppContext) {
+    fn collapsed_sidebar_selected_icon_and_context_menu_open_picker(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui::init(cx);
             theme::apply(Theme::Dark, cx);
@@ -4383,6 +4383,13 @@ mod tests {
         });
         cx.update_window(handle.into(), |_, w, cx| {
             w.click("collapse-sidebar", cx);
+            w.click(("sidebar-icon", 0usize), cx);
+            w.render_frame(cx);
+            assert!(
+                w.try_find("icon-choice-rust").is_some(),
+                "折叠态点击当前配置的 SVG 应能直接打开图标选择器"
+            );
+            w.close_dialog(cx);
             w.right_click(("sidebar-tab", 0usize), cx);
             w.render_frame(cx);
             assert!(w.try_find("context-icon").is_some());

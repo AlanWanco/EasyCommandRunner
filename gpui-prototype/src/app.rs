@@ -4124,6 +4124,9 @@ impl CommandWorkspace {
             // White only on the selected row; all other glyphs follow the surface text.
             let selected_visible =
                 !self.open_tab_ids.is_empty() && active_visible && index == self.active;
+            // In a folded or hover-preview rail, keep inactive icon clicks for tab selection,
+            // but let the selected configuration's icon open the picker directly.
+            let icon_click_edits = (!folded && !self.sidebar_auto_expanded) || index == self.active;
             let foreground = if selected_visible {
                 p.on_primary
             } else {
@@ -4332,9 +4335,9 @@ impl CommandWorkspace {
                             .justify_center()
                             .relative()
                             .rounded_full()
-                            // In hover preview the icon still selects the config, as it
-                            // did in the collapsed rail. Only pinned expansion edits it.
-                            .when(!folded && !self.sidebar_auto_expanded, |slot| {
+                            // A pinned sidebar lets every icon edit; in the folded rail and
+                            // hover preview, the selected icon edits while other rows select.
+                            .when(icon_click_edits, |slot| {
                                 slot.cursor(gpui::CursorStyle::PointingHand)
                                     .hover(|slot| {
                                         slot.bg(gpui::Hsla::from(rgb(if selected_visible {
