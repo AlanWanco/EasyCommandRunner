@@ -1473,7 +1473,7 @@ impl CommandWorkspace {
         let layout = WorkspaceLayout::with_overrides(
             f32::from(window.viewport_size().height),
             tab.rows.len(),
-            self.show_log,
+            self.docked_log_visible(),
             tab.row_height_override,
             self.log_height_override,
         );
@@ -1899,6 +1899,11 @@ impl CommandWorkspace {
     pub(crate) fn zoom_log(&mut self, delta: i16, cx: &mut Context<Self>) {
         self.log_font_size = (self.log_font_size as i16 + delta).clamp(8, 32) as u8;
         cx.notify();
+    }
+
+    fn docked_log_visible(&self) -> bool {
+        // Keep the preference enabled while detached, but don't reserve main-window space.
+        self.show_log && self.detached_log.is_none()
     }
 
     fn toggle_log(&mut self, cx: &mut Context<Self>) {
@@ -5665,7 +5670,7 @@ impl Render for CommandWorkspace {
         let layout = WorkspaceLayout::with_overrides(
             height,
             self.current().rows.len(),
-            self.show_log,
+            self.docked_log_visible(),
             self.current().row_height_override,
             self.log_height_override,
         );
@@ -6384,9 +6389,7 @@ impl Render for CommandWorkspace {
                             .min_w_0()
                             .min_h_0()
                             .child(editor)
-                            .when(self.show_log && self.detached_log.is_none(), |d| {
-                                d.child(log)
-                            })
+                            .when(self.docked_log_visible(), |d| d.child(log))
                             .child(
                                 frame("status-bar")
                                     .flex()

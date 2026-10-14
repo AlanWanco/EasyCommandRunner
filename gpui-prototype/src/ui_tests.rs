@@ -6238,6 +6238,87 @@ mod tests {
     }
 
     #[gpui::test]
+    fn detached_log_does_not_reserve_docked_height_in_main_window(cx: &mut TestAppContext) {
+        use crate::tokens::{WorkspaceLayout, PREVIEW_MIN};
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let main = cx.open_window(size(px(850.), px(620.)), |w, cx| {
+            let view = cx.new(|cx| {
+                let mut view = CommandWorkspace::new(w, cx);
+                view.show_log = true;
+                view.log_height_override = Some(180.);
+                view
+            });
+            workspace = Some(view.clone());
+            Root::new(view, w, cx)
+        });
+        let view = workspace.unwrap();
+        cx.update_window(main.into(), |_, w, cx| {
+            view.update(cx, |view, cx| {
+                view.add_finished_log_for_test("run", "output", w, cx);
+            });
+            w.render_frame(cx);
+            let state = view.read(cx);
+            let tab = &state.tabs[state.active];
+            let height = f32::from(w.viewport_size().height);
+            let docked_layout = WorkspaceLayout::with_overrides(
+                height,
+                tab.rows.len(),
+                true,
+                tab.row_height_override,
+                state.log_height_override,
+            );
+            let detached_layout = WorkspaceLayout::with_overrides(
+                height,
+                tab.rows.len(),
+                false,
+                tab.row_height_override,
+                state.log_height_override,
+            );
+            assert_ne!(docked_layout.rows_height, detached_layout.rows_height);
+            assert_eq!(
+                w.find("parameter-list").bounds().size.height,
+                px(docked_layout.rows_height)
+            );
+            assert!(w.find("log-dock").bounds().size.height > px(0.));
+            w.click("detach-log", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let detached = cx
+            .update(|cx| view.read(cx).detached_log)
+            .expect("日志窗口已分离");
+        cx.update_window(main.into(), |_, w, cx| {
+            w.render_frame(cx);
+            assert!(w.try_find("log-dock").is_none());
+            let state = view.read(cx);
+            let tab = &state.tabs[state.active];
+            let detached_layout = WorkspaceLayout::with_overrides(
+                f32::from(w.viewport_size().height),
+                tab.rows.len(),
+                false,
+                tab.row_height_override,
+                state.log_height_override,
+            );
+            assert_eq!(
+                w.find("parameter-list").bounds().size.height,
+                px(detached_layout.rows_height),
+                "分离日志后主窗口不再为停靠日志预留高度"
+            );
+            assert!(w.find("preview-frame").bounds().size.height >= px(PREVIEW_MIN));
+        })
+        .unwrap();
+        cx.update_window(detached.into(), |_, w, _| w.remove_window())
+            .unwrap();
+        cx.run_until_parked();
+        cx.update_window(main.into(), |_, w, _| w.remove_window())
+            .unwrap();
+    }
+
+    #[gpui::test]
     fn detached_log_shares_selection_output_zoom_and_reattaches_on_close(cx: &mut TestAppContext) {
         use gpui::Focusable;
         cx.update(|cx| {
