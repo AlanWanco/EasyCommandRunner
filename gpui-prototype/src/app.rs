@@ -4066,7 +4066,8 @@ impl CommandWorkspace {
                 .as_ref()
                 .map_or_else(|| self.open_tab_ids.contains(&id), |ids| ids.contains(&id))
         };
-        let group_header_height = if folded { 40. } else { CONTROL };
+        // Folder rows match configuration rows in both sidebar modes so members stay aligned.
+        let group_header_height = 40.;
         let mut row_visible = vec![false; self.tabs.len()];
         let mut section_member_counts = vec![0usize; self.sidebar_groups.len()];
         let mut current_group = None;
@@ -8053,7 +8054,7 @@ mod sidebar_group_tests {
                 let section = window.find(("sidebar-group-header", group_id)).bounds();
                 let grouped_row = window.find(("sidebar-tab", 0usize)).bounds();
                 assert!(root_row.top() < section.top(), "root files precede group folders");
-                assert_eq!(section.size.height, px(CONTROL));
+                assert_eq!(section.size.height, px(40.));
                 assert!(
                     grouped_row.top() >= section.bottom() + px(4.),
                     "group header and its first row must be separated: {section:?} / {grouped_row:?}"
@@ -8421,6 +8422,10 @@ mod sidebar_group_tests {
         .unwrap();
 
         cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let expanded_header = window.find(("sidebar-group-header", group_id)).bounds();
+            let expanded_member = window.find(("sidebar-tab", 0usize)).bounds();
+            assert_eq!(expanded_header.size.height, px(40.));
             window.click("collapse-sidebar", cx);
             window.render_frame(cx);
             assert!(
@@ -8445,6 +8450,13 @@ mod sidebar_group_tests {
             assert!(window.try_find(("sidebar-tab", 0usize)).is_some());
             let header = window.find(("sidebar-group-header", group_id)).bounds();
             let member = window.find(("sidebar-tab", 0usize)).bounds();
+            assert_eq!(header.top(), expanded_header.top());
+            assert_eq!(header.size.height, expanded_header.size.height);
+            assert_eq!(
+                member.top(),
+                expanded_member.top(),
+                "分组内配置行在侧栏展开和收缩时保持同一纵向位置"
+            );
             assert!(badge.size.width > regular_icon.size.width);
             assert!(cluster.top() <= header.top());
             assert!(cluster.bottom() >= member.bottom());
