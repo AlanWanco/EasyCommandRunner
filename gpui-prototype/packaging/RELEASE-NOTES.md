@@ -1,4 +1,4 @@
-# EasyCommandRunner GPUI v1.1.0
+# EasyCommandRunner GPUI v1.1.1
 
 Quality-of-life update to the GPUI release. The historical Qt/PyQt branches and published GPUI v1.0.1 Release are unchanged.
 
@@ -9,6 +9,8 @@ Quality-of-life update to the GPUI release. The historical Qt/PyQt branches and 
 - Drag-and-switch polish: clearer sidebar drop targets and lower-cost page switching.
 - Run logs retain each run's launch-command snapshot after completion, so it can still be copied from docked or detached logs without copying output text.
 - Pasting a file path into a command field places the caret at the end and scrolls long paths into view.
+- Detached run log: the main window no longer reserves docked log height while the log is detached, so a short window keeps its rows and preview. Starting a run brings the detached log window to the front.
+- Sidebar rows use one 40px height for folder headers and configurations in both expanded and collapsed modes, so configurations keep their vertical positions when the sidebar folds.
 
 ## Packages and caveats
 

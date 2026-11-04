@@ -1658,6 +1658,8 @@ impl CommandWorkspace {
                 self.log_auto_scroll.request_tail();
                 self.run_handles.insert(id, handle);
                 self.show_log = true;
+                // Output appears in the detached window, so surface it with the new run.
+                self.raise_detached_log(cx);
                 self.mark_config_dirty(cx);
                 self.sync_log_list(window, cx);
                 self.status = i18n::format(cx, "正在运行：{}", &[&tab_name]);
@@ -1906,11 +1908,20 @@ impl CommandWorkspace {
         self.show_log && self.detached_log.is_none()
     }
 
+    /// Bring the detached log window forward. Deferred because the log window renders from
+    /// this workspace, which is still mutably borrowed by the caller.
+    fn raise_detached_log(&self, cx: &mut Context<Self>) {
+        let Some(handle) = self.detached_log else {
+            return;
+        };
+        cx.defer(move |cx| {
+            let _ = handle.update(cx, |_, window, _| window.activate_window());
+        });
+    }
+
     fn toggle_log(&mut self, cx: &mut Context<Self>) {
-        if let Some(handle) = self.detached_log {
-            cx.defer(move |cx| {
-                let _ = handle.update(cx, |_, window, _| window.activate_window());
-            });
+        if self.detached_log.is_some() {
+            self.raise_detached_log(cx);
         } else {
             self.show_log = !self.show_log;
             if self.show_log {

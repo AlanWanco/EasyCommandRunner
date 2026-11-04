@@ -6318,6 +6318,71 @@ mod tests {
             .unwrap();
     }
 
+    #[cfg(unix)]
+    #[gpui::test]
+    fn running_a_command_raises_the_detached_log_window(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui::init(cx);
+            theme::apply(Theme::Dark, cx);
+        });
+        let mut workspace = None;
+        let main = cx.open_window(size(px(850.), px(800.)), |w, cx| {
+            let view = cx.new(|cx| CommandWorkspace::new(w, cx));
+            workspace = Some(view.clone());
+            Root::new(view, w, cx)
+        });
+        let view = workspace.unwrap();
+        cx.update_window(main.into(), |_, w, cx| {
+            view.update(cx, |v, cx| {
+                v.show_log = true;
+                v.log_height_override = Some(180.);
+                v.add_finished_log_for_test("旧记录", "旧输出", w, cx);
+            });
+            w.render_frame(cx);
+            w.click("detach-log", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let detached = cx
+            .update(|cx| view.read(cx).detached_log)
+            .expect("日志窗口已分离");
+        cx.update_window(main.into(), |_, w, _| w.activate_window())
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            cx.update(|cx| cx.active_window().map(|handle| handle.window_id())),
+            Some(main.window_id()),
+            "前置条件：用户在主窗口点击运行"
+        );
+        cx.update_window(main.into(), |_, w, cx| {
+            view.update(cx, |v, cx| {
+                let tab = &mut v.tabs[v.active];
+                let id = tab.id;
+                tab.program
+                    .update(cx, |state, cx| state.set_value("echo raised", w, cx));
+                tab.other.update(cx, |state, cx| state.set_value("", w, cx));
+                for row in &mut tab.rows {
+                    row.enabled = false;
+                }
+                v.changed(id, w, cx);
+            });
+            w.render_frame(cx);
+            w.click("run-command", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            cx.update(|cx| cx.active_window().map(|handle| handle.window_id())),
+            Some(detached.window_id()),
+            "点击运行后应把分离的运行日志窗口置前"
+        );
+        cx.update_window(detached.into(), |_, w, _| w.remove_window())
+            .unwrap();
+        cx.run_until_parked();
+        cx.update_window(main.into(), |_, w, _| w.remove_window())
+            .unwrap();
+    }
+
     #[gpui::test]
     fn detached_log_shares_selection_output_zoom_and_reattaches_on_close(cx: &mut TestAppContext) {
         use gpui::Focusable;
